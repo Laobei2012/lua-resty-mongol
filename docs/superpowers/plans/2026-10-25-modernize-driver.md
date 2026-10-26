@@ -156,6 +156,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `mongol.int32`, `mongol.int64` and `mongol.double` on the module table returned by `require "resty.mongol"`.
 - Produces: array indexes. Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. Old data with a leading `null` reads back shifted by one. `CHANGELOG.md` must say so.
 - Produces: int32 reads are signed (issue #59).
+- Produces: `bson.null`, a unique sentinel table (owner decision). `to_bson` writes it as type 0x0A. A read of type 0x0A returns `bson.null` in documents and in arrays, so keys and array positions stay. Today a null reads as `nil`, so code such as `if doc.x then` changes meaning. This change ships in `1.0.0` (PR #39 idea, without its global `null`).
 - Produces: `bson.timestamp(t, i)` writes type 0x11. A read of type 0x11 returns the same wrapper, with fields `t` and `i`. Today it reads as one int64 number, so this change ships in `1.0.0`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
@@ -171,7 +172,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `0/0` | `0x01` |
   | `bson.double(1)` | `0x01` |
 
-  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
+  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: null decode`. A document `{x: null}` decodes to `t.x == bson.null`. Add `TEST: array with null`. The array `["a", null, "b"]` decodes to `{"a", bson.null, "b"}`, and encodes back as an array with 3 elements and a null in the middle. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
@@ -305,7 +306,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `wire.t`, `sanity.t`, `cursor.t` and `globals.t` PASS on all four servers. `gridfs*.t` and `cluster.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5".
 - [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
-- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe the 1-based arrays and their effect on old data, int32 and int64 numbers, int64 cdata above 2^53, Timestamp wrappers, `cursor:close()` in place of the `__gc` kill, and `skip`/`limit` before the first fetch.
+- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe the 1-based arrays and their effect on old data, int32 and int64 numbers, int64 cdata above 2^53, Timestamp wrappers, `bson.null` on read with an `if doc.x then` example, `cursor:close()` in place of the `__gc` kill, and `skip`/`limit` before the first fetch.
 - [ ] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
 
 ---
@@ -385,18 +386,16 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `bson.regex(pattern, opts)` | `0x0B` |
   | `bson.minkey()` | `0xFF` |
   | `bson.maxkey()` | `0x7F` |
-  | `bson.null` | `0x0A`, a sentinel that keeps a key on write |
 
 - Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
-- Produces: read of `0x0A` stays `nil`, as today, so that no caller breaks after `1.0.0`. `bson.null` is only for writes (PR #39 idea, without its global `null`).
 - Reads of types 0x13, 0x0B, 0xFF and 0x7F raise an error today. Returning wrappers for them breaks no caller.
-- Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string and dates as ISO 8601 strings, for `cjson` (issues #53 and #67).
+- Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string, dates as ISO 8601 strings and `bson.null` as `cjson.null`, for `cjson` (issues #53 and #67).
 
 - [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Use the corpus files `decimal128-1.json` to `decimal128-7.json` from `mongodb/specifications`, `source/bson-corpus/tests`.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, null writes, JSON helpers`. Tag the Phase 4 release.
+- [ ] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, JSON helpers`. Tag the Phase 4 release.
 
 ---
 
@@ -526,5 +525,5 @@ Open PRs:
 | #60 `le_uint_to_num` speed-up | Superseded by Task 2 |
 | #57, #40 array index fix | Superseded by Task 2b |
 | #49 `ngx.worker.pid` | Superseded by Task 1b |
-| #39 `bson_null` | Superseded by Task 10 (write side only) |
+| #39 `bson_null` | Superseded by Task 2b |
 | #20 lazy machine id, no `assert` | Superseded by Tasks 1b and 2 |
