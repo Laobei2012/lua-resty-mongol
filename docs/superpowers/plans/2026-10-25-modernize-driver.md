@@ -124,7 +124,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - Produces: `bson.ordered({ {k1, v1}, {k2, v2}, ... })`. It returns a document whose keys `to_bson` writes in the given order.
 - Produces: `bson.to_bson(t) -> string | nil, err`. It no longer raises. Keys with `\0` return `nil, "invalid key"`.
 - Produces: `bson.from_bson(get)` reads type 0x12 with `ll.le_to_int64`.
-- Produces: array detection does not depend on `pairs` order (issue #52). A table is an array only if every key is an integer from 1 to `n` with no holes, where `n` is the count of keys.
+- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If every key is an integer from 1 to `n`, the table is an array.
 - Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
 
 - [ ] **Step 1: Write failing tests** in `t/bson.t`:
