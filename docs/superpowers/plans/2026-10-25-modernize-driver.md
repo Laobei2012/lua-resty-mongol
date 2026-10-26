@@ -13,7 +13,11 @@
 ## Global Constraints
 
 - Server versions: MongoDB 6.0, 7.0, 8.0, 9.0. The CI matrix uses the images `mongo:6.0`, `mongo:7.0`, `mongo:8.0`, `mongo:9.0`.
-- Runtime: OpenResty LuaJIT. No C modules. Only Lua libraries that ship with OpenResty.
+- Runtime: OpenResty LuaJIT. No C modules. Only Lua libraries that ship with OpenResty. FFI calls into the OpenSSL that OpenResty links are allowed.
+- CI OpenResty version: 1.31.1.1, the current release on 2026-10-25.
+- Module style follows `openresty/lua-resty-redis`: `local _M = { _VERSION = "x.y.z" }`, globals cached as locals at file top, `table.new` and `table.clear` on hot paths, and `setmetatable(obj, mt)` objects.
+- Caller type bugs raise `error("bad argument ...", 2)`. Everything else returns `nil, err`.
+- `luacheck` (with `std = "ngx_lua"`) and `lj-releng` must pass in CI.
 - All network I/O uses cosockets. No blocking calls.
 - The library writes no Lua globals. This includes `_G.pairs`, which `misc.lua` overrides today.
 - Every documented call keeps its arguments and its return values. A change that a caller can see goes in `CHANGELOG.md` with its reason.
@@ -63,7 +67,7 @@
 ### Task 1: CI, test setup, no globals
 
 **Files:**
-- Create: `LICENSE`, `.github/workflows/test.yml`, `t/lib/Mongol.pm`
+- Create: `LICENSE`, `.github/workflows/test.yml`, `t/lib/Mongol.pm`, `.luacheckrc`
 - Modify: `Makefile:15-16`, `lib/resty/mongol/init.lua:1` and `:136-140`, `lib/resty/mongol/misc.lua:11-35`, all `t/*.t` headers
 - Test: `t/globals.t` (new)
 
@@ -76,9 +80,33 @@
 - [ ] **Step 2: Run** `prove t/globals.t`. Expected: FAIL. `module()` and `_G.pairs` write globals.
 - [ ] **Step 3: Implement.** In `init.lua`, replace `module(...)` and the `getmetatable(resty.mongol).__newindex` block with `local _M = {}` and `return _M`. Keep `_M.new`. In `misc.lua`, delete the `_G.pairs` override and add `opairs`. In `bson.lua`, use `opairs` in `to_bson`.
 - [ ] **Step 4: Run** `prove t/globals.t`. Expected: PASS.
-- [ ] **Step 5: Add CI.** In `test.yml`, use `ubuntu-latest` with a matrix of `mongo: ["6.0", "7.0", "8.0", "9.0"]` and a `services.mongo` container on port 27017, without auth. Install OpenResty from the OpenResty apt repo, pinned to one current release. Install Test::Nginx with `cpanm --notest Test::Nginx`. Then run `make test`. In `Makefile`, set `test` to `PATH=$(OPENRESTY_PREFIX)/nginx/sbin:$$PATH prove -I t/lib -r t`. Move every `t/*.t` header to `use lib 't/lib'; use Mongol;`. Replace the literal ports and credentials in the tests with `$TEST_NGINX_MONGO_*`.
-- [ ] **Step 6: Push the branch and read the CI result.** Expected: all four jobs start their server, `t/globals.t` passes, and the old tests fail. Record the failing test names in the PR description. This is the Phase 0 exit gate.
-- [ ] **Step 7: Commit** `chore(ci): add MongoDB 6-9 matrix, license, remove globals`.
+- [ ] **Step 5: Add CI.** In `test.yml`, use `ubuntu-latest` with a matrix of `mongo: ["6.0", "7.0", "8.0", "9.0"]` and a `services.mongo` container on port 27017, without auth. Install OpenResty 1.31.1.1 from the OpenResty apt repo. Install Test::Nginx with `cpanm --notest Test::Nginx`. Then run `make test`. Set `permissions: contents: read`, and pin every third-party action by commit SHA. In `Makefile`, set `test` to `PATH=$(OPENRESTY_PREFIX)/nginx/sbin:$$PATH prove -I t/lib -r t`, and make `install` honor `DESTDIR`. Move every `t/*.t` header to `use lib 't/lib'; use Mongol;`. Replace the literal ports and credentials in the tests with `$TEST_NGINX_MONGO_*`.
+- [ ] **Step 6: Add lint.** Write `.luacheckrc` with `std = "ngx_lua"`, `redefined = false` and `unused_args = false`, as `lua-resty-redis` does. Add a CI job `lint` that runs `luacheck -q lib` and `lj-releng` from `openresty/openresty-devel-utils`. Fix every finding in `lib/`. Add `_M._VERSION = "0.9.0"` to `init.lua`.
+- [ ] **Step 7: Push the branch and read the CI result.** Expected: all four jobs start their server, `lint` and `t/globals.t` pass, and the old tests fail. Record the failing test names in the PR description. This is the Phase 0 exit gate.
+- [ ] **Step 8: Commit** `chore(ci): add MongoDB 6-9 matrix, lint, license, remove globals`.
+
+### Task 1b: Load anywhere, spec ObjectId
+
+Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
+
+**Files:**
+- Modify: `lib/resty/mongol/object_id.lua`, `lib/resty/mongol/init.lua` (`new`, `connect`)
+- Test: `t/objid.t`, `t/globals.t`
+
+**Interfaces:**
+- Produces: `mongol:new()` makes no cosocket. `conn:connect()` creates `ngx.socket.tcp()` on the first call. Before `connect`, `set_timeout` stores the value and applies it at socket creation.
+- Produces: ObjectId bytes follow the current BSON spec: 4-byte big-endian seconds, then 5 random bytes, then a 3-byte big-endian counter. The 5 random bytes come from `resty.random.bytes(5)` on the first id in each worker, keyed by `ngx.worker.pid()`, so that forked workers never share them. The counter starts at a random value. The module calls no `ngx.var`, no `io.popen` and no `uname` at load.
+- Produces: `object_id.new_from_hex(hex24) -> oid | nil, err` (issue #33). `oid:tostring()` keeps its output.
+
+- [ ] **Step 1: Write failing tests:**
+  - `t/globals.t`, `TEST: require and new in init_by_lua`. `init_by_lua_block` runs `require("resty.mongol"):new()`. Expected: no `[error]` (issue #69).
+  - `t/objid.t`, `TEST: id in timer`. `ngx.timer.at(0, ...)` creates an ObjectId and writes its hex to a shared dict. The content handler reads 24 hex characters (issues #47 and #63).
+  - `t/objid.t`, `TEST: hex round trip`. `new_from_hex(id:tostring()):tostring() == id:tostring()`.
+  - `t/objid.t`, `TEST: unique across workers`. With `worker_processes 2`, ids from two workers differ in bytes 5 to 9.
+- [ ] **Step 2: Run** `prove t/objid.t t/globals.t`. Expected: FAIL.
+- [ ] **Step 3: Implement** the interfaces above.
+- [ ] **Step 4: Run** the same command. Expected: PASS.
+- [ ] **Step 5: Commit** `fix(objectid): spec layout, no ngx.var, loadable in any phase`.
 
 ---
 
@@ -96,6 +124,8 @@
 - Produces: `bson.ordered({ {k1, v1}, {k2, v2}, ... })`. It returns a document whose keys `to_bson` writes in the given order.
 - Produces: `bson.to_bson(t) -> string | nil, err`. It no longer raises. Keys with `\0` return `nil, "invalid key"`.
 - Produces: `bson.from_bson(get)` reads type 0x12 with `ll.le_to_int64`.
+- Produces: array detection does not depend on `pairs` order (issue #52). A table is an array only if every key is an integer from 1 to `n` with no holes, where `n` is the count of keys.
+- Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
 
 - [ ] **Step 1: Write failing tests** in `t/bson.t`:
   - `TEST: ordered keys`. `to_bson(bson.ordered{{"find","c"},{"filter",{}},{"limit",bson.int32(1)}})` has `find` as its first element name, and the element type of `limit` is `0x10`.
@@ -212,6 +242,7 @@
 
 - [ ] **Step 1: Write failing tests** in `t/cursor.t`:
   - `TEST: limit across batches`. Insert 25 documents, then `find({}, nil, 10)` with `limit(23)` yields exactly 23 documents, then `nil`.
+  - `TEST: all documents` (issue #74). Insert 2,500 documents. `find({}, nil, 100)` without a limit yields exactly 2,500 documents.
   - `TEST: skip`. Insert 10 documents with `n = 1..10`, then `sort({n=1})` and `skip(3)` give a first `n` of `4`.
   - `TEST: server sort`. Insert `n = 3, 1, 2`. `sort({n=-1})` returns `n` values in the order `3, 2, 1`.
   - `TEST: close`. After `close()`, `next()` returns `nil`.
@@ -237,7 +268,7 @@
 - Produces: `scram.authenticate(conn, dbname, user, password, mechanism) -> true | nil, err`, where `mechanism` is `"SCRAM-SHA-1"` or `"SCRAM-SHA-256"`.
   - SHA-1 uses `md5(user .. ":mongo:" .. password)` as the password, as today.
   - SHA-256 uses the SASLprep of the password. Bytes above 0x7F return `nil, "non-ASCII password not supported"`.
-  - HMAC is RFC 2104 over `resty.sha1` and `resty.sha256`, with a block size of 64. PBKDF2 is RFC 8018.
+  - PBKDF2 and HMAC use FFI calls to `PKCS5_PBKDF2_HMAC` and `HMAC` in the OpenSSL that nginx links. At 15,000 iterations, pure Lua costs too much worker CPU. If the symbols are missing, the fallback is RFC 2104 HMAC over `resty.sha1` and `resty.sha256` (block size 64) with RFC 8018 PBKDF2.
   - The client nonce is 24 bytes from `resty.random.bytes(24, true)`, in base64.
   - The client checks that the server nonce starts with the client nonce, and checks the server signature `v=`.
   - It caches `salted_password` in a module table keyed by `mechanism .. user .. salt .. iterations`.
@@ -262,13 +293,17 @@
 - Test: `t/connect.t` (new), `t/cluster.t`
 
 **Interfaces:**
-- Produces: `conn:connect(host, port, opts)`. `opts` is optional, with `pool`, `ssl` (boolean), `ssl_verify` (boolean) and `server_name`. If `opts.ssl` is set, it calls `sock:sslhandshake(nil, opts.server_name or host, opts.ssl_verify)`. The old two-argument call does not change.
+- Produces: `conn:connect(host, port, opts)`, modeled on `ledgetech/lua-resty-http` `connect(options)`. `opts` is optional.
+  - `pool`, `pool_size` and `backlog` go to `sock:connect(host, port, {pool =, pool_size =, backlog =})`.
+  - `ssl` (boolean), `ssl_verify` (default `true`), `ssl_server_name` (default `host`) and `ssl_reused_session` go to a separate `sock:sslhandshake(ssl_reused_session, ssl_server_name, ssl_verify)` call.
+  - The old two-argument call does not change.
+  - The README says that `ssl_verify` needs `lua_ssl_trusted_certificate`.
 - Produces: `conn:getprimary()` uses `hello` and `isWritablePrimary`, with the same return values as today.
 
 - [ ] **Step 1: Write failing tests:**
   - `TEST: pool option`. Two connects with `pool = "a"` show `get_reused_times() == 1` on the second.
   - `TEST: tls to plain server`. `connect(host, port, {ssl = true})` returns `nil, err` and raises no Lua error.
-  - CI step `no ngx.var`. Add `! grep -rn "ngx\.var" lib/` to `test.yml`. It fails on any match (issue #58).
+  - `TEST: pool_size`. `connect(host, port, {pool = "b", pool_size = 1})` succeeds.
 - [ ] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
@@ -331,7 +366,9 @@
   | `bson.null` | `0x0A`, a sentinel that keeps a key on write |
   | `bson.empty_array` | `0x04`, an array with no elements |
 
-- Produces: read of `0x0A` returns `bson.null`, not `nil`, so that the key stays. This is a visible change, and it goes in `CHANGELOG.md`.
+- Produces: array indexes (issues #1, #14, #29, PRs #40, #57). Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. OWNER DECISION PENDING: see the open question in the PR description.
+- Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
+- Produces: read of `0x0A` returns `bson.null`, not `nil`, so that the key stays (PR #39 idea, without its global `null`). This is a visible change, and it goes in `CHANGELOG.md`.
 - Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string and dates as ISO 8601 strings, for `cjson` (issues #53 and #67).
 
 - [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
@@ -363,7 +400,13 @@
 
 **Interfaces:**
 - Produces: `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
-- Produces: `mongol.connect_uri(str) -> conn | nil, err`. It connects to the first host that answers `hello`. If `readPreference` is `primary`, it follows `getprimary()`. If it is `primaryPreferred`, it stays on a secondary only when no primary answers. If the URI has a user, it logs in.
+- Produces: `mongol.connect_uri(str) -> conn | nil, err`. It connects to the first host that answers `hello`, then applies `readPreference` (issues #10 and #22):
+  - `primary`: follow `getprimary()`.
+  - `primaryPreferred`: use the primary. If no primary answers, use a secondary.
+  - `secondary`: use a host whose `hello` reply has `secondary = true`. If none answers, return `nil, err`.
+  - `secondaryPreferred`: use a secondary. If none answers, use the primary.
+  - For a non-primary read preference, `wire.command` adds `$readPreference = {mode = ...}`, which `mongos` needs.
+  - If the URI has a user, it logs in.
 - Produces: a CI job `replset`. It runs `docker run -d --name rs -p 27017:27017 mongo:${{ matrix.mongo }} --replSet rs0`, then `docker exec rs mongosh --eval 'rs.initiate()'`, and waits for `isWritablePrimary`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` against the `replset` job gives `ismaster() == true`.
@@ -379,6 +422,10 @@
 **Interfaces:**
 - Produces: the 8 README GridFS methods with unchanged signatures: `find_one`, `remove`, `get`, `insert`, `new`, `read`, `write` and `update_md5`. `update_md5` stays client-side with `resty.md5`, because the server no longer computes it.
 - Chunks are written with `bson.int32` for `n` and with `binary` subtype `0x00` for `data`.
+- The files document stores `chunkSize` as int32 and `length` as int64 (issue #35).
+- `gridfs_file:write` inserts all chunks of one call in one `insert` command, as a kind-1 sequence (issue #36).
+- `update_md5` stays, but `write` does not call it. The GridFS spec deprecated `md5`, so issue #37 is out of scope.
+- Add `TEST: chunkSize is int32` to `t/gridfs_write.t`. Read the files document with `db:cmd` and check the type byte of `chunkSize`.
 
 - [ ] **Step 1:** Remove the `--- SKIP` lines from `t/gridfs*.t`. Port the literal values to `$TEST_NGINX_MONGO_*`.
 - [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t`. Expected: FAIL.
@@ -395,7 +442,9 @@
 - Produces: `session:start_transaction()`, `session:commit_transaction() -> true | nil, err` and `session:abort_transaction() -> true | nil, err`. The commit and abort commands go to `admin`.
 - Produces: an optional last argument `opts` with `opts.session` on `insert`, `update`, `delete`, `query`, `find_one` and `aggregate`. With a session, `wire.command` adds `lsid`. In a transaction, it also adds `txnNumber` (int64), `autocommit = false`, and `startTransaction = true` on the first command.
 
-- [ ] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`.
+- Produces: while a transaction is open, `conn:set_keepalive()` returns `nil, "transaction in progress"`, as `lua-resty-redis` does.
+
+- [ ] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`. `TEST: keepalive in txn` gets `nil` and `transaction in progress`.
 - [ ] **Step 2: Run** `prove t/txn.t` in the `replset` job. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -409,9 +458,47 @@
 
 **Files:** Modify `Readme.md`. Create `CHANGELOG.md`, `lua-resty-mongol-<version>-1.rockspec` and `dist.ini`.
 
-- [ ] **Step 1:** Rewrite `Readme.md`. Remove the "deprecated" line. Add the supported server versions and the `db:cmd` key-order rule. Add the login and pool pattern and `cursor:close()`. Add the number rule, its helpers and the new methods.
+- [ ] **Step 1:** Rename `Readme.md` to `README.markdown` with a table of contents, the OpenResty convention. Remove the "deprecated" line. Fix the `find_one` return description (issue #44). Add examples for `$or`, dot notation and pagination with `skip`, `limit` and `sort` (issues #13, #14, #26, #41, #48). Add the supported server versions and the `db:cmd` key-order rule. Add the login and pool pattern and `cursor:close()`. Add the number rule, its helpers and the new methods.
 - [ ] **Step 2:** Write `CHANGELOG.md` with one section for each phase release. List every visible change: the int32 and int64 encoding, `bson.null` on read, no `__gc` cursor kill, the removal of MONGODB-CR, and int64 cdata above 2^53.
-- [ ] **Step 3:** Add the rockspec with `build.type = "builtin"` and every module under `lib/resty/mongol`. Add `dist.ini` for OPM.
+- [ ] **Step 3:** Add the rockspec with `build.type = "builtin"` and every module under `lib/resty/mongol`. Add `dist.ini` for OPM with `name`, `abstract`, `author`, `is_original = no`, `license = mit`, `lib_dir = lib`, `doc_dir = lib`, `main_module = lib/resty/mongol/init.lua` and `repo_link`. OPM reads the version from `_VERSION` in the main module.
 - [ ] **Step 4: Run** `luarocks lint lua-resty-mongol-*.rockspec` and `opm build`. Expected: no errors.
-- [ ] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Then close it.
+- [ ] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Use the table in "Issue and PR disposition". Then close it. Close each open PR with a thank-you and a link to the commit that supersedes it.
 - [ ] **Step 6: Commit** `docs: README, CHANGELOG, packaging`.
+
+---
+
+## Issue and PR disposition
+
+Open issues:
+
+| Issue | Plan |
+|---|---|
+| #70, #71, #15 | Task 1 removes `module()` and the global writes |
+| #47, #58, #63, #69, #33 | Task 1b |
+| #12, #74 | Task 6 (`TEST: all documents`) |
+| #16, #52 | Task 2 |
+| #61, #72 | Tasks 3 to 5 (modern protocol, `count` command) |
+| #45, #50, #56 | Task 7 |
+| #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
+| #59 | Task 9 |
+| #1, #14, #29, #53, #66, #67 | Task 10 |
+| #41, #48, #54 | Task 6 (server sort, `skip`) |
+| #55 | Task 11 |
+| #10, #22 | Task 12 |
+| #35, #36 | Task 13 |
+| #13, #26, #44 | Task 15 (README) |
+| #51 | Done by merged PR #62 (`find_and_modify`). Task 5 tests it. Close |
+| #46 | Answer: iterate `cursor:next()`. Each call reads from the current batch, not from the server. Close |
+| #38 | Answer: the server creates the collection on the first insert. Close |
+| #37 | Out of scope. The GridFS spec deprecated `md5`. Close |
+| #23 | Out of scope. Renames break the API. Close |
+
+Open PRs:
+
+| PR | Plan |
+|---|---|
+| #60 `le_uint_to_num` speed-up | Superseded by Task 2 |
+| #57, #40 array index fix | Superseded by Task 10 |
+| #49 `ngx.worker.pid` | Superseded by Task 1b |
+| #39 `bson_null` | Superseded by Task 10 |
+| #20 lazy machine id, no `assert` | Superseded by Tasks 1b and 2 |
