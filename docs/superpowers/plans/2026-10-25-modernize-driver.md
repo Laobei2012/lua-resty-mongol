@@ -217,7 +217,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 **Files:**
 - Modify: `lib/resty/mongol/colmt.lua:30-208` (delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`)
-- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth/legacy.t`, which runs only in the Phase 3 auth job. This covers `t/sanity.t`, `t/cluster.t` TESTs 2 and 8, and the `db:auth()` calls in `t/cursor.t` (4 blocks) and `t/gridfs.t` (2 blocks). In the blocks that stay, delete the `db:auth()` lines and the `auth failed` lines from the expected output.
+- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth/legacy.t`, which runs only in the Phase 3 auth job. This covers `t/sanity.t`, `t/cluster.t` TESTs 2 and 8, and the `db:auth()` calls in `t/cursor.t` (4 blocks) and `t/gridfs.t` (2 blocks) and `t/gridfs_write.t` (15 blocks). In the blocks that stay, delete the `db:auth()` lines and the `auth failed` lines from the expected output.
 
 **Interfaces:**
 - Consumes: `wire.command`, `bson.ordered`, `bson.int32`.
@@ -339,9 +339,9 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: wrong password`. The result is `nil` and a message that contains `Authentication failed`.
   - `TEST: rfc7677 vector`. Run `scram.lua`'s client proof over the RFC 7677 example (`user`, `pencil`, nonce `rOprNGfwEbeRWgbNEkqO`) and compare it with the RFC proof. No server is needed.
   - `TEST: pooled login reuse`. Request 1 logs in and calls `set_keepalive(10000, 10)`. Request 2 calls `connect` with the same `pool`, sees `get_reused_times() > 0`, skips login, and its `find_one` succeeds.
-- [ ] **Step 2: Run** `prove t/auth.t` against a server with auth on. Expected: FAIL.
+- [ ] **Step 2: Run** `make test-auth` against a server with auth on. Expected: FAIL.
 - [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** `prove t/auth.t`. Expected: PASS in all four auth jobs.
+- [ ] **Step 4: Run** `make test-auth`. Expected: PASS in all four auth jobs.
 - [ ] **Step 5: Commit** `feat(auth): SCRAM-SHA-256 with SHA-1 fallback`.
 
 ### Task 8: TLS, connect options, getprimary, ngx.var
@@ -430,9 +430,9 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: a CI job `replset`. It runs `docker run -d --name rs -p 27017:27017 mongo:${{ matrix.mongo }} --replSet rs0`, then `docker exec rs mongosh --eval 'rs.initiate()'`, and waits for `isWritablePrimary`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. The `replset` job runs `make test-replset`.
-- [ ] **Step 2: Run** `prove t/uri.t t/cluster.t`. Expected: FAIL.
+- [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
 
 ### Task 13: GridFS on the new methods
@@ -447,7 +447,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - `update_md5` stays, but `write` does not call it. The GridFS spec deprecated `md5`, so issue #37 is out of scope.
 - Add `TEST: chunkSize is int32` to `t/gridfs_write.t`. Read the files document with `db:cmd` and check the type byte of `chunkSize`.
 
-- [ ] **Step 1:** Remove the `--- SKIP` lines from `t/gridfs*.t`. Port the literal values to `$TEST_NGINX_MONGO_*`.
+- [ ] **Step 1:** Remove the `--- SKIP` lines from `t/gridfs*.t`. Port the literal values to `$TEST_NGINX_MONGO_*`. Make sure that Task 4 removed every `db:auth()` call and every `auth failed` expected line from `t/gridfs.t` and `t/gridfs_write.t`. Keep every overwrite assertion as it is.
 - [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS on all four servers.
@@ -470,9 +470,9 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: while a transaction is open, `conn:set_keepalive()` returns `nil, "transaction in progress"`, as `lua-resty-redis` does.
 
 - [ ] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`. `TEST: keepalive in txn` gets `nil` and `transaction in progress`.
-- [ ] **Step 2: Run** `prove t/txn.t` in the `replset` job. Expected: FAIL.
+- [ ] **Step 2: Run** `make test-replset` in the `replset` job. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
+- [ ] **Step 4: Run** `make test-replset`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(session): transactions`. Tag the Phase 5 release.
 
 ---
