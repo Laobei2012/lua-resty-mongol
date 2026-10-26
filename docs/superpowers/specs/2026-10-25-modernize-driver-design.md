@@ -127,11 +127,13 @@ If the server reports `writeErrors` or `writeConcernError`, the write returns `n
 
 ### Phase 4: BSON correctness
 
-1. Read and write int32 and int64 without loss of precision. Use LuaJIT `int64_t` cdata for values above 2^53. Add explicit helpers to write int32 and int64.
-2. Add Decimal128, Timestamp, Regex, MinKey, MaxKey and the Null round trip.
-3. Add a marker for an empty array (issue #66).
-4. Fix negative int32 values (issue #59).
-5. Let ObjectId and UTC dates convert to JSON through `cjson` (issues #53 and #67).
+1. Numbers follow the official drivers (owner decision, Option B). A whole number that fits in int32 is written as int32. A larger whole number that fits in int64 is written as int64. Any other number is written as a double. A new helper `mongol.double(n)` forces a double. The helpers `mongol.int32(n)` and `mongol.int64(n)` force an integer type.
+2. On read, int32 and int64 values return as Lua numbers. If an int64 value is larger than 2^53, it returns as LuaJIT `int64_t` cdata, so that no digits are lost.
+3. This change alters the stored type for existing callers. `CHANGELOG.md` must describe it, and the release that contains it gets a new major version.
+4. Add Decimal128, Timestamp, Regex, MinKey, MaxKey and the Null round trip.
+5. Add a marker for an empty array (issue #66).
+6. Fix negative int32 values (issue #59).
+7. Let ObjectId and UTC dates convert to JSON through `cjson` (issues #53 and #67).
 
 Phase 4 changes how values are decoded. Any change that a caller can see goes in `CHANGELOG.md`.
 
