@@ -147,10 +147,11 @@ If the server reports `writeErrors` or `writeConcernError`, the write returns `n
 ### Phase 5: New features
 
 1. `col:aggregate(pipeline, options)`, which returns a cursor (issue #55).
-2. Replica set connection with read preference `primary` and `primaryPreferred`.
+2. Replica set connection with read preference `primary`, `primaryPreferred`, `secondary` and `secondaryPreferred`.
 3. GridFS on the new commands. Only the GridFS methods that the README documents keep their API.
 4. Sessions and transactions: `lsid`, `txnNumber`, `startTransaction`, `commitTransaction` and `abortTransaction`. CI adds a single-node replica set for these tests.
 5. Connection string parsing: `mongodb://` URIs, with `authSource`, `tls` and `replicaSet`.
+6. A command monitoring hook, `mongol.set_monitor()`, with `started`, `succeeded` and `failed` events, from the MongoDB Command Logging and Monitoring specification. The library sends no metrics itself. Login commands are redacted.
 
 ### Phase 6: Release
 

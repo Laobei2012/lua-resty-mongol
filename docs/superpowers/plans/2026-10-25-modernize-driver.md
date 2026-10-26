@@ -50,7 +50,7 @@
 | `lib/resty/mongol/misc.lua` | `attachpairs_start` and a local `opairs` that honors `__pairs`. No `_G` write | 0 |
 | `lib/resty/mongol/ll.lua` | Byte helpers, plus int64 encode and decode | 1 |
 | `lib/resty/mongol/bson.lua` | BSON encode and decode, ordered docs, integer wrappers, types | 1, 4 |
-| `lib/resty/mongol/wire.lua` (new) | `OP_MSG` encode, decode, send, receive | 1 |
+| `lib/resty/mongol/wire.lua` (new) | `OP_MSG` encode, decode, send, receive, command monitoring hook | 1, 5 |
 | `lib/resty/mongol/dbmt.lua` | `db:cmd()` over `wire`, database methods | 1, 2, 3 |
 | `lib/resty/mongol/colmt.lua` | Collection methods over commands | 2, 5 |
 | `lib/resty/mongol/cursor.lua` | Cursor over `find` and `getMore` | 2 |
@@ -413,6 +413,38 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
 - [ ] **Step 5: Commit** `feat(col): aggregate`.
+
+### Task 11b: Command monitoring hook
+
+Source: the MongoDB Command Logging and Monitoring specification in `mongodb/specifications`. The library sends no metrics itself. Apps connect the hook to Prometheus, OpenTelemetry or logs.
+
+**Files:** Modify `lib/resty/mongol/wire.lua` and `lib/resty/mongol/init.lua`. Test: `t/monitor.t`.
+
+**Interfaces:**
+- Consumes: `wire.command` and `wire.send_only` from Task 3.
+- Produces: `mongol.set_monitor(m) -> true`, where `m` is `nil` or a table with optional functions `started(ev)`, `succeeded(ev)` and `failed(ev)`. A call with `nil` removes the monitor. The monitor is per worker. A value that is not a table or `nil` raises `error("bad argument #1 ...", 2)`.
+- Produces: event fields:
+  - All events: `command_name`, `db`, `request_id`, `host`, `port`.
+  - `started`: `command`, the command table.
+  - `succeeded`: `duration_ms` and `reply`.
+  - `failed`: `duration_ms` and `error`, the error string.
+- Produces: rules:
+  - Without a monitor, `wire.command` does one `if` check and nothing else.
+  - The driver calls each hook through `pcall`. A hook error goes to `ngx.log(ngx.ERR, ...)` and does not change the command result.
+  - For `saslStart`, `saslContinue`, `authenticate`, `getnonce`, `createUser` and `updateUser`, `command` and `reply` are empty tables.
+  - For a `wire.send_only` write, `succeeded` fires after the send, with `reply = {ok = 1}`.
+  - `duration_ms` comes from `ngx.now()` after `ngx.update_time()`.
+
+- [ ] **Step 1: Write failing tests** in `t/monitor.t`:
+  - `TEST: started and succeeded`. A monitor that appends to a list, then `find_one({})`, records `started` and `succeeded`, both with `command_name == "find"` and the same `request_id`.
+  - `TEST: failed`. `db:cmd({nosuchcmd = 1})` records `failed`, and `error` contains `no such command`.
+  - `TEST: hook error`. A `started` hook that raises an error does not stop `find_one`, and the error log contains the hook error.
+  - `TEST: redaction`. With auth off, `db:cmd({createUser = "u3", pwd = "secret", roles = bson.empty_array})` records a `started` event whose `command` is empty, and no event text contains `secret`.
+  - `TEST: remove monitor`. After `set_monitor(nil)`, `find_one` records nothing.
+- [ ] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
+- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example (`nginx-lua-prometheus` counter and histogram) and the warning that hooks run in the request and must not block.
+- [ ] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(wire): command monitoring hook`.
 
 ### Task 12: Replica set CI, primary selection, URI
 
