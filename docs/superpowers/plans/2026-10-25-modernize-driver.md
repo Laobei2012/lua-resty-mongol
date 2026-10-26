@@ -425,13 +425,17 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - Produces: `mongol.set_monitor(m) -> true`, where `m` is `nil` or a table with optional functions `started(ev)`, `succeeded(ev)` and `failed(ev)`. A call with `nil` removes the monitor. The monitor is per worker. A value that is not a table or `nil` raises `error("bad argument #1 ...", 2)`.
 - Produces: event fields:
   - All events: `command_name`, `db`, `request_id`, `host`, `port`.
-  - `started`: `command`, the command table.
+  - `started`: `command`, a copy of the command. Each kind-1 sequence is merged into this copy under its identifier, for example `documents` for `insert`. The command that goes on the wire does not change.
   - `succeeded`: `duration_ms` and `reply`.
   - `failed`: `duration_ms` and `error`, the error string.
 - Produces: rules:
   - Without a monitor, `wire.command` does one `if` check and nothing else.
   - The driver calls each hook through `pcall`. A hook error goes to `ngx.log(ngx.ERR, ...)` and does not change the command result.
-  - For `saslStart`, `saslContinue`, `authenticate`, `getnonce`, `createUser` and `updateUser`, `command` and `reply` are empty tables.
+  - Sensitive commands are `authenticate`, `saslStart`, `saslContinue`, `getnonce`, `createUser`, `updateUser`, `copydbgetnonce`, `copydbsaslstart` and `copydb`. A `hello` or `isMaster` that contains `speculativeAuthenticate` is sensitive too. The check runs inside `wire.command`, so it also covers calls through the public `db:cmd()`. For a sensitive command, `command` and `reply` are empty tables, and `failed.error` is the string `"redacted"`.
+  - Event tables are deep copies. The driver builds them before it sends and after it decodes. A hook that changes an event, even when it raises an error after the change, cannot change the data on the wire or the value that the caller gets. The copies are made only when a monitor is set.
+  - The driver reads the monitor once, when the command starts, and keeps it in a local variable. The terminal event goes to that same monitor, even if another request or the `started` hook calls `set_monitor` in the meantime.
+  - Every `started` event has exactly one terminal event. A send failure, a timeout, a closed socket and a reply that cannot be parsed each produce `failed`.
+  - `succeeded` means that the command succeeded, not that the write succeeded. A reply `{ok = 1, writeErrors = ...}` produces `succeeded`. For an unsafe write, `succeeded` confirms only that the driver sent it.
   - For a `wire.send_only` write, `succeeded` fires after the send, with `reply = {ok = 1}`.
   - `duration_ms` comes from `ngx.now()` after `ngx.update_time()`.
 
@@ -440,9 +444,15 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `TEST: failed`. `db:cmd({nosuchcmd = 1})` records `failed`, and `error` contains `no such command`.
   - `TEST: hook error`. A `started` hook that raises an error does not stop `find_one`, and the error log contains the hook error.
   - `TEST: redaction`. With auth off, `db:cmd({createUser = "u3", pwd = "secret", roles = bson.empty_array})` records a `started` event whose `command` is empty, and no event text contains `secret`.
+  - `TEST: failed sensitive command`. Run the same `createUser` twice. The second call fails because the user exists. Its `failed` event has `error == "redacted"`, and no event text contains `secret` or `u3`.
+  - `TEST: speculative hello`. `db:cmd({hello = 1, speculativeAuthenticate = {saslStart = 1}})` records events with an empty `command` and an empty `reply`.
+  - `TEST: insert event`. `col:insert({{a = 1}, {a = 2}}, nil, true)` records a `started` event whose `command.documents` has 2 entries.
+  - `TEST: hook mutation`. A `started` hook sets `ev.command.filter.a = 99` and then raises an error. `find_one({a = 1})` still finds the document with `a == 1`. A `succeeded` hook that clears `ev.reply` does not change the value that `find_one` returns.
+  - `TEST: monitor removed in flight`. A `started` hook calls `set_monitor(nil)`. The same command still records its `succeeded` event.
+  - `TEST: failure on closed socket`. Use `--- tcp_listen` with a server that closes at once. One `started` and one `failed` event are recorded.
   - `TEST: remove monitor`. After `set_monitor(nil)`, `find_one` records nothing.
 - [ ] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example (`nginx-lua-prometheus` counter and histogram) and the warning that hooks run in the request and must not block.
+- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example (`nginx-lua-prometheus` counter and histogram) and the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
 - [ ] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(wire): command monitoring hook`.
 
