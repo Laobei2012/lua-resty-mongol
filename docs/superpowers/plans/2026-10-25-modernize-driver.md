@@ -80,7 +80,7 @@
 - [ ] **Step 2: Run** `prove t/globals.t`. Expected: FAIL. `module()` and `_G.pairs` write globals.
 - [ ] **Step 3: Implement.** In `init.lua`, replace `module(...)` and the `getmetatable(resty.mongol).__newindex` block with `local _M = {}` and `return _M`. Keep `_M.new`. In `misc.lua`, delete the `_G.pairs` override and add `opairs`. In `bson.lua`, use `opairs` in `to_bson`.
 - [ ] **Step 4: Run** `prove t/globals.t`. Expected: PASS.
-- [ ] **Step 5: Add CI.** In `test.yml`, use `ubuntu-latest` with a matrix of `mongo: ["6.0", "7.0", "8.0", "9.0"]` and a `services.mongo` container on port 27017, without auth. Install OpenResty 1.31.1.1 from the OpenResty apt repo. Install Test::Nginx with `cpanm --notest Test::Nginx`. Then run `make test`. Set `permissions: contents: read`, and pin every third-party action by commit SHA. In `Makefile`, set `test` to `PATH=$(OPENRESTY_PREFIX)/nginx/sbin:$$PATH prove -I t/lib -r t`, and make `install` honor `DESTDIR`. Move every `t/*.t` header to `use lib 't/lib'; use Mongol;`. Replace the literal ports and credentials in the tests with `$TEST_NGINX_MONGO_*`.
+- [ ] **Step 5: Add CI.** In `test.yml`, use `ubuntu-latest` with a matrix of `mongo: ["6.0", "7.0", "8.0", "9.0"]` and a `services.mongo` container on port 27017, without auth. Install OpenResty 1.31.1.1 from the OpenResty apt repo. Install Test::Nginx with `cpanm --notest Test::Nginx`. Then run `make test`. Set `permissions: contents: read`, and pin every third-party action by commit SHA. In `Makefile`, add three targets. `test` runs `prove -I t/lib t/*.t`, which is not recursive. `test-auth` runs `prove -I t/lib t/auth`. `test-replset` runs `prove -I t/lib t/replset`. Each target puts `$(OPENRESTY_PREFIX)/nginx/sbin` first in `PATH`. Make `install` honor `DESTDIR`. The no-auth jobs run only `make test`. Move every `t/*.t` header to `use lib 't/lib'; use Mongol;`. Replace the literal ports and credentials in the tests with `$TEST_NGINX_MONGO_*`.
 - [ ] **Step 6: Add lint.** Write `.luacheckrc` with `std = "ngx_lua"`, `redefined = false` and `unused_args = false`, as `lua-resty-redis` does. Add a CI job `lint` that runs `luacheck -q lib` and `lj-releng` from `openresty/openresty-devel-utils`. Fix every finding in `lib/`. Add `_M._VERSION = "0.9.0"` to `init.lua`.
 - [ ] **Step 7: Push the branch and read the CI result.** Expected: all four jobs start their server, `lint` and `t/globals.t` pass, and the old tests fail. Record the failing test names in the PR description. This is the Phase 0 exit gate.
 - [ ] **Step 8: Commit** `chore(ci): add MongoDB 6-9 matrix, lint, license, remove globals`.
@@ -124,12 +124,14 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - Produces: `bson.ordered({ {k1, v1}, {k2, v2}, ... })`. It returns a document whose keys `to_bson` writes in the given order.
 - Produces: `bson.to_bson(t) -> string | nil, err`. It no longer raises. Keys with `\0` return `nil, "invalid key"`.
 - Produces: `bson.from_bson(get)` reads type 0x12 with `ll.le_to_int64`.
-- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If every key is an integer from 1 to `n`, the table is an array.
+- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If `n` is 0, the table is a document, so `filter = {}` stays a document. Otherwise, if every key is an integer from 1 to `n`, the table is an array.
+- Produces: `bson.empty_array`, a sentinel that `to_bson` writes as an array with no elements (type 0x04). Commands such as `createUser` need it for `roles`. Issue #66 uses it too.
 - Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
 
 - [ ] **Step 1: Write failing tests** in `t/bson.t`:
   - `TEST: ordered keys`. `to_bson(bson.ordered{{"find","c"},{"filter",{}},{"limit",bson.int32(1)}})` has `find` as its first element name, and the element type of `limit` is `0x10`.
   - `TEST: int64 above 2^53`. Decoding the 8 bytes of `9007199254740993` gives `tostring(v) == "9007199254740993LL"`.
+  - `TEST: empty table vs empty array`. `to_bson({f = {}})` writes `f` as type 0x03. `to_bson({f = bson.empty_array})` writes `f` as type 0x04 with no elements.
   - `TEST: nul in values`. The string `"a\0b"` round trips with a length of 3. The key `"a\0b"` returns `nil` and `invalid key`.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement** the interfaces above. For int64 bytes, use `ffi.new("int64_t[1]")` and `ffi.string(p, 8)`, because the target CPUs are little-endian.
@@ -154,6 +156,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `mongol.int32`, `mongol.int64` and `mongol.double` on the module table returned by `require "resty.mongol"`.
 - Produces: array indexes. Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. Old data with a leading `null` reads back shifted by one. `CHANGELOG.md` must say so.
 - Produces: int32 reads are signed (issue #59).
+- Produces: `bson.timestamp(t, i)` writes type 0x11. A read of type 0x11 returns the same wrapper, with fields `t` and `i`. Today it reads as one int64 number, so this change ships in `1.0.0`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
 
@@ -168,7 +171,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `0/0` | `0x01` |
   | `bson.double(1)` | `0x01` |
 
-  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`.
+  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
@@ -201,7 +204,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: checksum flag`. Use `--- tcp_reply` with a hand-built `OP_MSG` reply that has bit 0 set and `{ok = 1}` in the body. `db:cmd` returns a table with `ok == 1`.
 - [ ] **Step 2: Run** `prove t/wire.t`. Expected: FAIL.
 - [ ] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
-- [ ] **Step 3b: Add the send-only path.** `wire.send_only(conn, dbname, cmd, sequences) -> true | nil, err` sets `flagBits` bit 1 (`moreToCome`) and reads no reply. Task 4 uses it for `w = 0` writes. Add `TEST: unsafe write then command`. It runs `col:insert(docs)` without `safe`, then `db:cmd({ping = 1})` on the same socket, and gets `ok == 1`. Source: the MongoDB `OP_MSG` specification.
+- [ ] **Step 3b: Add the send-only path.** `wire.send_only(conn, dbname, cmd, sequences) -> true | nil, err` sets `flagBits` bit 1 (`moreToCome`) and reads no reply. Task 4 uses it for `w = 0` writes. Add `TEST: unsafe write then command`. It calls `wire.send_only` with an `insert` command and `writeConcern = {w = 0}`, then `db:cmd({ping = 1})` on the same socket, and gets `ok == 1`. This test does not use `col:insert`, which Task 4 ports. Source: the MongoDB `OP_MSG` specification.
 - [ ] **Step 4: Run** `prove t/wire.t t/bson.t`. Expected: PASS on all four servers in CI.
 - [ ] **Step 5: Commit** `feat(wire): send all commands as OP_MSG`.
 
@@ -213,7 +216,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 **Files:**
 - Modify: `lib/resty/mongol/colmt.lua:30-208` (delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`)
-- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth.t`, which runs only in the Phase 3 auth job. Remove the `auth failed` lines from the expected output of the blocks that stay.
+- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth/legacy.t`, which runs only in the Phase 3 auth job. This covers `t/sanity.t`, `t/cluster.t` TESTs 2 and 8, and the `db:auth()` calls in `t/cursor.t` (4 blocks) and `t/gridfs.t` (2 blocks). In the blocks that stay, delete the `db:auth()` lines and the `auth failed` lines from the expected output.
 
 **Interfaces:**
 - Consumes: `wire.command`, `bson.ordered`, `bson.int32`.
@@ -233,8 +236,6 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: duplicate key`. Two safe inserts with the same `_id` give `nil` and a message that contains `E11000`.
   - `TEST: continue_on_error`. A safe batch of three documents, with a duplicate in the middle and `continue_on_error = 1`, gives `nil, err`. A later `count({})` is `2`.
   - `TEST: update multi`. Three documents, then `update({}, {["$set"]={x=1}}, 0, 1, true)`, give `3`.
-  - `TEST: negative int32` (issue #59). A safe insert of `{v = -1}` and a `find_one` give `v == -1`.
-  - `TEST: array round trip`. A safe insert of `{v = {"a", "b"}}`, then a `count` with `{v = {["$size"] = 2}}` gives `1`, and `find_one({}).v[1]` is `a`.
   - `TEST: delete single`. Three documents, then `delete({}, 1, true)`, give `1`.
 - [ ] **Step 2: Run** `prove t/sanity.t`. Expected: the new blocks FAIL.
 - [ ] **Step 3: Implement** the interfaces above.
@@ -260,12 +261,15 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `col:getmore(cursorID, numberToReturn, offset_i)` with the same return values. It sends `getMore = int64`, `collection` and `batchSize`.
 - Produces: `col:kill_cursors(ids)` sends `killCursors` and returns `true | nil, err`.
 - Produces: `col:count(query)` sends ordered `{count, query}` and returns `reply.n`.
-- Produces: `db:listcollections()` returns a cursor built from the `listCollections` first batch. `db:add_user(u, p)` sends `createUser` with `roles = {}`.
+- Produces: `db:listcollections()` returns a cursor built from the `listCollections` first batch. `db:add_user(u, p)` sends `createUser` with `roles = bson.empty_array`.
 
 - [ ] **Step 1: Write failing tests:**
   - `TEST: find_one`. Insert `{name="dog"}`. `find_one({name="dog"}).name` is `dog`.
   - `TEST: find_one miss`. The result is `nil`.
   - `TEST: count`. Insert 5 documents, then `count({})` gives `5`. This covers issue #61.
+  - `TEST: negative int32` (issue #59). A safe insert of `{v = -1}` and a `find_one` give `v == -1`.
+  - `TEST: array round trip`. A safe insert of `{v = {"a", "b"}}`, then a `count` with `{v = {["$size"] = 2}}` gives `1`, and `find_one({}).v[1]` is `a`.
+  - `TEST: add_user roles`. `db:add_user("u2", "p2")` succeeds, which needs `roles` to be an empty array.
   - `TEST: $or array` (issue #14). Insert `{x = 1}` and `{y = 2}`. A `count` with `{["$or"] = {{x = 1}, {y = 2}}}` gives `2`.
   - `TEST: query cursor not found`. `col:getmore("\1\0\0\0\0\0\0\0")` gives flags with `CursorNotFound == true`.
   - `TEST: listcollections`. After an insert into `c1`, the cursor yields a document with `name == "c1"`.
@@ -300,7 +304,9 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `wire.t`, `sanity.t`, `cursor.t` and `globals.t` PASS on all four servers. `gridfs*.t` and `cluster.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5".
-- [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`. Tag the first release as `1.0.0`. It is the major release that contains both breaking changes from Task 2b.
+- [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
+- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe the 1-based arrays and their effect on old data, int32 and int64 numbers, int64 cdata above 2^53, Timestamp wrappers, `cursor:close()` in place of the `__gc` kill, and `skip`/`limit` before the first fetch.
+- [ ] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
 
 ---
 
@@ -311,7 +317,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 **Files:**
 - Create: `lib/resty/mongol/scram.lua`
 - Modify: `lib/resty/mongol/dbmt.lua:45-187` (`auth`, `auth_scram_sha1`, the helper functions), `.github/workflows/test.yml`
-- Test: `t/auth.t` (new)
+- Test: `t/auth/auth.t` (new)
 
 **Interfaces:**
 - Consumes: `wire.command`.
@@ -324,9 +330,9 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - It caches `salted_password` in a module table. The key is `table.concat({mechanism, user, sha256_hex(prepared_password), salt, iterations}, "\0")`, so a wrong password never matches a cached entry.
   - Add `TEST: wrong password after cached login`. In one worker, log in with the correct password, then log in on a fresh socket with a wrong password. The second login returns `nil` and `Authentication failed`.
 - Produces: `db:auth(user, password)` sends `hello` with `saslSupportedMechs = db .. "." .. user`. If the server lists SHA-256, it picks SHA-256. Otherwise, it picks SHA-1. `db:auth_scram_sha1(u, p)` stays as an alias.
-- Produces: a CI job `auth`. It runs the four-version matrix with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`, and runs only `t/auth.t`.
+- Produces: a CI job `auth`. It runs the four-version matrix with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`, and runs only `make test-auth`.
 
-- [ ] **Step 1: Write failing tests** in `t/auth.t`. Each test logs in against the `admin` database:
+- [ ] **Step 1: Write failing tests** in `t/auth/auth.t`. Each test logs in against the `admin` database:
   - `TEST: sha256 login`. `auth("admin", "admin")` gives `1`. Then `insert(..., true)` gives `0`.
   - `TEST: sha1 login`. Create a user `u1` with `mechanisms = {"SCRAM-SHA-1"}`. `auth("u1", "p1")` gives `1`.
   - `TEST: wrong password`. The result is `nil` and a message that contains `Authentication failed`.
@@ -364,7 +370,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 ## Phase 4: BSON types
 
-### Task 10: Missing BSON types, empty arrays, JSON
+### Task 10: Missing BSON types and JSON
 
 **Files:**
 - Modify: `lib/resty/mongol/bson.lua`, `lib/resty/mongol/object_id.lua`
@@ -376,22 +382,21 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | Constructor | BSON type |
   |---|---|
   | `bson.decimal128(str)` | `0x13`, read as the same wrapper, `tostring` gives the decimal string |
-  | `bson.timestamp(t, i)` | `0x11`, read as `{t = , i = }` with the timestamp metatable |
   | `bson.regex(pattern, opts)` | `0x0B` |
   | `bson.minkey()` | `0xFF` |
   | `bson.maxkey()` | `0x7F` |
   | `bson.null` | `0x0A`, a sentinel that keeps a key on write |
-  | `bson.empty_array` | `0x04`, an array with no elements |
 
 - Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
-- Produces: read of `0x0A` returns `bson.null`, not `nil`, so that the key stays (PR #39 idea, without its global `null`). This is a visible change, and it goes in `CHANGELOG.md`.
+- Produces: read of `0x0A` stays `nil`, as today, so that no caller breaks after `1.0.0`. `bson.null` is only for writes (PR #39 idea, without its global `null`).
+- Reads of types 0x13, 0x0B, 0xFF and 0x7F raise an error today. Returning wrappers for them breaks no caller.
 - Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string and dates as ISO 8601 strings, for `cjson` (issues #53 and #67).
 
 - [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Use the corpus files `decimal128-1.json` to `decimal128-7.json` from `mongodb/specifications`, `source/bson-corpus/tests`.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson): decimal128, timestamp, regex, min/max key, null, empty array`. Tag the Phase 4 release.
+- [ ] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, null writes, JSON helpers`. Tag the Phase 4 release.
 
 ---
 
@@ -425,7 +430,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - If the URI has a user, it logs in.
 - Produces: a CI job `replset`. It runs `docker run -d --name rs -p 27017:27017 mongo:${{ matrix.mongo }} --replSet rs0`, then `docker exec rs mongosh --eval 'rs.initiate()'`, and waits for `isWritablePrimary`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` against the `replset` job gives `ismaster() == true`.
+- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. The `replset` job runs `make test-replset`.
 - [ ] **Step 2: Run** `prove t/uri.t t/cluster.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS.
@@ -439,7 +444,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: the 8 README GridFS methods with unchanged signatures: `find_one`, `remove`, `get`, `insert`, `new`, `read`, `write` and `update_md5`. `update_md5` stays client-side with `resty.md5`, because the server no longer computes it.
 - Chunks are written with `bson.int32` for `n` and with `binary` subtype `0x00` for `data`.
 - The files document stores `chunkSize` as int32 and `length` as int64 (issue #35).
-- `gridfs_file:write` inserts all chunks of one call in one `insert` command, as a kind-1 sequence (issue #36).
+- `gridfs_file:write(buf, offset, size)` keeps its overwrite semantics. Chunks that exist get `update`, as today, so untouched bytes stay. Only chunks that do not exist yet are inserted, all in one `insert` command with a kind-1 sequence (issue #36). The existing `t/gridfs_write.t` overwrite tests must pass unchanged.
 - `update_md5` stays, but `write` does not call it. The GridFS spec deprecated `md5`, so issue #37 is out of scope.
 - Add `TEST: chunkSize is int32` to `t/gridfs_write.t`. Read the files document with `db:cmd` and check the type byte of `chunkSize`.
 
@@ -451,12 +456,12 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 ### Task 14: Sessions and transactions
 
-**Files:** Create `lib/resty/mongol/session.lua`. Modify `colmt.lua` and `wire.lua`. Test: `t/txn.t`, which runs only in the `replset` job.
+**Files:** Create `lib/resty/mongol/session.lua`. Modify `colmt.lua` and `wire.lua`. Test: `t/replset/txn.t`, which runs only in the `replset` job.
 
 **Interfaces:**
 - Produces: `conn:start_session() -> session`. The `lsid` is `{id = binary(16 random bytes, subtype 0x04)}`.
 - Produces: `session:start_transaction()`, `session:commit_transaction() -> true | nil, err` and `session:abort_transaction() -> true | nil, err`. The commit and abort commands go to `admin`.
-- Produces: an optional last argument `opts` with `opts.session` on `insert`, `update`, `delete`, `query`, `find_one` and `aggregate`. With a session, `wire.command` adds `lsid`. In a transaction, it also adds `txnNumber` (int64), `autocommit = false`, and `startTransaction = true` on the first command.
+- Produces: an optional last argument `opts` with `opts.session` on `insert`, `update`, `delete`, `query`, `find`, `find_one` and `aggregate`. `col:find(query, fields, num_each, opts)` stores `opts.session` in the cursor. The cursor passes it to the first `query` and to every `getmore`. With a session, `wire.command` adds `lsid`. In a transaction, it also adds `txnNumber` (int64), `autocommit = false`, and `startTransaction = true` on the first command.
 - Produces: rules inside a transaction, from the MongoDB transactions specification:
   - Operations send no `writeConcern`. Only `commitTransaction` and `abortTransaction` carry one.
   - Any write is acknowledged and returns the safe-mode value, whatever `safe` is. The README documents this.
@@ -480,7 +485,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 **Files:** Modify `Readme.md`. Create `CHANGELOG.md`, `lua-resty-mongol-<version>-1.rockspec` and `dist.ini`.
 
 - [ ] **Step 1:** Rename `Readme.md` to `README.markdown` with a table of contents, the OpenResty convention. Remove the "deprecated" line. Fix the `find_one` return description (issue #44). Add examples for `$or`, dot notation and pagination with `skip`, `limit` and `sort` (issues #13, #14, #26, #41, #48). Add the supported server versions and the `db:cmd` key-order rule. Add the login and pool pattern and `cursor:close()`. Add the number rule, its helpers and the new methods.
-- [ ] **Step 2:** Write `CHANGELOG.md` with one section for each phase release. First, describe the 1-based array fix and its effect on old data. Then list every other visible change: the int32 and int64 encoding, `bson.null` on read, no `__gc` cursor kill, the removal of MONGODB-CR, and int64 cdata above 2^53.
+- [ ] **Step 2:** Add a `CHANGELOG.md` section for each release after `1.0.0`. Task 6 already wrote the `1.0.0` section. Add the removal of MONGODB-CR to the Phase 3 section.
 - [ ] **Step 3:** Add the rockspec with `build.type = "builtin"` and every module under `lib/resty/mongol`. Add `dist.ini` for OPM with `name`, `abstract`, `author`, `is_original = no`, `license = mit`, `lib_dir = lib`, `doc_dir = lib`, `main_module = lib/resty/mongol/init.lua` and `repo_link`. OPM reads the version from `_VERSION` in the main module.
 - [ ] **Step 4: Run** `luarocks lint lua-resty-mongol-*.rockspec` and `opm build`. Expected: no errors.
 - [ ] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Use the table in "Issue and PR disposition". Then close it. Close each open PR with a thank-you and a link to the commit that supersedes it.
@@ -521,5 +526,5 @@ Open PRs:
 | #60 `le_uint_to_num` speed-up | Superseded by Task 2 |
 | #57, #40 array index fix | Superseded by Task 2b |
 | #49 `ngx.worker.pid` | Superseded by Task 1b |
-| #39 `bson_null` | Superseded by Task 10 |
+| #39 `bson_null` | Superseded by Task 10 (write side only) |
 | #20 lazy machine id, no `assert` | Superseded by Tasks 1b and 2 |

@@ -97,6 +97,8 @@ The owner moved these changes from Phase 4 into Phase 1. The new protocol reads 
 3. Arrays use 1-based Lua indexes on both write and read (owner decision). Today `{a, b}` is stored as `[null, a, b]`, and a stored `[a, b]` reads as `{[0] = a, b}`. This fix ships in the first release, together with the number change (owner decision).
 4. These changes alter the stored data for existing callers. `CHANGELOG.md` must describe them. The first release, `1.0.0`, is the major release that contains them.
 5. Fix negative int32 values (issue #59).
+6. Add `bson.empty_array`. An empty Lua table stays a document. Commands such as `createUser` need an empty array for `roles` (issue #66).
+7. Read type 0x11 (Timestamp) as a wrapper with `t` and `i`, not as one number.
 
 ### Phase 2: CRUD on commands, same API
 
@@ -138,8 +140,8 @@ If the server reports `writeErrors` or `writeConcernError`, the write returns `n
 
 ### Phase 4: BSON types
 
-1. Add Decimal128, Timestamp, Regex, MinKey, MaxKey and the Null round trip.
-2. Add a marker for an empty array (issue #66).
+1. Add Decimal128, Regex, MinKey and MaxKey. Reads of these types raise an error today, so this breaks no caller.
+2. Add `bson.null` for writes. A read of BSON null stays `nil`, as today, so that no caller breaks after `1.0.0`.
 3. Let ObjectId and UTC dates convert to JSON through `cjson` (issues #53 and #67).
 
 ### Phase 5: New features
