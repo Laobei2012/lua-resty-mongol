@@ -366,12 +366,12 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   | `bson.null` | `0x0A`, a sentinel that keeps a key on write |
   | `bson.empty_array` | `0x04`, an array with no elements |
 
-- Produces: array indexes (issues #1, #14, #29, PRs #40, #57). Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. OWNER DECISION PENDING: see the open question in the PR description.
+- Produces: array indexes (issues #1, #14, #29, PRs #40, #57). Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. The owner decided to ship this fix in the same major release as Task 9. Old data with a leading `null` reads back shifted by one. `CHANGELOG.md` must say so.
 - Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
 - Produces: read of `0x0A` returns `bson.null`, not `nil`, so that the key stays (PR #39 idea, without its global `null`). This is a visible change, and it goes in `CHANGELOG.md`.
 - Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string and dates as ISO 8601 strings, for `cjson` (issues #53 and #67).
 
-- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
+- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: array 1-based`. It inserts `{v = {"a", "b"}}` with `safe`. A `$size` aggregate on `v` gives `2`, and `find_one().v[1]` is `"a"`. Add `TEST: $or array` for issue #14. A `count` with `{["$or"] = {{x = 1}, {y = 2}}}` returns no error. Add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Use the corpus files `decimal128-1.json` to `decimal128-7.json` from `mongodb/specifications`, `source/bson-corpus/tests`.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
@@ -459,7 +459,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 **Files:** Modify `Readme.md`. Create `CHANGELOG.md`, `lua-resty-mongol-<version>-1.rockspec` and `dist.ini`.
 
 - [ ] **Step 1:** Rename `Readme.md` to `README.markdown` with a table of contents, the OpenResty convention. Remove the "deprecated" line. Fix the `find_one` return description (issue #44). Add examples for `$or`, dot notation and pagination with `skip`, `limit` and `sort` (issues #13, #14, #26, #41, #48). Add the supported server versions and the `db:cmd` key-order rule. Add the login and pool pattern and `cursor:close()`. Add the number rule, its helpers and the new methods.
-- [ ] **Step 2:** Write `CHANGELOG.md` with one section for each phase release. List every visible change: the int32 and int64 encoding, `bson.null` on read, no `__gc` cursor kill, the removal of MONGODB-CR, and int64 cdata above 2^53.
+- [ ] **Step 2:** Write `CHANGELOG.md` with one section for each phase release. First, describe the 1-based array fix and its effect on old data. Then list every other visible change: the int32 and int64 encoding, `bson.null` on read, no `__gc` cursor kill, the removal of MONGODB-CR, and int64 cdata above 2^53.
 - [ ] **Step 3:** Add the rockspec with `build.type = "builtin"` and every module under `lib/resty/mongol`. Add `dist.ini` for OPM with `name`, `abstract`, `author`, `is_original = no`, `license = mit`, `lib_dir = lib`, `doc_dir = lib`, `main_module = lib/resty/mongol/init.lua` and `repo_link`. OPM reads the version from `_VERSION` in the main module.
 - [ ] **Step 4: Run** `luarocks lint lua-resty-mongol-*.rockspec` and `opm build`. Expected: no errors.
 - [ ] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Use the table in "Issue and PR disposition". Then close it. Close each open PR with a thank-you and a link to the commit that supersedes it.

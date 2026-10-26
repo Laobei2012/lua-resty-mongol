@@ -129,7 +129,8 @@ If the server reports `writeErrors` or `writeConcernError`, the write returns `n
 
 1. Numbers follow the official drivers (owner decision, Option B). A whole number that fits in int32 is written as int32. A larger whole number that fits in int64 is written as int64. Any other number is written as a double. A new helper `mongol.double(n)` forces a double. The helpers `mongol.int32(n)` and `mongol.int64(n)` force an integer type.
 2. On read, int32 and int64 values return as Lua numbers. If an int64 value is larger than 2^53, it returns as LuaJIT `int64_t` cdata, so that no digits are lost.
-3. This change alters the stored type for existing callers. `CHANGELOG.md` must describe it, and the release that contains it gets a new major version.
+3. Arrays use 1-based Lua indexes on both write and read (owner decision). Today `{a, b}` is stored as `[null, a, b]`, and a stored `[a, b]` reads as `{[0] = a, b}`. This fix ships in the same major release as the number change.
+4. These changes alter the stored data for existing callers. `CHANGELOG.md` must describe it, and the release that contains it gets a new major version.
 4. Add Decimal128, Timestamp, Regex, MinKey, MaxKey and the Null round trip.
 5. Add a marker for an empty array (issue #66).
 6. Fix negative int32 values (issue #59).
