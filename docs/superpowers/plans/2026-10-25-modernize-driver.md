@@ -162,7 +162,8 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   - `TEST: truncated reply`. Use `--- tcp_listen 12345` and `--- tcp_reply` with 10 bytes. `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
   - `TEST: checksum flag`. Use `--- tcp_reply` with a hand-built `OP_MSG` reply that has bit 0 set and `{ok = 1}` in the body. `db:cmd` returns a table with `ok == 1`.
 - [ ] **Step 2: Run** `prove t/wire.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits = 0`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
+- [ ] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
+- [ ] **Step 3b: Add the send-only path.** `wire.send_only(conn, dbname, cmd, sequences) -> true | nil, err` sets `flagBits` bit 1 (`moreToCome`) and reads no reply. Task 4 uses it for `w = 0` writes. Add `TEST: unsafe write then command`. It runs `col:insert(docs)` without `safe`, then `db:cmd({ping = 1})` on the same socket, and gets `ok == 1`. Source: the MongoDB `OP_MSG` specification.
 - [ ] **Step 4: Run** `prove t/wire.t t/bson.t`. Expected: PASS on all four servers in CI.
 - [ ] **Step 5: Commit** `feat(wire): send all commands as OP_MSG`.
 
@@ -174,17 +175,19 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 
 **Files:**
 - Modify: `lib/resty/mongol/colmt.lua:30-208` (delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`)
-- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks
+- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth.t`, which runs only in the Phase 3 auth job. Remove the `auth failed` lines from the expected output of the blocks that stay.
 
 **Interfaces:**
 - Consumes: `wire.command`, `bson.ordered`, `bson.int32`.
 - Produces: unchanged signatures. `col:insert(docs, continue_on_error, safe)`, `col:update(selector, update, upsert, multiupdate, safe)` and `col:delete(selector, single_remove, safe)`.
-  - `insert` sends `insert`, with `documents` as a kind-1 sequence and `ordered = not truthy(continue_on_error)`. If the write is safe and succeeds, it returns `0`.
-  - `update` sends `{q, u, upsert, multi}`. If the write is safe, it returns `reply.n`.
-  - `delete` sends `{q, limit = single_remove and 1 or 0}`. If the write is safe, it returns `reply.n`.
+  - `insert` sends `insert`, with `documents` as a kind-1 sequence and `ordered = not flag(continue_on_error)`. If the write is safe and succeeds, it returns `0`.
+  - `update` sends `{q, u, upsert = flag(upsert), multi = flag(multiupdate)}` as BSON booleans. If the write is safe, it returns `reply.n`.
+  - `delete` sends `{q, limit = flag(single_remove) and 1 or 0}`. If the write is safe, it returns `reply.n`.
+  - Unsafe writes use `wire.send_only` from Task 3.
   - If the write is unsafe, each call sends `writeConcern = {w = 0}` and returns `-1`.
   - If the reply has `writeErrors` or `writeConcernError`, the call returns `nil` and the first `errmsg`.
-- Produces: `local function is_safe(v) -> boolean`. It returns `false` for `nil`, `false` and `0`.
+- Produces: `local function flag(v) -> boolean`. It returns `false` for `nil`, `false` and `0`, and `true` for any other value. It is used for `safe`, `continue_on_error`, `upsert`, `multiupdate` and `single_remove`. In Lua, `0` is truthy, so code must not test these arguments directly.
+- Add `TEST: delete with flag 0`. Insert 3 documents, then `delete({}, 0, true)` gives `3`. Add `TEST: update with flags 0`. `update({x = 9}, {["$set"] = {y = 1}}, 0, 0, true)` on an empty collection gives `0`, and a later `count({})` gives `0`.
 
 - [ ] **Step 1: Write failing tests** in `t/sanity.t`:
   - `TEST: insert safe returns 0`. `col:insert({{name="dog"}}, nil, true)` gives `0`.
@@ -206,7 +209,11 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 
 **Interfaces:**
 - Produces: `col:query(query, returnfields, numberToSkip, numberToReturn, options) -> cursor_id(string 8), results(table), flags(table) | nil, err`.
-  - It sends `find` with `filter`, `projection`, `skip` (int32), `limit` and `batchSize`. A negative `numberToReturn` means `singleBatch = true` with `limit = abs(n)`.
+  - It sends `find` with `filter`, `projection` and `skip` (int32). `numberToReturn` maps as in the legacy `OP_QUERY`:
+    - `nil` or `0`: no `batchSize` and no `limit`.
+    - `1` or a negative `n`: `singleBatch = true` and `limit = abs(n)`.
+    - A positive `n` above 1: `batchSize = n`, and no `limit`.
+  - `options.limit` (new) is the total limit. The cursor sets it from `cursor:limit(n)`. `num_each_query` from `col:find` is only the batch size.
   - `options.sort` (new) becomes `sort`.
   - `cursor_id` is `ll.int64_to_le(reply.cursor.id)`. For an exhausted cursor, it is `"\0\0\0\0\0\0\0\0"`.
   - `flags` has `CursorNotFound = (code == 43)`, `QueryFailure = (any other error)` and `startingFrom`, `numberReturned`.
@@ -236,14 +243,16 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 **Interfaces:**
 - Consumes: `col:query`, `col:getmore`, `col:kill_cursors` from Task 5.
 - Produces: `cursor:next() -> i, doc | nil | nil, err`. `cursor:limit(n)`, `cursor:skip(n)` (new), `cursor:sort(field, size)`, `cursor:close() -> true | nil, err` (new) and `cursor:pairs()`.
-  - Before the first fetch, `sort` stores the sort in the cursor, fetches with server-side sort, and returns the first batch, as today.
+  - Before the first fetch, `sort` stores the sort in the cursor, fetches with server-side sort, and returns the first batch, as today. The fetch uses the `skip` and `limit` values that the caller set before.
+  - `skip(n)` and `limit(n)` must come before the first fetch. After the first fetch, they return `nil, "cursor already started"`.
   - After the first fetch, `sort` keeps today's client-side behavior.
   - Remove `cursor_mt.__gc`.
 
 - [ ] **Step 1: Write failing tests** in `t/cursor.t`:
   - `TEST: limit across batches`. Insert 25 documents, then `find({}, nil, 10)` with `limit(23)` yields exactly 23 documents, then `nil`.
   - `TEST: all documents` (issue #74). Insert 2,500 documents. `find({}, nil, 100)` without a limit yields exactly 2,500 documents.
-  - `TEST: skip`. Insert 10 documents with `n = 1..10`, then `sort({n=1})` and `skip(3)` give a first `n` of `4`.
+  - `TEST: skip`. Insert 10 documents with `n = 1..10`, then `skip(3)` and `sort({n=1})` give a first `n` of `4`.
+  - `TEST: skip after fetch`. After `next()`, `skip(1)` returns `nil` and `cursor already started`.
   - `TEST: server sort`. Insert `n = 3, 1, 2`. `sort({n=-1})` returns `n` values in the order `3, 2, 1`.
   - `TEST: close`. After `close()`, `next()` returns `nil`.
   - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` eventually returns `nil, err` or ends without a Lua error.
@@ -271,7 +280,8 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   - PBKDF2 and HMAC use FFI calls to `PKCS5_PBKDF2_HMAC` and `HMAC` in the OpenSSL that nginx links. At 15,000 iterations, pure Lua costs too much worker CPU. If the symbols are missing, the fallback is RFC 2104 HMAC over `resty.sha1` and `resty.sha256` (block size 64) with RFC 8018 PBKDF2.
   - The client nonce is 24 bytes from `resty.random.bytes(24, true)`, in base64.
   - The client checks that the server nonce starts with the client nonce, and checks the server signature `v=`.
-  - It caches `salted_password` in a module table keyed by `mechanism .. user .. salt .. iterations`.
+  - It caches `salted_password` in a module table. The key is `table.concat({mechanism, user, sha256_hex(prepared_password), salt, iterations}, "\0")`, so a wrong password never matches a cached entry.
+  - Add `TEST: wrong password after cached login`. In one worker, log in with the correct password, then log in on a fresh socket with a wrong password. The second login returns `nil` and `Authentication failed`.
 - Produces: `db:auth(user, password)` sends `hello` with `saslSupportedMechs = db .. "." .. user`. If the server lists SHA-256, it picks SHA-256. Otherwise, it picks SHA-1. `db:auth_scram_sha1(u, p)` stays as an alias.
 - Produces: a CI job `auth`. It runs the four-version matrix with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`, and runs only `t/auth.t`.
 
@@ -441,6 +451,11 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - Produces: `conn:start_session() -> session`. The `lsid` is `{id = binary(16 random bytes, subtype 0x04)}`.
 - Produces: `session:start_transaction()`, `session:commit_transaction() -> true | nil, err` and `session:abort_transaction() -> true | nil, err`. The commit and abort commands go to `admin`.
 - Produces: an optional last argument `opts` with `opts.session` on `insert`, `update`, `delete`, `query`, `find_one` and `aggregate`. With a session, `wire.command` adds `lsid`. In a transaction, it also adds `txnNumber` (int64), `autocommit = false`, and `startTransaction = true` on the first command.
+- Produces: rules inside a transaction, from the MongoDB transactions specification:
+  - Operations send no `writeConcern`. Only `commitTransaction` and `abortTransaction` carry one.
+  - Any write is acknowledged and returns the safe-mode value, whatever `safe` is. The README documents this.
+  - A cursor stores the session. Each `getMore` sends the same `lsid`, `txnNumber` and `autocommit = false`, without `startTransaction`.
+- Add `TEST: txn read across batches`. Insert 25 documents in a transaction, then `find({}, nil, 10)` in the same transaction yields 25 documents before the commit.
 
 - Produces: while a transaction is open, `conn:set_keepalive()` returns `nil, "transaction in progress"`, as `lua-resty-redis` does.
 
