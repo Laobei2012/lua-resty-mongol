@@ -88,6 +88,16 @@ CI runs `mongod` without auth in Phases 0 to 2. From Phase 3, CI runs a second j
 6. Add int32 and int64 encode helpers and an int64 decode helper. Phase 1 needs them, because `getMore` takes the cursor id as int64 and `limit`, `skip` and `batchSize` must be integers. Cursor ids stay as 8-byte strings in the public API.
 7. OP_MSG needs the command name as the first key. Internal commands use an ordered builder, as `attachpairs_start` does today. The public `db:cmd(t)` keeps its current rule. A table with one key works as is. A table with more keys needs `attachpairs_start`. The README will say this.
 
+### Phase 1b: Breaking BSON changes
+
+The owner moved these changes from Phase 4 into Phase 1. The new protocol reads `firstBatch`, `nextBatch` and command arrays, so it needs correct arrays from the start. The old library cannot talk to MongoDB 6.0 or later, so every user of the new release migrates anyway.
+
+1. Numbers follow the official drivers (owner decision, Option B). A whole number that fits in int32 is written as int32. A larger whole number that fits in int64 is written as int64. Any other number is written as a double. A new helper `mongol.double(n)` forces a double. The helpers `mongol.int32(n)` and `mongol.int64(n)` force an integer type.
+2. On read, int32 and int64 values return as Lua numbers. If an int64 value is larger than 2^53, it returns as LuaJIT `int64_t` cdata, so that no digits are lost.
+3. Arrays use 1-based Lua indexes on both write and read (owner decision). Today `{a, b}` is stored as `[null, a, b]`, and a stored `[a, b]` reads as `{[0] = a, b}`. This fix ships in the first release, together with the number change (owner decision).
+4. These changes alter the stored data for existing callers. `CHANGELOG.md` must describe them. The first release, `1.0.0`, is the major release that contains them.
+5. Fix negative int32 values (issue #59).
+
 ### Phase 2: CRUD on commands, same API
 
 | Old call | New command | Compatibility rule |
@@ -107,7 +117,8 @@ Add `cursor:skip(n)`, which is a TODO in the code today.
 
 Rules for Phase 2:
 
-1. `safe` follows the README. The values `nil`, `false` and `0` mean unacknowledged (`w = 0`). Any other value means acknowledged.
+1. `safe` follows the README. The values `nil`, `false` and `0` mean unacknowledged (`w = 0`). Any other value means acknowledged. The same rule applies to `continue_on_error`, `upsert`, `multiupdate` and `single_remove`. An unacknowledged write sets the `moreToCome` flag and reads no reply.
+5. `num_each_query` is only the batch size. `cursor:limit(n)` is the total limit. `skip(n)` and `limit(n)` must come before the first fetch.
 2. The flags table from `query` and `getmore` keeps its keys. If the server returns error code 43 (`CursorNotFound`), the driver sets `t.CursorNotFound = true`. If the server returns any other command error, the driver sets `t.QueryFailure = true` and also returns the error message.
 3. If a fetch fails, `cursor:next()` returns `nil, err`.
 4. The `__gc` finalizer no longer kills the cursor, because a finalizer cannot use cosockets. A new `cursor:close()` sends `killCursors`. If a caller does not close a cursor, the server removes it after its idle timeout (10 minutes by default).
@@ -119,24 +130,17 @@ If the server reports `writeErrors` or `writeConcernError`, the write returns `n
 1. Add SCRAM-SHA-256, with SASLprep for ASCII passwords. Non-ASCII passwords return a clear error until full SASLprep exists.
 2. `db:auth(user, password)` asks the server for the mechanism through `hello` with `saslSupportedMechs`. It prefers SCRAM-SHA-256 and falls back to SCRAM-SHA-1.
 3. Fix the SCRAM-SHA-1 nonce check, and use `resty.random` for the nonce.
-4. Cache the salted password for each user, salt and iteration count in the worker. This keeps PBKDF2 off the hot path for pooled connections.
+4. Cache the salted password in the worker, keyed by mechanism, user, a hash of the password, salt and iteration count. This keeps PBKDF2 off the hot path for pooled connections.
 5. Add TLS through `sock:sslhandshake()`.
 6. `conn:getprimary()` uses `hello`.
 7. Remove the use of `ngx.var` (issue #58).
 8. Auth state belongs to the socket, as today. After `set_keepalive`, a reused socket stays logged in as the same user. Callers use `get_reused_times()` to skip a second login, which is the current pattern. Each user must use a separate pool name, through the `pool` option of `connect`. The README will say this.
 
-### Phase 4: BSON correctness
+### Phase 4: BSON types
 
-1. Numbers follow the official drivers (owner decision, Option B). A whole number that fits in int32 is written as int32. A larger whole number that fits in int64 is written as int64. Any other number is written as a double. A new helper `mongol.double(n)` forces a double. The helpers `mongol.int32(n)` and `mongol.int64(n)` force an integer type.
-2. On read, int32 and int64 values return as Lua numbers. If an int64 value is larger than 2^53, it returns as LuaJIT `int64_t` cdata, so that no digits are lost.
-3. Arrays use 1-based Lua indexes on both write and read (owner decision). Today `{a, b}` is stored as `[null, a, b]`, and a stored `[a, b]` reads as `{[0] = a, b}`. This fix ships in the same major release as the number change.
-4. These changes alter the stored data for existing callers. `CHANGELOG.md` must describe it, and the release that contains it gets a new major version.
-4. Add Decimal128, Timestamp, Regex, MinKey, MaxKey and the Null round trip.
-5. Add a marker for an empty array (issue #66).
-6. Fix negative int32 values (issue #59).
-7. Let ObjectId and UTC dates convert to JSON through `cjson` (issues #53 and #67).
-
-Phase 4 changes how values are decoded. Any change that a caller can see goes in `CHANGELOG.md`.
+1. Add Decimal128, Timestamp, Regex, MinKey, MaxKey and the Null round trip.
+2. Add a marker for an empty array (issue #66).
+3. Let ObjectId and UTC dates convert to JSON through `cjson` (issues #53 and #67).
 
 ### Phase 5: New features
 

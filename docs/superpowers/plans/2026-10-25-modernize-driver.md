@@ -24,7 +24,7 @@
 - Socket, protocol and server errors return `nil, err`. They do not raise Lua errors.
 - Opcodes: the driver sends only `OP_MSG` (2013).
 - `safe`: the values `nil`, `false` and `0` mean `writeConcern = {w = 0}` and a return of `-1`. Any other value means acknowledged.
-- Phase 4 number rule (owner decision, Option B): a whole number that fits in int32 goes out as int32. A larger whole number that fits in int64 goes out as int64. Any other number goes out as a double. On read, an int64 above 2^53 returns as `int64_t` cdata.
+- Phase 1 number rule (owner decision, Option B): a whole number that fits in int32 goes out as int32. A larger whole number that fits in int64 goes out as int64. Any other number goes out as a double. On read, an int64 above 2^53 returns as `int64_t` cdata.
 - License: MIT/X11.
 - Commit style: `type(scope): description`, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
@@ -32,7 +32,7 @@
 
 1. A server that closes the socket or sends a short or invalid reply. Expected: the call returns `nil, err`, and the driver closes the socket so that `set_keepalive` cannot put a broken socket in the pool. Test: Task 3, `TEST: truncated reply`.
 2. A cursor with `limit` that is not a multiple of the batch size, over more than one `getMore`. Expected: exactly `limit` documents, then `nil`. Test: Task 6, `TEST: limit across batches`.
-3. Number edges: `2^31 - 1`, `2^31`, `-2^31 - 1`, `2^53 + 1` as cdata, `0.5`, `-0.0`, `1e300`, NaN. Expected: each value round trips with the type from the Phase 4 rule. Test: Task 10, `TEST: number edges`.
+3. Number edges: `2^31 - 1`, `2^31`, `-2^31 - 1`, `2^53 + 1` as cdata, `0.5`, `-0.0`, `1e300`, NaN. Expected: each value round trips with the type from the Phase 4 rule. Test: Task 2b, `TEST: number edges`.
 4. Strings with embedded `\0`, and binary data. Expected: an exact round trip for values. Keys with `\0` return `nil, err`. Test: Task 2, `TEST: nul in values`.
 5. A pooled socket reused by a request that needs a different login. Expected: the README pattern with one pool name for each user works, and `get_reused_times()` lets the caller skip a second login. Test: Task 8, `TEST: pooled login reuse`.
 
@@ -136,6 +136,44 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - [ ] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(bson): ordered documents and int32/int64 wrappers`.
 
+### Task 2b: Number encoding and array indexes (breaking)
+
+Owner decisions: Option B for numbers, 1-based arrays, both in the first release. Issues: #1, #14, #29, #59. PRs: #40, #57.
+
+**Files:**
+- Modify: `lib/resty/mongol/bson.lua` (`pack`), `lib/resty/mongol/init.lua` (exports)
+- Test: `t/bson.t`
+
+**Interfaces:**
+- Consumes: `bson.int32`, `bson.int64`, `bson.double`, `ll.int64_to_le`.
+- Produces: `pack` for a plain Lua number `v`:
+  - A finite value with `v == math.floor(v)` and `-2^31 <= v <= 2^31 - 1` is int32.
+  - A finite whole number with `-2^63 <= v < 2^63` is int64.
+  - Any other value, and `-0.0`, is a double.
+  - `int64_t` cdata is int64.
+- Produces: `mongol.int32`, `mongol.int64` and `mongol.double` on the module table returned by `require "resty.mongol"`.
+- Produces: array indexes. Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. Old data with a leading `null` reads back shifted by one. `CHANGELOG.md` must say so.
+- Produces: int32 reads are signed (issue #59).
+
+- [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
+
+  | Input | Type byte |
+  |---|---|
+  | `2^31 - 1` | `0x10` |
+  | `2^31` | `0x12` |
+  | `-2^31 - 1` | `0x12` |
+  | `0.5` | `0x01` |
+  | `-0.0` | `0x01` |
+  | `1e300` | `0x01` |
+  | `0/0` | `0x01` |
+  | `bson.double(1)` | `0x01` |
+
+  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`.
+- [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
+- [ ] **Step 5: Commit** `feat(bson)!: int32/int64 numbers and 1-based arrays`. The body explains both breaking changes.
+
 ### Task 3: OP_MSG transport and db:cmd
 
 **Files:**
@@ -195,6 +233,8 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   - `TEST: duplicate key`. Two safe inserts with the same `_id` give `nil` and a message that contains `E11000`.
   - `TEST: continue_on_error`. A safe batch of three documents, with a duplicate in the middle and `continue_on_error = 1`, gives `nil, err`. A later `count({})` is `2`.
   - `TEST: update multi`. Three documents, then `update({}, {["$set"]={x=1}}, 0, 1, true)`, give `3`.
+  - `TEST: negative int32` (issue #59). A safe insert of `{v = -1}` and a `find_one` give `v == -1`.
+  - `TEST: array round trip`. A safe insert of `{v = {"a", "b"}}`, then a `count` with `{v = {["$size"] = 2}}` gives `1`, and `find_one({}).v[1]` is `a`.
   - `TEST: delete single`. Three documents, then `delete({}, 1, true)`, give `1`.
 - [ ] **Step 2: Run** `prove t/sanity.t`. Expected: the new blocks FAIL.
 - [ ] **Step 3: Implement** the interfaces above.
@@ -226,6 +266,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   - `TEST: find_one`. Insert `{name="dog"}`. `find_one({name="dog"}).name` is `dog`.
   - `TEST: find_one miss`. The result is `nil`.
   - `TEST: count`. Insert 5 documents, then `count({})` gives `5`. This covers issue #61.
+  - `TEST: $or array` (issue #14). Insert `{x = 1}` and `{y = 2}`. A `count` with `{["$or"] = {{x = 1}, {y = 2}}}` gives `2`.
   - `TEST: query cursor not found`. `col:getmore("\1\0\0\0\0\0\0\0")` gives flags with `CursorNotFound == true`.
   - `TEST: listcollections`. After an insert into `c1`, the cursor yields a document with `name == "c1"`.
   - `TEST: find_and_modify`. Upsert `{x=1}` with `new=true`, and `.x` is `1`.
@@ -259,7 +300,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `wire.t`, `sanity.t`, `cursor.t` and `globals.t` PASS on all four servers. `gridfs*.t` and `cluster.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5".
-- [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`. Tag the Phase 2 release.
+- [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`. Tag the first release as `1.0.0`. It is the major release that contains both breaking changes from Task 2b.
 
 ---
 
@@ -321,41 +362,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 
 ---
 
-## Phase 4: BSON correctness (new major version)
-
-### Task 9: Number encoding (Option B)
-
-**Files:**
-- Modify: `lib/resty/mongol/bson.lua` (`pack`), `lib/resty/mongol/init.lua` (exports)
-- Test: `t/bson.t`, `t/sanity.t`
-
-**Interfaces:**
-- Consumes: `bson.int32`, `bson.int64`, `bson.double`, `ll.int64_to_le`.
-- Produces: `pack` for a plain Lua number `v`:
-  - A finite value with `v == math.floor(v)` and `-2^31 <= v <= 2^31 - 1` is int32.
-  - A finite whole number with `-2^63 <= v < 2^63` is int64.
-  - Any other value, and `-0.0`, is a double.
-  - `int64_t` cdata is int64.
-- Produces: `mongol.int32`, `mongol.int64` and `mongol.double` on the module table returned by `require "resty.mongol"`.
-
-- [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
-
-  | Input | Type byte |
-  |---|---|
-  | `2^31 - 1` | `0x10` |
-  | `2^31` | `0x12` |
-  | `-2^31 - 1` | `0x12` |
-  | `0.5` | `0x01` |
-  | `-0.0` | `0x01` |
-  | `1e300` | `0x01` |
-  | `0/0` | `0x01` |
-  | `bson.double(1)` | `0x01` |
-
-  In `t/sanity.t`, `TEST: negative int32`: a safe insert of `{v = -1}` and a `find_one` give `v == -1` (issue #59).
-- [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson)!: write whole numbers as int32/int64`. The body explains the breaking change.
+## Phase 4: BSON types
 
 ### Task 10: Missing BSON types, empty arrays, JSON
 
@@ -376,16 +383,15 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   | `bson.null` | `0x0A`, a sentinel that keeps a key on write |
   | `bson.empty_array` | `0x04`, an array with no elements |
 
-- Produces: array indexes (issues #1, #14, #29, PRs #40, #57). Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. The owner decided to ship this fix in the same major release as Task 9. Old data with a leading `null` reads back shifted by one. `CHANGELOG.md` must say so.
 - Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
 - Produces: read of `0x0A` returns `bson.null`, not `nil`, so that the key stays (PR #39 idea, without its global `null`). This is a visible change, and it goes in `CHANGELOG.md`.
 - Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string and dates as ISO 8601 strings, for `cjson` (issues #53 and #67).
 
-- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: array 1-based`. It inserts `{v = {"a", "b"}}` with `safe`. A `$size` aggregate on `v` gives `2`, and `find_one().v[1]` is `"a"`. Add `TEST: $or array` for issue #14. A `count` with `{["$or"] = {{x = 1}, {y = 2}}}` returns no error. Add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
+- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Use the corpus files `decimal128-1.json` to `decimal128-7.json` from `mongodb/specifications`, `source/bson-corpus/tests`.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson): decimal128, timestamp, regex, min/max key, null, empty array`. Tag the new major release.
+- [ ] **Step 5: Commit** `feat(bson): decimal128, timestamp, regex, min/max key, null, empty array`. Tag the Phase 4 release.
 
 ---
 
@@ -495,8 +501,8 @@ Open issues:
 | #61, #72 | Tasks 3 to 5 (modern protocol, `count` command) |
 | #45, #50, #56 | Task 7 |
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
-| #59 | Task 9 |
-| #1, #14, #29, #53, #66, #67 | Task 10 |
+| #1, #14, #29, #59 | Task 2b |
+| #53, #66, #67 | Task 10 |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |
@@ -513,7 +519,7 @@ Open PRs:
 | PR | Plan |
 |---|---|
 | #60 `le_uint_to_num` speed-up | Superseded by Task 2 |
-| #57, #40 array index fix | Superseded by Task 10 |
+| #57, #40 array index fix | Superseded by Task 2b |
 | #49 `ngx.worker.pid` | Superseded by Task 1b |
 | #39 `bson_null` | Superseded by Task 10 |
 | #20 lazy machine id, no `assert` | Superseded by Tasks 1b and 2 |
