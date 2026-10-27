@@ -28,12 +28,14 @@ t/spec/bson-corpus/.done:
 	touch $@
 
 # TODO(Task 5): Phase 1 CI runs only the tests that Phase 0 and Phase 1
-# implement. The other files need the Phase 2 collection code. Task 5
-# restores `prove -I t/lib t/*.t` and removes this list.
-PHASE1_TESTS = t/globals.t t/bson.t t/bson_corpus.t t/wire.t t/objid.t
+# implement. The other files need the Phase 2 collection code. The blocks
+# of t/objid.t and t/api.t that need it skip when TEST_NGINX_PHASE1 is set.
+# Task 5 restores `prove -I t/lib t/*.t` and removes this list and the
+# variable.
+PHASE1_TESTS = t/globals.t t/bson.t t/bson_corpus.t t/wire.t t/objid.t t/api.t
 
 test: spec-data
-	$(TEST_PATH) prove -I t/lib $(PHASE1_TESTS)
+	$(TEST_PATH) TEST_NGINX_PHASE1=1 prove -I t/lib $(PHASE1_TESTS)
 
 test-auth:
 	$(TEST_PATH) prove -I t/lib t/auth

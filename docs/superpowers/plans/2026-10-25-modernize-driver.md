@@ -151,7 +151,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
 
 ## Phase 1: Wire protocol
 
-> **Temporary CI gate (owner decision):** until Task 5, `make test` runs only `PHASE1_TESTS` (`t/globals.t`, `t/bson.t`, `t/bson_corpus.t`, `t/wire.t`, `t/objid.t`), and `t/objid.t` TEST 1 is skipped. The other files need the Phase 2 collection code. Task 5 restores the full run.
+> **Temporary CI gate (owner decision):** until Task 5, `make test` runs only `PHASE1_TESTS` (`t/globals.t`, `t/bson.t`, `t/bson_corpus.t`, `t/wire.t`, `t/objid.t`, `t/api.t`), and the blocks of `t/objid.t` and `t/api.t` that need the Phase 2 collection code skip when `TEST_NGINX_PHASE1` is set. The other files need the Phase 2 collection code. Task 5 restores the full run.
 
 ### Task 2: Ordered BSON and integer wrappers
 
@@ -348,7 +348,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
 - [ ] **Step 3: Implement** the interfaces above.
 - [ ] **Step 4: Run** the same command. Expected: PASS, except `t/sanity.t` TEST 11 and TEST 12. These two tests read across batches, which needs the Task 6 cursor. Task 6 Step 4 runs them.
-- [ ] **Step 4b: Restore the full CI run.** In the Makefile, replace `$(PHASE1_TESTS)` with `t/*.t` and delete the `PHASE1_TESTS` list and its TODO. Remove the `skip_eval` and the TODO comment from `t/objid.t` TEST 1. Remove the TODO comment in `.github/workflows/test.yml`. Expected: `make test` runs every file.
+- [ ] **Step 4b: Restore the full CI run.** In the Makefile, replace `$(PHASE1_TESTS)` with `t/*.t` and delete the `PHASE1_TESTS` list and its TODO. Remove `TEST_NGINX_PHASE1` from the Makefile target. In `t/objid.t` TEST 1 and in the `t/api.t` blocks that name Task 5 in a TODO comment, remove the TODO comment and the `$ENV{TEST_NGINX_PHASE1}` skip (keep the `TEST_NGINX_MONGO_BASELINE` part where it exists). Remove the TODO comment in `.github/workflows/test.yml`. Expected: `make test` runs every file.
 - [ ] **Step 5: Commit** `feat(col): reads over find/getMore commands`.
 
 ### Task 6: Cursor
