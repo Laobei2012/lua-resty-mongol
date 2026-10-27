@@ -268,3 +268,75 @@ nilmessage too large
 1
 --- no_error_log
 [error]
+
+
+
+=== TEST 12: kind-1 identifier without terminator
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local t = require "mongol_t"
+            local conn, db = t.connect("127.0.0.1", 12345)
+            local r, err = db:cmd({ping = 1})
+            ngx.say(r, " ", err)
+            ngx.say(conn:set_keepalive())
+        }
+    }
+--- tcp_listen: 12345
+--- tcp_reply eval
+Mongol::op_msg(0, "\x00" . Mongol::ok_doc() . "\x01" . pack("V", 7) . "abc")
+--- request
+GET /t
+--- response_body
+nil kind-1 section has no identifier terminator
+nilclosed
+--- no_error_log
+[error]
+
+
+
+=== TEST 13: kind-1 bad document
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local t = require "mongol_t"
+            local conn, db = t.connect("127.0.0.1", 12345)
+            local r, err = db:cmd({ping = 1})
+            ngx.say(r, " ", err)
+            ngx.say(conn:set_keepalive())
+        }
+    }
+--- tcp_listen: 12345
+--- tcp_reply eval
+Mongol::op_msg(0, "\x00" . Mongol::ok_doc() . "\x01" . pack("V", 4 + 2 + 5) . "d\x00" . "\x09\x00\x00\x00\x00")
+--- request
+GET /t
+--- response_body
+nil bson: document length too long
+nilclosed
+--- no_error_log
+[error]
+
+
+
+=== TEST 14: kind-1 valid sequence
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local t = require "mongol_t"
+            local conn, db = t.connect("127.0.0.1", 12345)
+            ngx.say(db:cmd({ping = 1}).ok)
+        }
+    }
+--- tcp_listen: 12345
+--- tcp_reply eval
+Mongol::op_msg(0, "\x00" . Mongol::ok_doc() . "\x01" . pack("V", 4 + 2 + 17) . "d\x00" . Mongol::ok_doc())
+--- request
+GET /t
+--- response_body
+1
+--- no_error_log
+[error]

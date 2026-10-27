@@ -9,7 +9,7 @@ local ipairs = ipairs
 local pcall = pcall
 local type = type
 local tostring = tostring
-local strbyte , strsub = string.byte , string.sub
+local strbyte , strfind , strsub = string.byte , string.find , string.sub
 local t_concat = table.concat
 
 local ll = require ( mod_name .. ".ll" )
@@ -129,7 +129,29 @@ local function decode_reply ( data )
                 return nil , tostring ( doc )
             end
             body = doc
-        elseif kind ~= 1 then
+        elseif kind == 1 then
+            local section_last = p + size - 1
+            local z = strfind ( data , "\0" , p + 4 , true )
+            if not z or z > section_last then
+                return nil , "kind-1 section has no identifier terminator"
+            end
+            local q = z + 1
+            while q <= section_last do
+                if q + 3 > section_last then
+                    return nil , "kind-1 section has a truncated document"
+                end
+                local dlen = le_int_to_num ( data , q , q + 3 )
+                if dlen < 5 or q + dlen - 1 > section_last then
+                    return nil , "bson: document length too long"
+                end
+                local ok , derr = pcall ( bson_decode ,
+                                          strsub ( data , q , q + dlen - 1 ) )
+                if not ok then
+                    return nil , tostring ( derr )
+                end
+                q = q + dlen
+            end
+        else
             return nil , "unknown section kind " .. kind
         end
         p = p + size
