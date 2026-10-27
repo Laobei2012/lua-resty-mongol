@@ -293,17 +293,17 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Add `TEST: insert split`. Set `wire.limits.max_message_size = 20000`. A safe insert of 50 documents of 1,000 bytes each returns `0`, and `count({})` gives `50`. Add `TEST: document too large`. Set `wire.limits.max_bson_size = 100`. An insert of a 200-byte document returns `nil` and `document too large`, and `count({})` gives `0`. Add `TEST: ordered stop across batches`. Use the same lowered limit and 50 documents, with a duplicate `_id` at position 2. The ordered insert gives `count({}) == 1`. The same insert with `continue_on_error = 1` gives `count({}) == 49`. Each test restores the limits at the end.
 - Add `TEST: delete with flag 0`. Insert 3 documents, then `delete({}, 0, true)` gives `3`. Add `TEST: update with flags 0`. `update({x = 9}, {["$set"] = {y = 1}}, 0, 0, true)` on an empty collection gives `0`, and a later `count({})` gives `0`.
 
-- [ ] **Step 1: Write failing tests** in `t/sanity.t`:
+- [x] **Step 1: Write failing tests** in `t/sanity.t`:
   - `TEST: insert safe returns 0`. `col:insert({{name="dog"}}, nil, true)` gives `0`.
   - `TEST: insert unsafe returns -1`. `col:insert({{name="dog"}})` gives `-1`.
   - `TEST: duplicate key`. Two safe inserts with the same `_id` give `nil` and a message that contains `E11000`.
   - `TEST: continue_on_error`. A safe batch of three documents, with a duplicate in the middle and `continue_on_error = 1`, gives `nil, err`. A later `count({})` is `2`.
   - `TEST: update multi`. Three documents, then `update({}, {["$set"]={x=1}}, 0, 1, true)`, give `3`.
   - `TEST: delete single`. Three documents, then `delete({}, 1, true)`, give `1`.
-- [ ] **Step 2: Run** `prove t/sanity.t`. Expected: the new blocks FAIL.
-- [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** `prove t/sanity.t`. Expected: the new blocks PASS.
-- [ ] **Step 5: Commit** `feat(col): writes over insert/update/delete commands`.
+- [x] **Step 2: Run** `prove t/sanity.t`. Expected: the new blocks FAIL.
+- [x] **Step 3: Implement** the interfaces above.
+- [x] **Step 4: Run** `prove t/sanity.t`. Expected: the new blocks PASS.
+- [x] **Step 5: Commit** `feat(col): writes over insert/update/delete commands`.
 
 ### Task 5: Reads, count, drop, and database methods
 
