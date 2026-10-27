@@ -1283,3 +1283,77 @@ GET /t
 nildocument too large 0 0
 --- no_error_log
 [error]
+
+
+
+=== TEST 41: delete with a bad selector
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{a = 1}, {a = 2}}, nil, true)
+            for _, bad in ipairs({"nil", "false", "string", "number"}) do
+                local v = ({["nil"] = nil, ["false"] = false, string = "x", number = 1})[bad]
+                local ok, err = pcall(col.delete, col, v, nil, true)
+                ngx.say(bad, " ", ok, " ", (tostring(err):find("bad argument", 1, true)) and "bad argument" or err)
+            end
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil false bad argument
+false false bad argument
+string false bad argument
+number false bad argument
+2
+--- no_error_log
+[error]
+
+
+
+=== TEST 42: update with a bad selector or document
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{a = 1}, {a = 2}}, nil, true)
+            local upd = {["$set"] = {x = 1}}
+            for _, bad in ipairs({"nil", "false", "string"}) do
+                local v = ({["nil"] = nil, ["false"] = false, string = "x"})[bad]
+                local ok, err = pcall(col.update, col, v, upd, false, true, true)
+                ngx.say(bad, " ", ok, " ", (tostring(err):find("bad argument", 1, true)) and "bad argument" or err)
+            end
+            for _, bad in ipairs({"nil", "false", "string"}) do
+                local v = ({["nil"] = nil, ["false"] = false, string = "x"})[bad]
+                local ok, err = pcall(col.update, col, {}, v, false, true, true)
+                ngx.say("doc " .. bad, " ", ok, " ", (tostring(err):find("bad argument", 1, true)) and "bad argument" or err)
+            end
+            ngx.say(col:count({x = 1}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil false bad argument
+false false bad argument
+string false bad argument
+doc nil false bad argument
+doc false false bad argument
+doc string false bad argument
+0
+--- no_error_log
+[error]
