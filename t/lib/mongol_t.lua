@@ -72,4 +72,10 @@ function _M.hexbytes(h)
     return (h:gsub("..", function(x) return string.char(tonumber(x, 16)) end))
 end
 
+-- returns the number of return values, then the values, of one call
+local function capture(...)
+    return select("#", ...), ...
+end
+_M.capture = capture
+
 return _M
