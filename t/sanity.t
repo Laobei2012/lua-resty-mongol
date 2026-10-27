@@ -857,3 +857,294 @@ GET /t
 --- no_error_log
 [error]
 
+
+
+=== TEST 30: insert safe returns 0
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            ngx.say(col:insert({{name = "dog"}}, nil, true))
+        }
+    }
+--- request
+GET /t
+--- response_body
+0
+--- no_error_log
+[error]
+
+
+
+=== TEST 31: insert unsafe returns -1
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            ngx.say(col:insert({{name = "dog"}}))
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+-1
+1
+--- no_error_log
+[error]
+
+
+
+=== TEST 32: duplicate key
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            ngx.say(col:insert({{_id = 1}}, nil, true))
+            local r, err = col:insert({{_id = 1}}, nil, true)
+            ngx.say(r, " ", err:find("E11000", 1, true) ~= nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+0
+nil true
+--- no_error_log
+[error]
+
+
+
+=== TEST 33: continue_on_error
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local r, err = col:insert({{_id = 1}, {_id = 1}, {_id = 2}}, 1, true)
+            ngx.say(r, " ", err ~= nil)
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil true
+2
+--- no_error_log
+[error]
+
+
+
+=== TEST 34: update multi
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{a = 1}, {a = 2}, {a = 3}}, nil, true)
+            ngx.say(col:update({}, {["$set"] = {x = 1}}, 0, 1, true))
+        }
+    }
+--- request
+GET /t
+--- response_body
+3
+--- no_error_log
+[error]
+
+
+
+=== TEST 35: delete single
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{a = 1}, {a = 2}, {a = 3}}, nil, true)
+            ngx.say(col:delete({}, 1, true))
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+--- no_error_log
+[error]
+
+
+
+=== TEST 36: insert split
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local old = wire.limits.max_message_size
+            wire.limits.max_message_size = 20000
+            local docs = {}
+            for i = 1, 50 do docs[i] = {s = string.rep("x", 1000)} end
+            ngx.say(col:insert(docs, nil, true))
+            wire.limits.max_message_size = old
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+0
+50
+--- no_error_log
+[error]
+
+
+
+=== TEST 37: document too large
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local old = wire.limits.max_bson_size
+            wire.limits.max_bson_size = 100
+            ngx.say(col:insert({{s = string.rep("x", 200)}}, nil, true))
+            wire.limits.max_bson_size = old
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nildocument too large
+0
+--- no_error_log
+[error]
+
+
+
+=== TEST 38: ordered stop across batches
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local old = wire.limits.max_message_size
+            wire.limits.max_message_size = 20000
+            local function docs()
+                local d = {}
+                for i = 1, 50 do d[i] = {_id = i, s = string.rep("x", 1000)} end
+                d[3]._id = 1
+                return d
+            end
+            local r, err = col:insert(docs(), nil, true)
+            ngx.say(r, " ", err ~= nil, " ", col:count({}))
+            col:delete({}, nil, true)
+            r, err = col:insert(docs(), 1, true)
+            ngx.say(r, " ", err ~= nil, " ", col:count({}))
+            wire.limits.max_message_size = old
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil true 2
+nil true 49
+--- no_error_log
+[error]
+
+
+
+=== TEST 39: delete with flag 0
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{a = 1}, {a = 2}, {a = 3}}, nil, true)
+            ngx.say(col:delete({}, 0, true))
+        }
+    }
+--- request
+GET /t
+--- response_body
+3
+--- no_error_log
+[error]
+
+
+
+=== TEST 40: update with flags 0
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            ngx.say(col:update({x = 9}, {["$set"] = {y = 1}}, 0, 0, true))
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+0
+0
+--- no_error_log
+[error]
