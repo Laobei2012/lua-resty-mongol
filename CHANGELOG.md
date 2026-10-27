@@ -2,16 +2,18 @@
 
 ## 1.0.0 (unreleased)
 
-This is the first release since the driver moved to the `OP_MSG` wire
-protocol. MongoDB 5.1 and later reject the legacy opcodes, so the old
-version does not work with MongoDB 6.0 to 9.0. This section lists every
-change that a caller can see in Phase 0 and Phase 1, with the reason.
-Later phases add their own entries.
+This section lists every change that a caller can see in Phase 0 and
+Phase 1, with the reason. The old version sends legacy opcodes that
+MongoDB 5.1 and later reject, so the driver moves to `OP_MSG` in steps.
+Phase 1 changes the BSON encoding and the command transport (`db:cmd`).
+Collection operations (insert, update, delete, query, count, cursors) and
+their error handling change in Phase 2. Later phases add their own
+entries.
 
-### Server support
+### Command transport
 
-- The driver sends only `OP_MSG`. It works with MongoDB 6.0, 7.0, 8.0 and
-  9.0. MongoDB 5.0 and earlier are not supported.
+- `db:cmd` and the connection commands (`hello`, `listDatabases`,
+  `dropDatabase`, `shutdown`) send `OP_MSG`.
 - `conn:ismaster()` keeps its name and its return values, but sends
   `hello` and reads `isWritablePrimary`. Reason: `ismaster` is deprecated.
 
@@ -69,8 +71,8 @@ Later phases add their own entries.
   returns `nil, "closed"`, so a broken socket never enters the pool. The
   next `conn:connect()` makes a new socket.
 - `db:cmd(q)` returns the reply on success, or `nil, errmsg, reply` on
-  failure. It no longer returns a fourth value, the flags table. Reason:
-  `OP_MSG` replies have no flags.
+  failure. It no longer returns the fourth value, the old `OP_REPLY` query flags
+  table. Reason: the driver does not use `OP_REPLY` any more.
 - A command with more than one key needs the command name first. Build it
   with `bson.ordered({{"name", value}, ...})`.
 - `conn:shutdown()` returns `true` when the server closes the socket, and
