@@ -1148,3 +1148,138 @@ GET /t
 0
 --- no_error_log
 [error]
+
+
+
+=== TEST 43: insert splits by batch size
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local old_size = wire.limits.max_write_batch_size
+            wire.limits.max_write_batch_size = 10
+            local real = wire.command
+            local sizes = {}
+            wire.command = function(c, d, cmd, seq, extra)
+                if seq and seq[1] then sizes[#sizes + 1] = #seq[1][2] end
+                return real(c, d, cmd, seq, extra)
+            end
+            local docs = {}
+            for i = 1, 25 do docs[i] = {n = i} end
+            local r = col:insert(docs, nil, true)
+            wire.command = real
+            wire.limits.max_write_batch_size = old_size
+            ngx.say(r, " ", table.concat(sizes, ","), " ", col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+0 10,10,5 25
+--- no_error_log
+[error]
+
+
+
+=== TEST 44: write concern error
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local real = wire.command
+            wire.command = function()
+                return {ok = 1, n = 1, writeConcernError = {code = 64, errmsg = "waiting for replication timed out"}}
+            end
+            local a, ea = col:insert({{a = 1}}, nil, true)
+            local b, eb = col:update({a = 1}, {["$set"] = {b = 1}}, 0, 0, true)
+            local c, ec = col:delete({a = 1}, 0, true)
+            wire.command = real
+            ngx.say(a, " ", ea)
+            ngx.say(b, " ", eb)
+            ngx.say(c, " ", ec)
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil waiting for replication timed out
+nil waiting for replication timed out
+nil waiting for replication timed out
+--- no_error_log
+[error]
+
+
+
+=== TEST 45: unsafe writes with false and 0
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            for _, safe in ipairs({false, 0}) do
+                col:delete({}, nil, true)
+                local i = col:insert({{a = 1}, {a = 2}}, nil, safe)
+                local u = col:update({a = 1}, {["$set"] = {b = 1}}, 0, 0, safe)
+                local d = col:delete({a = 2}, 0, safe)
+                ngx.say(tostring(safe), " ", i, " ", u, " ", d, " ", col:count({}), " ", col:count({b = 1}))
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+false -1 -1 -1 1 1
+0 -1 -1 -1 1 1
+--- no_error_log
+[error]
+
+
+
+=== TEST 46: oversized document late in the input
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local old = wire.limits.max_bson_size
+            wire.limits.max_bson_size = 100
+            local real = wire.command
+            local sent = 0
+            wire.command = function(...) sent = sent + 1 return real(...) end
+            local docs = {}
+            for i = 1, 5 do docs[i] = {a = i} end
+            docs[6] = {s = string.rep("x", 200)}
+            local r, err = col:insert(docs, nil, true)
+            wire.command = real
+            wire.limits.max_bson_size = old
+            ngx.say(r, err, " ", sent, " ", col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nildocument too large 0 0
+--- no_error_log
+[error]
