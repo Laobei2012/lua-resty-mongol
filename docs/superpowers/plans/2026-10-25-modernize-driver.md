@@ -27,6 +27,7 @@
 - Phase 1 number rule (owner decision, Option B): a whole number that fits in int32 goes out as int32. A larger whole number that fits in int64 goes out as int64. Any other number goes out as a double. On read, an int64 above 2^53 returns as `int64_t` cdata.
 - License: MIT/X11.
 - Commit style: `type(scope): description`, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Test rule: if a test sends a command with more than one key through `db:cmd`, it builds the command with `bson.ordered`. This keeps the command name as the first key.
 
 ## Review Focus
 
@@ -182,7 +183,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
 Owner decisions: Option B for numbers, 1-based arrays, both in the first release. Issues: #1, #14, #29, #59. PRs: #40, #57.
 
 **Files:**
-- Modify: `lib/resty/mongol/bson.lua` (`pack`), `lib/resty/mongol/init.lua` (exports)
+- Modify: `lib/resty/mongol/bson.lua` (`pack`), `lib/resty/mongol/init.lua` (exports), `lib/resty/mongol/gridfs_file.lua` (`read`, `update_md5`)
 - Test: `t/bson.t`
 
 **Interfaces:**
@@ -198,6 +199,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `bson.null`, a unique sentinel table (owner decision). `to_bson` writes it as type 0x0A. A read of type 0x0A returns `bson.null` in documents and in arrays, so keys and array positions stay. Today a null reads as `nil`, so code such as `if doc.x then` changes meaning. This change ships in `1.0.0` (PR #39 idea, without its global `null`).
 - Produces: UTC dates read as the same wrapper that `bson.get_utc_date(ms)` makes, with the field `v`. The value `v` is signed, so dates before 1970 are correct (issue #53). Above 2^53, it is `int64_t` cdata. Today a date reads as a plain unsigned number, so this change ships in `1.0.0`.
 - Produces: binary values keep their subtype. `bson.get_bin_data(data, subtype)` takes an optional subtype, a number from 0 to 255 with a default of 0. A read of type 0x05 returns the same wrapper, with the fields `v` (the bytes) and `st` (the subtype byte), for every subtype. Today a read returns a plain string and drops the subtype, so this change ships in `1.0.0`. Subtype 0x02 has an extra inner length, and the encoder and decoder must handle it.
+- Produces: GridFS keeps working with the binary wrapper. `gridfs_file:read` and `update_md5` read chunk bytes from `r.data.v`, not from `r.data`. `read` still returns a Lua string. Without this change, `read()` raises `bad argument #1 to 'sub'` in `1.0.0`.
 - Produces: `bson.timestamp(t, i)` writes type 0x11. A read of type 0x11 returns the same wrapper, with fields `t` and `i`. Today it reads as one int64 number, so this change ships in `1.0.0`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
@@ -358,7 +360,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - After the first fetch, `sort` keeps today's client-side behavior.
   - Remove `cursor_mt.__gc`.
 - Produces: `cursor.from_reply(col, reply_cursor, num_each, session) -> cursor`. It takes `reply_cursor.firstBatch`, `reply_cursor.id` and `reply_cursor.ns`. Every `getMore` and `killCursors` uses the collection part of `ns`. For `listCollections`, this is `$cmd.listCollections`. Task 11 `aggregate` uses this constructor too.
-- Produces: `db:listcollections()` sends `listCollections` and returns `cursor.from_reply(...)`. `db:list()` is an alias for it, because the README documents that name.
+- Produces: `db:listcollections(num_each)` sends `listCollections` and returns `cursor.from_reply(...)`. The optional `num_each` goes out as `cursor = {batchSize = num_each}`, and `from_reply` uses it for each `getMore`. Without it, the command sends `cursor = {}`. `db:list(num_each)` is an alias for it, because the README documents that name.
 - Produces: any `getMore` error makes `next()` return `nil, err`. This includes code 43 (`CursorNotFound`) and code 175 (`QueryPlanKilled`). The cursor does not run the query again. Today `next()` runs the query again after `CursorNotFound`, which can return a document twice.
 
 - [ ] **Step 1: Write failing tests** in `t/cursor.t`:
@@ -371,11 +373,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - Rewrite the expected output of the existing `t/cursor.t` TEST 1. Its third case uses a batch size of 2 and `limit(5)`, so it now prints `1, 2, 3, 4, 5`, not `1, 2`.
   - `TEST: server sort`. Insert `n = 5, 2, 7, 1, 6, 3, 4`. Then `find({}, nil, 2)` with `skip(1)`, `limit(4)` and `sort({n=-1})` returns the first batch, `6, 5`. A new cursor with the same settings, read with `pairs()` after `sort`, yields `6, 5, 4, 3`. The batch size is 2, so the old client-side sort of one batch cannot pass this test.
   - `TEST: close`. After `close()`, `next()` returns `nil`.
-  - `TEST: listcollections`. Create 3 collections, then `db:listcollections()` with a batch size of 2 yields all 3 names. The second batch comes from a `getMore` on `$cmd.listCollections`.
+  - `TEST: listcollections`. Create 3 collections, then `db:listcollections(2)` yields all 3 names. The second batch comes from a `getMore` on `$cmd.listCollections`.
   - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` returns exactly `nil` and a string.
 - [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `gridfs*.t`, `cluster.t` and the two GridFS blocks in `api.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
+- [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `t/gridfs.t`, `t/gridfs_write.t` and the aligned GridFS block in `api.t` must also pass. The `1.0.0` release must not ship a documented call that raises a Lua error. If one fails, fix it in this task before the tag. `cluster.t` and the unaligned GridFS block in `api.t` can still fail. Mark them `--- SKIP` with the reasons "Task 12" and "Task 13". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
 - [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
 - [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
   - 1-based arrays and their effect on old data.
@@ -442,7 +444,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: pool option`. Two connects with `pool = "a"` show `get_reused_times() == 1` on the second.
   - `TEST: tls to plain server`. `connect(host, port, {ssl = true})` returns `nil, err` and raises no Lua error.
   - In `t/tls/tls.t`, which runs only in the CI job `tls`: `TEST: tls verified`. `connect("127.0.0.1", 27017, {ssl = true, ssl_server_name = "localhost"})` succeeds, and `db:cmd({ping = 1})` returns `ok == 1`. `TEST: tls untrusted`. A second nginx block trusts a different CA, and the same `connect` returns `nil, err`. All three blocks use `127.0.0.1` with `ssl_server_name = "localhost"`. A cosocket cannot resolve `localhost` without a `resolver`, and the certificate name is `localhost`. `TEST: tls reconnect`. After `close()`, `connect()` with no arguments succeeds, and `ping` returns `ok == 1`.
-- Produces: the CI job `tls`. It runs only with `mongo:9.0`, to keep CI short. A step makes a test CA and a server certificate for `localhost` with `openssl`. The job starts `mongod` with `--tlsMode requireTLS --tlsCertificateKeyFile`. `t/tls/tls.t` sets `lua_ssl_trusted_certificate` to the test CA. A new Makefile target `test-tls` runs `prove -I t/lib t/tls`. The certificates are made in CI and never committed.
+- Produces: the CI job `tls`. It runs only with `mongo:9.0`, to keep CI short. A step makes a test CA and a server certificate for `localhost` with `openssl`. The job starts `mongod` with `--tlsMode requireTLS --tlsCertificateKeyFile server.pem --tlsCAFile ca.pem --tlsAllowConnectionsWithoutCertificates`. MongoDB does not start with TLS and no CA file. The last flag lets the driver connect without a client certificate. `t/tls/tls.t` sets `lua_ssl_trusted_certificate` to the test CA. A new Makefile target `test-tls` runs `prove -I t/lib t/tls`. The certificates are made in CI and never committed.
   - `TEST: pool_size`. `connect(host, port, {pool = "b", pool_size = 1})` succeeds.
 - [ ] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
@@ -524,9 +526,9 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `TEST: started and succeeded`. A monitor that appends to a list, then `find_one({})`, records `started` and `succeeded`, both with `command_name == "find"` and the same `request_id`.
   - `TEST: failed`. `db:cmd({nosuchcmd = 1})` records `failed`, and `error` contains `no such command`.
   - `TEST: hook error`. A `started` hook that raises an error does not stop `find_one`, and the error log contains the hook error.
-  - `TEST: redaction`. With auth off, the block first drops the user `u3` and ignores the error. Then `db:cmd({createUser = "u3", pwd = "secret", roles = bson.empty_array})` records a `started` event whose `command` is empty, and no event text contains `secret`.
+  - `TEST: redaction`. With auth off, the block first drops the user `u3` and ignores the error. Then `db:cmd(bson.ordered{{"createUser", "u3"}, {"pwd", "secret"}, {"roles", bson.empty_array}})` records a `started` event whose `command` is empty, and no event text contains `secret`.
   - `TEST: failed sensitive command`. Drop the user `u3` and ignore the error. Then run the same `createUser` twice. The second call fails because the user exists. Its `failed` event has `error == "redacted"`, and no event text contains `secret` or `u3`.
-  - `TEST: speculative hello`. `db:cmd({hello = 1, speculativeAuthenticate = {saslStart = 1}})` records events with an empty `command` and an empty `reply`.
+  - `TEST: speculative hello`. `db:cmd(bson.ordered{{"hello", 1}, {"speculativeAuthenticate", {saslStart = 1}}})` records events with an empty `command` and an empty `reply`.
   - `TEST: insert event`. `col:insert({{a = 1}, {a = 2}}, nil, true)` records a `started` event whose `command.documents` has 2 entries.
   - `TEST: hook mutation`. A `started` hook sets `ev.command.filter.a = 99` and then raises an error. `find_one({a = 1})` still finds the document with `a == 1`. A `succeeded` hook that clears `ev.reply` does not change the value that `find_one` returns.
   - `TEST: monitor removed in flight`. A `started` hook calls `set_monitor(nil)`. The same command still records its `succeeded` event.
@@ -552,7 +554,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - If the URI has a user, it logs in.
 - Produces: a CI job `replset` with a 3-member replica set. It starts three containers with `docker run -d --network host mongo:${{ matrix.mongo }} --replSet rs0 --port <p>`, for the ports 27017, 27018 and 27019. Then it runs `rs.initiate()` through `mongosh` with the members `127.0.0.1:27017` (priority 2), `127.0.0.1:27018` and `127.0.0.1:27019`, and waits until 27017 is primary. The existing `t/cluster.t` uses port 27018 as a secondary. The member names are IP addresses, because `getprimary` and `connect_uri` connect to the names in `hello.hosts`. A cosocket cannot resolve `localhost` without a `resolver`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd` with `writeConcern = {w = 3}`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
+- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd(bson.ordered{{"insert", name}, {"documents", docs}, {"writeConcern", {w = 3}}})`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
 - [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
@@ -560,11 +562,11 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 
 ### Task 13: GridFS on the new methods
 
-**Files:** Modify `lib/resty/mongol/gridfs.lua` and `gridfs_file.lua`. Test: `t/gridfs.t`, `t/gridfs_write.t` (remove the Phase 5 skips).
+**Files:** Modify `lib/resty/mongol/gridfs.lua` and `gridfs_file.lua`. Test: `t/gridfs.t`, `t/gridfs_write.t`, and the unaligned read block in `t/api.t` (remove its skip).
 
 **Interfaces:**
 - Produces: the 8 README GridFS methods with unchanged signatures: `find_one`, `remove`, `get`, `insert`, `new`, `read`, `write` and `update_md5`. `update_md5` stays client-side with `resty.md5`, because the server no longer computes it.
-- Chunks are written with `bson.int32` for `n` and with `binary` subtype `0x00` for `data`. A chunk now reads as a binary wrapper, so `read` and `update_md5` use its `v` field. `gridfs_file:read` still returns a Lua string.
+- Chunks are written with `bson.int32` for `n` and with `binary` subtype `0x00` for `data`. Task 2b already moved `read` and `update_md5` to the `v` field of the chunk wrapper.
 - The files document stores `chunkSize` as int32 and `length` as int64 (issue #35).
 - `gridfs_file:write(buf, offset, size)` keeps its overwrite semantics. Chunks that exist get `update`, as today, so untouched bytes stay. Only chunks that do not exist yet are inserted, through `col:insert`, which splits them into batches as Task 4 defines (issue #36). The existing `t/gridfs_write.t` overwrite tests must pass unchanged.
 - `update_md5` stays, but `write` does not call it. The GridFS spec deprecated `md5`, so issue #37 is out of scope.
@@ -572,8 +574,8 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - Add `TEST: write twice past end`. On a new file handle, `write("abc", 0)` and then `write("d", 3)` both succeed, and `read()` returns `abcd`. Add `TEST: md5 exact multiple`. With `chunkSize = 4` and an 8-byte file, `update_md5()` succeeds, and the stored `md5` equals `ngx.md5` of the 8 bytes. Add `TEST: large file split`. Set `wire.limits.max_message_size = 20000` and write a 100,000-byte file with `chunkSize = 4096`. `read()` returns the same bytes.
 - Add `TEST: stored types` to `t/gridfs_write.t`. A decoded Lua number does not show its BSON type, so the test asks the server. `count({_id = id, chunkSize = {["$type"] = "int"}, length = {["$type"] = "long"}})` on the files collection gives `1`. The chunks collection gives the same count for `n` with `"int"` and `data` with `"binData"`.
 
-- [ ] **Step 1:** Remove the `--- SKIP` lines from `t/gridfs*.t`. Port the literal values to `$TEST_NGINX_MONGO_*`. Make sure that Task 4 removed every `db:auth()` call and every `auth failed` expected line from `t/gridfs.t` and `t/gridfs_write.t`. Keep every overwrite assertion as it is.
-- [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t`. Expected: FAIL.
+- [ ] **Step 1:** Add the new tests of this task to `t/gridfs_write.t`. Remove the `--- SKIP` line from the unaligned read block in `t/api.t`. Keep every existing overwrite assertion as it is.
+- [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS on all four servers.
 - [ ] **Step 5: Commit** `feat(gridfs): port to command API`.
