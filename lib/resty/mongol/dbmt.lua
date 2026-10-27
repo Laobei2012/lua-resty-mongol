@@ -15,6 +15,7 @@ local colmt = require ( mod_name .. ".colmt" )
 local wire = require ( mod_name .. ".wire" )
 local bson = require ( mod_name .. ".bson" )
 local gridfs = require ( mod_name .. ".gridfs" )
+local cursor = require ( mod_name .. ".cursor" )
 
 local dbmethods = { }
 local dbmt = { __index = dbmethods }
@@ -23,10 +24,18 @@ function dbmethods:cmd(q)
     return wire.command(self.conn, self.db, q)
 end
 
-function dbmethods:listcollections ( )
-    local col = self:get_col("system.namespaces")
-    return col:find( { } )
+function dbmethods:listcollections ( num_each )
+    local r, err = wire.command(self.conn, self.db, bson.ordered({
+        { "listCollections" , 1 } ,
+        { "cursor" , num_each and { batchSize = num_each } or { } } ,
+    }))
+    if not r then
+        return nil, err
+    end
+    return cursor.from_reply(self:get_col("$cmd"), r.cursor, num_each)
 end
+
+dbmethods.list = dbmethods.listcollections
 
 function dbmethods:dropDatabase ( )
     local r, err = self:cmd({ dropDatabase = 1 })
