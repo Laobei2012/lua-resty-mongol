@@ -56,8 +56,6 @@ nil string
 
 
 === TEST 3: databases
-# TODO(Task 5): skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -85,8 +83,7 @@ GET /t
 
 === TEST 4: dropDatabase
 # db:dropDatabase sends dropDatabase = true; the server needs 1
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -195,8 +192,6 @@ GET /t
 
 
 === TEST 8: count with filter
-# TODO(Task 5): skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
