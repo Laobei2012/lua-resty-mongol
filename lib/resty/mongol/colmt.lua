@@ -2,9 +2,9 @@ local mod_name = (...):match ( "^(.*)%..-$" )
 
 local misc = require ( mod_name .. ".misc" )
 
-local assert , pcall = assert , pcall
-local ipairs , pairs = ipairs , pairs
-local t_insert , t_concat = table.insert , table.concat
+local assert = assert
+local ipairs = ipairs
+local t_concat = table.concat
 
 local attachpairs_start = misc.attachpairs_start
 
@@ -71,10 +71,9 @@ local function read_msg_header ( sock )
     return length , requestID , reponseTo , opcode
 end
 
-local function handle_reply ( conn , req_id , offset_i )
-    offset_i = offset_i  or 0
+local function handle_reply ( conn , req_id )
 
-    local r_len , r_req_id , r_res_id , opcode = read_msg_header ( conn.sock )
+    local r_len , _ , r_res_id , opcode = read_msg_header ( conn.sock )
     assert ( req_id == r_res_id )
     assert ( opcode == opcodes.REPLY )
     local data = assert ( conn.sock:receive ( r_len - 16 ) )
@@ -115,9 +114,9 @@ function colmethods:insert(docs, continue_on_error, safe)
 
     local m = num_to_le_uint(flags)..full_collection_name(self, self.col)
                 ..t_concat(t)
-    local id, send = docmd(self.conn, "INSERT", m)
+    local _, send = docmd(self.conn, "INSERT", m)
     if send == 0 then
-        return nil, "send message failed"   
+        return nil, "send message failed"
     end
 
     if safe ~= 0 then
@@ -125,7 +124,7 @@ function colmethods:insert(docs, continue_on_error, safe)
         if not r then
             return nil, err
         end
-    
+
         if r["err"] then
             return nil, r["err"]
         else
@@ -144,11 +143,11 @@ function colmethods:update(selector, update, upsert, multiupdate, safe)
     selector = to_bson(selector)
     update = to_bson(update)
 
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col) 
+    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
                 .. num_to_le_uint ( flags ) .. selector .. update
-    local id, send = docmd(self.conn, "UPDATE", m)
+    local _, send = docmd(self.conn, "UPDATE", m)
     if send == 0 then
-        return nil, "send message failed"   
+        return nil, "send message failed"
     end
 
     if safe ~= 0 then
@@ -156,7 +155,7 @@ function colmethods:update(selector, update, upsert, multiupdate, safe)
         if not r then
             return nil, err
         end
-    
+
         if r["err"] then
             return nil, r["err"]
         else
@@ -172,20 +171,20 @@ function colmethods:delete(selector, single_remove, safe)
 
     selector = to_bson(selector)
 
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col) 
+    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
                 .. num_to_le_uint(flags) .. selector
 
-    local id, sent = docmd(self.conn, "DELETE", m)
+    local _, sent = docmd(self.conn, "DELETE", m)
     if sent == 0 then
-        return nil, "send message failed"   
+        return nil, "send message failed"
     end
-    
+
     if safe ~= 0 then
         local r, err = self.db_obj:cmd({getlasterror=1})
         if not r then
             return nil, err
         end
-    
+
         if r["err"] then
             return nil, r["err"]
         else
@@ -198,7 +197,7 @@ function colmethods:kill_cursors(cursorIDs)
     local n = #cursorIDs
     cursorIDs = t_concat(cursorIDs)
 
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col) 
+    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
                 .. num_to_le_uint(n) .. cursorIDs
 
     return docmd(self.conn, "KILL_CURSORS", m )
@@ -230,15 +229,15 @@ function colmethods:query(query, returnfields, numberToSkip, numberToReturn, opt
         .. query .. returnfields
 
     local req_id = docmd(self.conn, "QUERY", m)
-    return handle_reply(self.conn, req_id, numberToSkip)
+    return handle_reply(self.conn, req_id)
 end
 
 function colmethods:getmore(cursorID, numberToReturn, offset_i)
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col) 
+    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
                 .. num_to_le_int(numberToReturn or 0) .. cursorID
 
     local req_id = docmd(self.conn, "GET_MORE" , m)
-    return handle_reply(self.conn, req_id, offset_i)
+    return handle_reply(self.conn, req_id)
 end
 
 function colmethods:count(query)
@@ -246,7 +245,7 @@ function colmethods:count(query)
             count = self.col;
             query = query or { } ;
         } , "count" ) )
-        
+
     if not r then
         return nil, err
     end
@@ -270,7 +269,7 @@ function colmethods:find(query, returnfields, num_each_query)
 end
 
 function colmethods:find_one(query, returnfields)
-    local id, results, t = self:query(query, returnfields, 0, 1)
+    local id, results = self:query(query, returnfields, 0, 1)
     if id == "\0\0\0\0\0\0\0\0" and results[1] then
         return results[1]
     end

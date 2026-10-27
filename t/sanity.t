@@ -1,20 +1,14 @@
 # vim:set ft= ts=4 sw=4 et:
 
 use Test::Nginx::Socket;
-use Cwd qw(cwd);
+use lib "t/lib";
+use Mongol;
 
 repeat_each(1);
 
 plan tests => repeat_each() * (3 * blocks());
 
-my $pwd = cwd();
-
-our $HttpConfig = qq{
-    lua_package_path "$pwd/lib/?/init.lua;;";
-};
-
 $ENV{TEST_NGINX_RESOLVER} = '8.8.8.8';
-$ENV{TEST_NGINX_MONGO_PORT} ||= 27017;
 
 no_long_string();
 #no_diff();
@@ -31,7 +25,7 @@ __DATA__
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -43,7 +37,7 @@ __DATA__
             local r,err = col:insert({{name="dog",n=10,m=20}}, nil, true)
             if not r then ngx.say("insert failed: "..err) end
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -99,7 +93,7 @@ connect failed: connection refused
             conn = mongo:new()
             conn:set_timeout(1000) 
 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
@@ -110,7 +104,7 @@ connect failed: connection refused
                 ngx.say("set keepalive failed: "..err)
             end
 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
@@ -135,13 +129,13 @@ GET /t
             conn = mongo:new()
             conn:set_timeout(1000) 
 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then
                 ngx.say("auth failed")
                 ngx.exit(ngx.OK)
@@ -173,7 +167,7 @@ GET /t
             conn = mongo:new()
             conn:set_timeout(1000) 
 
-            local r, err = conn:connect("127.0.0.1")
+            local r, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not r then ngx.say("connect failed: "..err) end
 
             local db = conn:new_db_handle("test")
@@ -182,7 +176,7 @@ GET /t
             r,err = col:update({name="dog"},{name="cat"}, nil, nil, true)
             if not r then ngx.say("update failed: "..err) end
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r,err = col:delete({})
@@ -251,13 +245,13 @@ cat
             conn = mongo:new()
             conn:set_timeout(1000) 
 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then
                 ngx.say("auth failed")
                 ngx.exit(ngx.OK)
@@ -294,13 +288,13 @@ GET /t
             conn = mongo:new()
             conn:set_timeout(1000) 
 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then
                 ngx.say("auth failed")
                 ngx.exit(ngx.OK)
@@ -353,13 +347,13 @@ nil
             conn = mongo:new()
             conn:set_timeout(1000) 
 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then
                 ngx.say("auth failed")
                 ngx.exit(ngx.OK)
@@ -406,7 +400,7 @@ ns not found
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then
                 ngx.say("auth failed")
                 ngx.exit(ngx.HTTP_OK)
@@ -458,7 +452,7 @@ not found
             conn = mongo:new()
             conn:set_timeout(10000) 
 
-            local ok, err = conn:connect("127.0.0.1")
+            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
@@ -471,7 +465,7 @@ not found
                 ngx.say("delete failed: "..err)
             end
 
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then
                 ngx.say("auth failed")
                 ngx.exit(ngx.HTTP_OK)
@@ -530,7 +524,7 @@ delete failed: need to login
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -539,7 +533,7 @@ delete failed: need to login
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -597,7 +591,7 @@ a20
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -606,7 +600,7 @@ a20
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -647,7 +641,7 @@ nil
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -656,7 +650,7 @@ nil
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -716,7 +710,7 @@ a25
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -725,7 +719,7 @@ a25
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -765,7 +759,7 @@ GET /t
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -774,7 +768,7 @@ GET /t
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -808,7 +802,7 @@ GET /t
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -817,7 +811,7 @@ GET /t
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
@@ -855,7 +849,7 @@ GET /t
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            ok, err = conn:connect("127.0.0.1")
+            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
@@ -864,7 +858,7 @@ GET /t
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("admin", "admin")
+            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)

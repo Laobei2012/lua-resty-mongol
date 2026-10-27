@@ -1,5 +1,8 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
+local os = os
+local assert = assert
+
 local setmetatable = setmetatable
 local strbyte = string.byte
 local strformat = string.format
@@ -15,7 +18,7 @@ local num_to_be_uint = ll.num_to_be_uint
 local function _tostring(ob)
     local t = {}
     for i = 1 , 12 do
-        t_insert(t, strformat("%02x", strbyte(ob.id, i, i))) 
+        t_insert(t, strformat("%02x", strbyte(ob.id, i, i)))
     end
     return t_concat(t)
 end
@@ -27,7 +30,7 @@ end
 local function _get_hostname(ob)
     local t = {}
     for i = 5, 7 do
-        t_insert(t, strformat("%02x", strbyte(ob.id, i, i))) 
+        t_insert(t, strformat("%02x", strbyte(ob.id, i, i)))
     end
     return t_concat(t)
 end
@@ -58,7 +61,8 @@ local pid = num_to_le_uint(bit.band(ngx.worker.pid(), 0xFFFF), 2)
 local inc = 0
 local function generate_id ( )
     inc = inc + 1
-    -- "A BSON ObjectID is a 12-byte value consisting of a 4-byte timestamp (seconds since epoch), a 3-byte machine id, a 2-byte process id, and a 3-byte counter. Note that the timestamp and counter fields must be stored big endian unlike the rest of BSON"
+    -- 4-byte timestamp, 3-byte machine id, 2-byte process id, 3-byte
+    -- counter. Timestamp and counter are big endian.
     return num_to_be_uint ( os.time ( ) , 4 ) .. machineid .. pid .. num_to_be_uint ( inc , 3 )
 end
 

@@ -1,20 +1,14 @@
 # vim:set ft= ts=4 sw=4 et:
 
 use Test::Nginx::Socket;
-use Cwd qw(cwd);
+use lib "t/lib";
+use Mongol;
 
 repeat_each(1);
 
 plan tests => repeat_each() * (3 * blocks());
 
-my $pwd = cwd();
-
-our $HttpConfig = qq{
-    lua_package_path "$pwd/lib/?/init.lua;;";
-};
-
 $ENV{TEST_NGINX_RESOLVER} = '8.8.8.8';
-$ENV{TEST_NGINX_MONGO_PORT} ||= 27017;
 $ENV{TEST_NGINX_TIMEOUT} = 10000;
 
 no_long_string();
@@ -32,14 +26,14 @@ __DATA__
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            local ok, err = conn:connect("127.0.0.1")
+            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
             local col = db:get_col("test")
 
@@ -97,14 +91,14 @@ GET /t
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            local ok, err = conn:connect("127.0.0.1")
+            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
             local col = db:get_col("test")
 
@@ -187,14 +181,14 @@ GET /t
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            local ok, err = conn:connect("127.0.0.1")
+            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
             local col = db:get_col("test")
 
@@ -263,14 +257,14 @@ sort failed: sort must be an array
             local mongo = require "resty.mongol"
             conn = mongo:new()
             conn:set_timeout(10000) 
-            local ok, err = conn:connect("127.0.0.1")
+            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
 
             if not ok then
                 ngx.say("connect failed: "..err)
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("admin", "admin")
+            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
             if not r then ngx.say("auth failed") end
             local col = db:get_col("test")
 

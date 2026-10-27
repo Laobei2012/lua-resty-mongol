@@ -1,3 +1,4 @@
+local assert = assert
 local strsub = string.sub
 local t_insert = table.insert
 local t_concat = table.concat

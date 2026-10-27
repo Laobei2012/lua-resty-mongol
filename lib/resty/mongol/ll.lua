@@ -1,11 +1,11 @@
+local string = string
+local loadstring = loadstring
 -- Library for reading low level data
 
 local assert = assert
 local unpack = unpack
 local floor = math.floor
 local strbyte , strchar = string.byte , string.char
-
-local ll = { }
 
 local le_uint_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
@@ -82,7 +82,8 @@ local le_bpeek = function ( s , bitnum )
 	return floor ( ( char % 2^(bit+1) ) / 2^bit ) == 1
 end
 -- Test with:
---local sum = 0 for i=0,31 do v = le_bpeek ( num_to_le_uint ( N , 4 ) , i ) sum=sum + ( v and 1 or 0 )*2^i end assert ( sum == N )
+--local sum = 0 for i=0,31 do v = le_bpeek ( num_to_le_uint ( N , 4 ) , i )
+--    sum=sum + ( v and 1 or 0 )*2^i end assert ( sum == N )
 
 local be_bpeek = function ( s , bitnum )
 	local byte = floor ( bitnum / 8 ) + 1
@@ -91,7 +92,8 @@ local be_bpeek = function ( s , bitnum )
 	return floor ( ( char % 2^(bit+1) ) / 2^bit ) == 1
 end
 -- Test with:
---local sum = 0 for i=0,31 do v = be_bpeek ( num_to_be_uint ( N , 4 ) , i ) sum=sum + ( v and 1 or 0 )*2^(31-i) end assert ( sum == N )
+--local sum = 0 for i=0,31 do v = be_bpeek ( num_to_be_uint ( N , 4 ) , i )
+--    sum=sum + ( v and 1 or 0 )*2^(31-i) end assert ( sum == N )
 
 
 local hasffi , ffi = pcall ( require , "ffi" )
@@ -115,7 +117,7 @@ do
 		else
 			-- Should be the 8 bytes following the second \3 (LUA_TSTRING == '\3')
 			local str = string.dump ( loadstring ( [[return ]] .. n ) )
-			local loc , en , mat = str:find ( "\3(........)" , str:find ( "\3" ) + 1 )
+			local _ , _ , mat = str:find ( "\3(........)" , str:find ( "\3" ) + 1 )
 			return mat
 		end
 	end

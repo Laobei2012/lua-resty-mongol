@@ -1,12 +1,13 @@
-module("resty.mongol", package.seeall)
-
 local mod_name = (...)
 
-local assert , pcall = assert , pcall
-local ipairs , pairs = ipairs , pairs
+local _M = { _VERSION = "0.9.0" }
+
+local assert = assert
+local ipairs = ipairs
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
+local new
 
 local connmethods = { }
 local connmt = { __index = connmethods }
@@ -15,7 +16,7 @@ local dbmt = require ( mod_name .. ".dbmt" )
 
 function connmethods:ismaster()
     local db = self:new_db_handle("admin")
-    local r, err = db:cmd({ismaster = true}) 
+    local r, err = db:cmd({ismaster = true})
     if not r then
         return nil, err
     end
@@ -35,7 +36,7 @@ function connmethods:getprimary ( searched )
     local r, err = db:cmd({ ismaster = true })
     if not r then
         return nil, "query admin failed: "..err
-    elseif r.ismaster then return self 
+    elseif r.ismaster then return self
     else
         for i , v in ipairs ( r.hosts ) do
             if not searched[v] then
@@ -125,7 +126,7 @@ end
 
 connmt.__call = connmethods.new_db_handle
 
-function new(self)
+new = function(self)
     return setmetatable ( {
             sock = socket();
             host = "localhost";
@@ -133,8 +134,6 @@ function new(self)
         } , connmt )
 end
 
--- to prevent use of casual module global variables
-getmetatable(resty.mongol).__newindex = function (table, key, val)
-    error('attempt to write to undeclared variable "' .. key .. '": '
-            .. debug.traceback())
-end
+_M.new = new
+
+return _M

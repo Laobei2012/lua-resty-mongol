@@ -1,14 +1,14 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
+local setmetatable = setmetatable
+local string = string
+
 local assert , error = assert , error
-local pairs = pairs
 local getmetatable = getmetatable
 local type = type
 local tonumber , tostring = tonumber , tostring
 local t_insert = table.insert
 local t_concat = table.concat
-local strformat = string.format
-local strmatch = string.match
 local strbyte = string.byte
 
 local ll = require ( mod_name .. ".ll" )
@@ -18,6 +18,8 @@ local num_to_le_uint = ll.num_to_le_uint
 local num_to_le_int = ll.num_to_le_int
 local from_double = ll.from_double
 local to_double = ll.to_double
+
+local opairs = require ( mod_name .. ".misc" ).opairs
 
 local getlib = require ( mod_name .. ".get" )
 local read_terminated_string = getlib.read_terminated_string
@@ -30,7 +32,7 @@ local utc_date = {}
 
 
 local function read_document ( get , numerical )
-	local bytes = le_uint_to_num ( get ( 4 ) )
+	get ( 4 ) -- document length
 
 	local ho , hk , hv = false , false , false
 	local t = { }
@@ -52,7 +54,7 @@ local function read_document ( get , numerical )
 			v = read_document ( get , true )
 		elseif op == "\5" then -- Binary
 			local len = le_uint_to_num ( get ( 4 ) )
-			local subtype = get ( 1 )
+			get ( 1 ) -- subtype
 			v = get ( len )
 		elseif op == "\7" then -- ObjectId
 			v = new_object_id ( get ( 12 ) )
@@ -140,7 +142,7 @@ local function pack ( k , v )
 	elseif mt == utc_date then
 		return "\9" .. k .. "\0" .. num_to_le_int(v.v, 8)
 	elseif mt == binary_mt then
-		return "\5" .. k .. "\0" .. num_to_le_uint(string.len(v.v)) .. 
+		return "\5" .. k .. "\0" .. num_to_le_uint(string.len(v.v)) ..
                v.st .. v.v
 	elseif ot == "table" then
 		local doc , array = to_bson(v)
@@ -159,7 +161,7 @@ function to_bson(ob)
 	local onlyarray = true
 	local seen_n , high_n = { } , 0
 	local onlystring = true
-	for k , v in pairs ( ob ) do
+	for k , v in opairs ( ob ) do
 		local t_k = type ( k )
 		onlystring = onlystring and ( t_k == "string" )
 		if onlyarray then
@@ -178,7 +180,7 @@ function to_bson(ob)
 	local retarray , m = false
 	if onlystring then -- Do string first so the case of an empty table is done properly
 		local r = { }
-        for k , v in pairs ( ob ) do
+        for k , v in opairs ( ob ) do
 --ngx.log(ngx.ERR,"="..k..i)
             t_insert ( r , pack ( k , v ) )
         end
@@ -197,7 +199,7 @@ function to_bson(ob)
 	else
 		local ni = 1
 		local keys , vals = { } , { }
-		for k , v in pairs ( ob ) do
+		for k , v in opairs ( ob ) do
 			keys [ ni ] = k
 			vals [ ni ] = v
 			ni = ni + 1
