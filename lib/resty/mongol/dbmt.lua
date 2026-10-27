@@ -12,26 +12,14 @@ local attachpairs_start = misc.attachpairs_start
 local setmetatable = setmetatable
 
 local colmt = require ( mod_name .. ".colmt" )
+local wire = require ( mod_name .. ".wire" )
 local gridfs = require ( mod_name .. ".gridfs" )
 
 local dbmethods = { }
 local dbmt = { __index = dbmethods }
 
 function dbmethods:cmd(q)
-    local collection = "$cmd"
-    local col = self:get_col(collection)
-
-    local _ , r , t = col:query(q)
-
-    if t.QueryFailure then
-        return nil, "Query Failure"
-    elseif not r[1] then
-        return nil, "No results returned"
-    elseif r[1].ok == 0 then -- Failure
-        return nil , r[1].errmsg , r[1] , t
-    else
-        return r[1]
-    end
+    return wire.command(self.conn, self.db, q)
 end
 
 function dbmethods:listcollections ( )
@@ -40,7 +28,7 @@ function dbmethods:listcollections ( )
 end
 
 function dbmethods:dropDatabase ( )
-    local r, err = self:cmd({ dropDatabase = true })
+    local r, err = self:cmd({ dropDatabase = 1 })
     if not r then
         return nil, err
     end

@@ -251,7 +251,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: if `self.broken` is set, `conn:set_keepalive(...)` returns `nil, "closed"`.
 - Produces: `conn:ismaster()` sends `{hello = 1}` and returns `r.isWritablePrimary, r.hosts`.
 
-- [ ] **Step 1: Write failing tests** in `t/wire.t`:
+- [x] **Step 1: Write failing tests** in `t/wire.t`:
   - `TEST: hello`. `conn:ismaster()` against `$TEST_NGINX_MONGO_HOST` returns `true`. The response body is `true`.
   - `TEST: cmd error`. `db:cmd({nosuchcmd = 1})` returns `nil` and a message that contains `no such command`.
   - `TEST: truncated reply`. Use `--- tcp_listen: 12345` and `--- tcp_reply` with 10 bytes. `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
@@ -259,12 +259,12 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: bad replies`. Three blocks, each with `--- tcp_listen: 12345` and a hand-built `OP_MSG` reply. The first has `flagBits` bit 2 set. The second has a section of kind 2. The third has only a kind-1 section. Each `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
   - `TEST: optional flag bit`. A hand-built reply with `flagBits` bit 20 set and `{ok = 1}` in the body. `db:cmd({ping = 1})` returns a table with `ok == 1`.
   - `TEST: checksum flag`. Use `--- tcp_reply` with a hand-built `OP_MSG` reply that has bit 0 set and `{ok = 1}` in the body. `db:cmd` returns a table with `ok == 1`.
-- [ ] **Step 2: Run** `prove t/wire.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
-- [ ] **Step 3b: Add the send-only path.** `wire.send_only(conn, dbname, cmd, sequences) -> true | nil, err` sets `flagBits` bit 1 (`moreToCome`) and reads no reply. Task 4 uses it for `w = 0` writes. Add `TEST: unsafe write then command`. It calls `wire.send_only` with an `insert` command and `writeConcern = {w = 0}`, then `db:cmd({ping = 1})` on the same socket, and gets `ok == 1`. This test does not use `col:insert`, which Task 4 ports. Source: the MongoDB `OP_MSG` specification.
-- [ ] **Step 3c: Delete the `baseline` CI job** from Task 1c. The old protocol code is gone, and MongoDB 4.4 is not a supported server.
-- [ ] **Step 4: Run** `prove t/wire.t t/bson.t`. Expected: PASS on all four servers in CI.
-- [ ] **Step 5: Commit** `feat(wire): send all commands as OP_MSG`.
+- [x] **Step 2: Run** `prove t/wire.t`. Expected: FAIL.
+- [x] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
+- [x] **Step 3b: Add the send-only path.** `wire.send_only(conn, dbname, cmd, sequences) -> true | nil, err` sets `flagBits` bit 1 (`moreToCome`) and reads no reply. Task 4 uses it for `w = 0` writes. Add `TEST: unsafe write then command`. It calls `wire.send_only` with an `insert` command and `writeConcern = {w = 0}`, then `db:cmd({ping = 1})` on the same socket, and gets `ok == 1`. This test does not use `col:insert`, which Task 4 ports. Source: the MongoDB `OP_MSG` specification.
+- [x] **Step 3c: Delete the `baseline` CI job** from Task 1c. The old protocol code is gone, and MongoDB 4.4 is not a supported server.
+- [x] **Step 4: Run** `prove t/wire.t t/bson.t`. Expected: PASS on all four servers in CI.
+- [x] **Step 5: Commit** `feat(wire): send all commands as OP_MSG`.
 
 ---
 

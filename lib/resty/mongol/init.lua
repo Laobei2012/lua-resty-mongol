@@ -2,7 +2,6 @@ local mod_name = (...)
 
 local _M = { _VERSION = "0.9.0" }
 
-local assert = assert
 local ipairs = ipairs
 local setmetatable = setmetatable
 
@@ -21,11 +20,11 @@ _M.double = bson.double
 
 function connmethods:ismaster()
     local db = self:new_db_handle("admin")
-    local r, err = db:cmd({ismaster = true})
+    local r, err = db:cmd({hello = 1})
     if not r then
         return nil, err
     end
-    return r.ismaster, r.hosts
+    return r.isWritablePrimary, r.hosts
 end
 
 local function parse_host ( str )
@@ -38,12 +37,12 @@ function connmethods:getprimary ( searched )
     searched = searched or { [ self.host .. ":" .. self.port ] = true }
 
     local db = self:new_db_handle("admin")
-    local r, err = db:cmd({ ismaster = true })
+    local r, err = db:cmd({ hello = 1 })
     if not r then
         return nil, "query admin failed: "..err
-    elseif r.ismaster then return self
+    elseif r.isWritablePrimary then return self
     else
-        for i , v in ipairs ( r.hosts ) do
+        for _ , v in ipairs ( r.hosts or {} ) do
             if not searched[v] then
                 searched[v] = true
                 local host, port = parse_host(v)
@@ -54,6 +53,9 @@ function connmethods:getprimary ( searched )
                 end
 
                 local found = conn:getprimary(searched)
+                if found ~= conn then
+                    conn:close()
+                end
                 if found then
                     return found
                 end
@@ -65,13 +67,21 @@ end
 
 function connmethods:databases()
     local db = self:new_db_handle("admin")
-    local r = assert ( db:cmd({ listDatabases = true } ))
+    local r, err = db:cmd({ listDatabases = 1 })
+    if not r then
+        return nil, err
+    end
     return r.databases
 end
 
 function connmethods:shutdown()
     local db = self:new_db_handle("admin")
-    db:cmd({ shutdown = true } )
+    local r, err = db:cmd({ shutdown = 1 })
+    -- the server closes the socket when it shuts down
+    if r or err == "closed" then
+        return true
+    end
+    return nil, err
 end
 
 function connmethods:new_db_handle ( db )
@@ -100,6 +110,9 @@ function connmethods:set_keepalive(...)
     if not sock then
         return nil, "not initialized"
     end
+    if self.broken then
+        return nil, "closed"
+    end
 
     return sock:setkeepalive(...)
 end
@@ -117,8 +130,9 @@ function connmethods:connect(host, port)
     self.host = host or self.host
     self.port = port or self.port
     local sock = self.sock
-    if not sock then
+    if not sock or self.broken then
         sock = socket()
+        self.broken = nil
         if self.timeout then
             sock:settimeout(self.timeout)
         end

@@ -442,6 +442,23 @@ local function encode ( ob )
     return s
 end
 
+local function append ( doc , list )
+    local r = { strsub ( doc , 5 , -2 ) }
+    for i , kv in ipairs ( list ) do
+        r [ i + 1 ] = pack ( check_key ( kv [ 1 ] ) , kv [ 2 ] )
+    end
+    return finish ( r )
+end
+
+-- adds the {key, value} pairs of list to the end of an encoded document
+function _M.append ( doc , list )
+    local ok , s = pcall ( append , doc , list )
+    if not ok then
+        return nil , tostring ( s )
+    end
+    return s
+end
+
 function _M.to_bson ( ob )
     if type ( ob ) ~= "table" then
         error ( "bad argument #1 to 'to_bson' (table expected)" , 2 )
