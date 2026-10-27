@@ -477,9 +477,14 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `bson.maxkey()` | `0x7F` |
 
 - Reads of types 0x13, 0x0B, 0xFF and 0x7F raise an error today. Returning wrappers for them breaks no caller.
-- Produces: `bson.to_json_safe(doc)` returns a copy for `cjson` (issues #53 and #67). `lua-cjson` does not call metamethods, so this function is the only JSON path. In the copy, an ObjectId is a hex string and a date is an ISO 8601 string. `bson.null` becomes `cjson.null`.
+- Produces: `bson.to_json_safe(doc)` returns a copy for `cjson` (issues #53 and #67). `lua-cjson` does not call metamethods, so this function is the only JSON path. The copy has no cdata and no wrapper types, because `cjson.encode` raises "type not supported" for cdata. The rules for the copy:
+  - An ObjectId is a hex string, and a date is an ISO 8601 string.
+  - `bson.null` becomes `cjson.null`.
+  - An `int64_t` cdata value becomes a decimal string, for example `"9007199254740993"`, so that no digits are lost.
+  - A binary value becomes a base64 string, and a Decimal128 value becomes its decimal string.
+  - A Timestamp becomes `{t = t, i = i}`, a Regex becomes `{pattern = p, options = o}`, and MinKey and MaxKey become the strings `"MinKey"` and `"MaxKey"`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
+- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`. The document holds every type from the rules above, plus `9007199254740993LL` and `-9007199254740993LL` inside a nested document and inside an array. The call raises no error. The JSON contains the ObjectId hex and the strings `"9007199254740993"` and `"-9007199254740993"`.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Add `decimal128-1` to `decimal128-7`, `regex`, `minkey` and `maxkey` to the allowlist in `t/bson_corpus.t`. Empty its `known_failures` table. Run `prove t/bson_corpus.t`. Expected: PASS.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
@@ -650,7 +655,7 @@ Open issues:
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
 | #1, #14, #29, #59 | Task 2b |
 | #53 | Task 2b (signed date wrapper) and Task 10 (JSON) |
-| #66, #67 | Task 10 (JSON and empty arrays) |
+| #66, #67 | Task 10 (JSON, empty arrays) |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |
