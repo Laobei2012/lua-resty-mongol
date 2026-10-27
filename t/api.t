@@ -124,8 +124,9 @@ false
             ngx.say(select("#", col:query({}, nil, 0, 2)))
             local id, r, flags = col:query({}, nil, 0, 2)
             ngx.say(#id, " ", id ~= zero, " ", #r, " ", type(flags))
-            local id2, r2 = col:getmore(id, 10, 2)
-            ngx.say(#r2, " ", id2 == zero)
+            local id2, r2, flags2 = col:getmore(id, 10, 2)
+            ngx.say(#r2, " ", id2 == zero, " ", type(flags2))
+            ngx.say(select("#", col:getmore(id, 10, 2)))
         }
     }
 --- request
@@ -133,7 +134,8 @@ GET /t
 --- response_body
 3
 8 true 2 table
-3 true
+3 true table
+3
 --- no_error_log
 [error]
 
@@ -153,16 +155,16 @@ GET /t
             for n = 1, 5 do col:insert({{n = n}}, nil, true) end
             local id = col:query({}, nil, 0, 2)
             local ok = col:kill_cursors({id})
-            ngx.say(ok and true or false)
+            ngx.say(select("#", col:kill_cursors({id})), " ", ok and true or false)
             local _, _, flags = col:getmore(id, 10)
-            ngx.say(flags.CursorNotFound)
+            ngx.say(select("#", col:getmore(id, 10)), " ", flags.CursorNotFound)
         }
     }
 --- request
 GET /t
 --- response_body
-true
-true
+1 true
+4 true
 --- no_error_log
 [error]
 
@@ -279,14 +281,17 @@ fgh
             local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "mongol_api")
             db:cmd({dropUser = "u_api"})
             local ok = db:add_user("u_api", "p")
-            ngx.say(ok and true or false)
+            db:cmd({dropUser = "u_api"})
+            ngx.say(select("#", db:add_user("u_api", "p")), " ", ok and true or false)
+            db:cmd({dropUser = "u_api"})
+            db:add_user("u_api", "p")
             ngx.say(db:cmd({usersInfo = "u_api"}).users[1].user)
         }
     }
 --- request
 GET /t
 --- response_body
-true
+1 true
 u_api
 --- no_error_log
 [error]
@@ -303,6 +308,7 @@ u_api
             local t = require "mongol_t"
             local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "mongol_api")
             db:get_col("c_api"):insert({{x = 1}}, nil, true)
+            ngx.say(select("#", db:listcollections()))
             local found = false
             for _, c in db:listcollections():pairs() do
                 if c.name == "c_api" then found = true end
@@ -313,6 +319,7 @@ u_api
 --- request
 GET /t
 --- response_body
+1
 true
 --- no_error_log
 [error]
@@ -329,6 +336,7 @@ true
             local t = require "mongol_t"
             local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "mongol_api")
             db:get_col("c_api"):insert({{x = 1}}, nil, true)
+            ngx.say(select("#", db:list()), " ", select("#", db:listcollections()))
             local a, b = {}, {}
             for _, c in db:list():pairs() do a[#a + 1] = c.name end
             for _, c in db:listcollections():pairs() do b[#b + 1] = c.name end
@@ -339,6 +347,7 @@ true
 --- request
 GET /t
 --- response_body
+1 1
 true true
 --- no_error_log
 [error]
