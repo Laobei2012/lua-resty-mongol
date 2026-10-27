@@ -54,7 +54,7 @@ Cursors
 Login
 -----
 
-`db:auth` still uses the old login in this version. Use a server without authentication until the SCRAM login arrives.
+`db:auth` uses SCRAM-SHA-256, or SCRAM-SHA-1 if the server lists only that for the user. MONGODB-CR is gone. A SCRAM-SHA-256 password must be ASCII. A socket stays logged in as the same user after `set_keepalive`, so do not share a socket between users. Check `get_reused_times()` before you log in again.
 
 
 Name

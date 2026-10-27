@@ -420,7 +420,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `db:auth(user, password)` sends `hello` with `saslSupportedMechs = db .. "." .. user`. If the server lists SHA-256, it picks SHA-256. Otherwise, it picks SHA-1. `db:auth_scram_sha1(u, p)` stays as an alias.
 - Produces: a CI job `auth`. It runs the four-version matrix with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`, and runs only `make test-auth`.
 
-- [ ] **Step 1: Write failing tests** in `t/auth/auth.t`. Each test logs in against the `admin` database:
+- [x] **Step 1: Write failing tests** in `t/auth/auth.t`. Each test logs in against the `admin` database:
   - `TEST: sha256 login`. `auth("admin", "admin")` gives `1`. Then `insert(..., true)` gives `0`.
   - `TEST: sha1 login`. Drop the user `u1` and ignore the error. Create a user `u1` with `mechanisms = {"SCRAM-SHA-1"}`. `auth("u1", "p1")` gives `1`.
   - `TEST: wrong password`. The result is `nil` and a message that contains `Authentication failed`.
@@ -428,10 +428,10 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: bad server signature`. For each mechanism, a stub answers `saslStart` correctly and answers the first `saslContinue` with a wrong `v=`. `authenticate` returns `nil` and `server signature mismatch`.
   - `TEST: rfc7677 vector`. Run `scram.lua`'s client proof over the RFC 7677 example (`user`, `pencil`, nonce `rOprNGfwEbeRWgbNEkqO`) and compare it with the RFC proof. No server is needed.
   - `TEST: pooled login reuse`. Request 1 logs in and calls `set_keepalive(10000, 10)`. Request 2 calls `connect` with the same `pool`, sees `get_reused_times() > 0`, skips login, and its `find_one` succeeds.
-- [ ] **Step 2: Run** `make test-auth` against a server with auth on. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** `make test-auth`. Expected: PASS in all four auth jobs.
-- [ ] **Step 5: Commit** `feat(auth): SCRAM-SHA-256 with SHA-1 fallback`.
+- [x] **Step 2: Run** `make test-auth` against a server with auth on. Expected: FAIL.
+- [x] **Step 3: Implement** the interfaces above.
+- [x] **Step 4: Run** `make test-auth`. Expected: PASS in all four auth jobs.
+- [x] **Step 5: Commit** `feat(auth): SCRAM-SHA-256 with SHA-1 fallback`.
 
 ### Task 8: TLS, connect options, getprimary, ngx.var
 

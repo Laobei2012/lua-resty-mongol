@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (Phase 3)
+
+### Authentication
+
+- `db:auth(user, password)` asks the server for the mechanism of the user
+  (`hello` with `saslSupportedMechs`). It uses SCRAM-SHA-256 if the server
+  lists it, and SCRAM-SHA-1 if not. It still returns `1`, or `nil, err`.
+- SCRAM-SHA-256 needs an ASCII password. A password with other characters
+  returns `nil, "non-ASCII password not supported"`, because full SASLprep
+  is not implemented.
+- `db:auth_scram_sha1(user, password)` keeps its name and uses SCRAM-SHA-1.
+- The client checks the server nonce and the server signature. A wrong
+  value returns `nil, "server nonce mismatch"` or `nil, "server signature
+  mismatch"`. The old SCRAM-SHA-1 code compared a boolean with a string,
+  so it never rejected a bad nonce. It also used `math.random` for the
+  nonce. The new code uses `resty.random`.
+- The salted password is cached in the worker, so pooled connections skip
+  PBKDF2.
+- MONGODB-CR (`getnonce`) is removed. MongoDB 4.0 and later do not
+  support it.
+- Login state belongs to the socket, as before. After `set_keepalive`, a
+  reused socket stays logged in as the same user. Use
+  `get_reused_times()` to skip a second login, and do not share a socket
+  between users.
+
 ## 1.0.0 (unreleased)
 
 This is the major release that contains every breaking change of the
