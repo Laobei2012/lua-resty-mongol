@@ -102,6 +102,7 @@ The owner moved these changes from Phase 4 into Phase 1. The new protocol reads 
 6. Add `bson.empty_array`. An empty Lua table stays a document. Commands such as `createUser` need an empty array for `roles` (issue #66).
 7. Read type 0x11 (Timestamp) as a wrapper with `t` and `i`, not as one number.
 8. Add `bson.null` (owner decision). A BSON null reads as `bson.null` in documents and arrays, not as `nil`. Keys and array positions stay. `if doc.x then` is true for a null field, and the migration guide must say so.
+9. Read type 0x05 (binary) as a wrapper that keeps the subtype, not as a plain string.
 
 ### Phase 2: CRUD on commands, same API
 
@@ -129,6 +130,8 @@ Rules for Phase 2:
 4. The `__gc` finalizer no longer kills the cursor, because a finalizer cannot use cosockets. A new `cursor:close()` sends `killCursors`. If a caller does not close a cursor, the server removes it after its idle timeout (10 minutes by default).
 
 If the server reports `writeErrors` or `writeConcernError`, the write returns `nil` and the server error message.
+
+The driver splits a large insert into batches that stay inside the server limits: 16 MiB for each document, 48,000,000 bytes for each message and 100,000 documents for each batch.
 
 ### Phase 3: Authentication and connection
 
