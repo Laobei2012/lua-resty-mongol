@@ -76,9 +76,9 @@ Each phase ends with green CI on all four server versions and a tagged release.
 6. Add a test for each documented call. A CI job runs these tests with the old code on MongoDB 4.4, the last server that the old code supports. The passing tests record the old behavior that later phases keep.
 7. Use the official BSON corpus from `mongodb/specifications` in Phase 1 and Phase 4. Its license is CC BY-NC-SA 3.0, so CI downloads it and the repo does not contain it.
 
-Phase 1 is a second exception. Its CI runs only the files that Phase 0 and Phase 1 implement (`PHASE1_TESTS` in the Makefile), because the collection code moves in Phase 2. Task 5 restores the full `make test` and removes the TODO skip.
+Phase 0 is the one phase that allows failing tests. Its exit gate is a CI run that starts all four servers and reports the test results.
 
-Phase 0 is the one exception to the green CI rule. Its exit gate is a CI run that starts all four servers and reports the test results.
+Phase 1 needs green CI, but on a smaller set of tests. It runs only the files and blocks that Phase 0 and Phase 1 implement (`PHASE1_TESTS` in the Makefile), because the collection code moves in Phase 2. Task 5 restores the full `make test` and removes the TODO skips.
 
 CI runs `mongod` without auth in Phases 0 to 2. From Phase 3, CI runs a second job with auth on.
 
