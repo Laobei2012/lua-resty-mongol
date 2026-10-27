@@ -39,8 +39,7 @@ __DATA__
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local col = db:get_col("test")
 
             r, err = col:delete({}, nil, true)

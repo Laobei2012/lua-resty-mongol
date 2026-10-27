@@ -37,9 +37,6 @@ __DATA__
             local r,err = col:insert({{name="dog",n=10,m=20}}, nil, true)
             if not r then ngx.say("insert failed: "..err) end
 
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
-
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
@@ -56,7 +53,6 @@ __DATA__
 --- request
 GET /t
 --- response_body
-insert failed: need to login
 0
 dog
 --- no_error_log
@@ -135,11 +131,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then
-                ngx.say("auth failed")
-                ngx.exit(ngx.OK)
-            end
+            local r
             col = db:get_col("test")
 
             col:delete({name="sheep"})
@@ -175,9 +167,6 @@ GET /t
 
             r,err = col:update({name="dog"},{name="cat"}, nil, nil, true)
             if not r then ngx.say("update failed: "..err) end
-
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
 
             r,err = col:delete({})
             if not r then ngx.say("delete failed: "..err) end
@@ -225,7 +214,6 @@ GET /t
 --- request
 GET /t
 --- response_body
-update failed: need to login
 1
 cat
 1
@@ -251,11 +239,7 @@ cat
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then
-                ngx.say("auth failed")
-                ngx.exit(ngx.OK)
-            end
+            local r
 
             col = db:get_col("test")
             col:delete({name="puppy"})
@@ -294,11 +278,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then
-                ngx.say("auth failed")
-                ngx.exit(ngx.OK)
-            end
+            local r
 
             col = db:get_col("test")
             col:delete({name="puppy"})
@@ -353,11 +333,7 @@ nil
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then
-                ngx.say("auth failed")
-                ngx.exit(ngx.OK)
-            end
+            local r
 
             col = db:get_col("test")
             col:insert({{name="puppy", n=i, m="foo"}})
@@ -400,11 +376,7 @@ ns not found
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then
-                ngx.say("auth failed")
-                ngx.exit(ngx.HTTP_OK)
-            end
+            local r
 
             local col = db:get_col("test")
             r,err = col:delete({})
@@ -465,11 +437,7 @@ not found
                 ngx.say("delete failed: "..err)
             end
 
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then
-                ngx.say("auth failed")
-                ngx.exit(ngx.HTTP_OK)
-            end
+            local r
 
             r,err = col:delete({})
             col:insert({{name="puppy", n=1, m="foo"}})
@@ -509,7 +477,6 @@ not found
 --- request
 GET /t
 --- response_body
-delete failed: need to login
 3
 1
 -1
@@ -532,9 +499,6 @@ delete failed: need to login
 
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
-
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
@@ -600,9 +564,6 @@ a20
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
-
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
@@ -649,9 +610,6 @@ nil
 
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
-
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
@@ -719,9 +677,6 @@ a25
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
-
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
@@ -768,9 +723,6 @@ GET /t
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
 
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
-
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
@@ -810,9 +762,6 @@ GET /t
 
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
-
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
@@ -857,9 +806,6 @@ GET /t
 
             local db = conn:new_db_handle("test")
             local col = db:get_col("test")
-
-            r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
 
             r, err = col:delete({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end

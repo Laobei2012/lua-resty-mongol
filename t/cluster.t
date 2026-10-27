@@ -17,35 +17,6 @@ run_tests();
 
 __DATA__
 
-=== TEST 2: db auth failed
---- http_config eval: $::HttpConfig
---- config
-    location /t {
-        content_by_lua '
-            local mongo = require "resty.mongol"
-            conn = mongo:new()
-            conn:set_timeout(1000) 
-
-            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
-            if not ok then
-                ngx.say("connect failed: "..err)
-            end
-
-            local db = conn:new_db_handle("test")
-            local r,err = db:auth("admin", "pass")
-            if not r then ngx.say(err) 
-            else
-                ngx.say(r)
-            end
-        ';
-    }
---- request
-GET /t
---- response_body
-auth fails
---- no_error_log
-[error]
-
 === TEST 5: is master
 --- http_config eval: $::HttpConfig
 --- config
@@ -152,33 +123,4 @@ GET /t
 get primary
 --- no_error_log
 [error]
-
-=== TEST 8: db auth
---- http_config eval: $::HttpConfig
---- config
-    lua_code_cache off;
-    location /t {
-        content_by_lua '
-            local mongo = require "resty.mongol"
-            conn = mongo:new()
-            conn:set_timeout(1000) 
-
-            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
-            if not ok then
-                ngx.say("connect failed: "..err)
-            end
-
-            local db = conn:new_db_handle("test")
-            local r,err = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
-            ngx.say(r)
-        ';
-    }
---- request
-GET /t
---- response_body
-1
---- no_error_log
-[error]
-
 

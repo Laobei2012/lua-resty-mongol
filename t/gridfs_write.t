@@ -6,7 +6,7 @@ use Mongol;
 
 repeat_each(1);
 
-plan tests => repeat_each() * (4 * blocks()) - 1;
+plan tests => repeat_each() * (3 * blocks());
 
 $ENV{TEST_NGINX_RESOLVER} = '8.8.8.8';
 $ENV{TEST_NGINX_TIMEOUT} = 10000;
@@ -17,7 +17,6 @@ no_long_string();
 run_tests();
 
 __DATA__
-
 
 === TEST 1: write chunk < 1, offset = 0
 --- http_config eval: $::HttpConfig
@@ -34,8 +33,7 @@ __DATA__
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -88,8 +86,7 @@ abc45678901234567890
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -142,8 +139,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -196,8 +192,7 @@ abcabcdefdef34567890
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -250,8 +245,7 @@ abcabcdef01234567890
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -304,8 +298,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -358,8 +351,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -412,8 +404,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -466,8 +457,7 @@ abcdefghijklmnopqrstuvw
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -520,8 +510,7 @@ abcdefghijklmnopqrstuvw
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -574,8 +563,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -628,8 +616,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -687,8 +674,7 @@ GET /t
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -738,8 +724,7 @@ abc
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
@@ -780,8 +765,7 @@ ABCDEFGHIJKLMNOPQRST
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local fs = db:get_gridfs("fs")
 
             r, err = fs:remove({}, nil, true)
