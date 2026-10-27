@@ -163,7 +163,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
 - Produces: `bson.ordered({ {k1, v1}, {k2, v2}, ... })`. It returns a document whose keys `to_bson` writes in the given order.
 - Produces: `bson.to_bson(t) -> string | nil, err`. It no longer raises. Keys with `\0` return `nil, "invalid key"`.
 - Produces: `bson.from_bson(get)` reads type 0x12 with `ll.le_to_int64`.
-- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If `n` is 0, the table is a document, so `filter = {}` stays a document. If `n` is above 0 and every key is an integer from 1 to `n`, the table is an array. Any other table is a document.
+- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If `n` is 0, the table is a document, so `filter = {}` stays a document. If `n` is above 0 and every key is an integer from 1 to `n`, the table is an array. Any other table is a document. A document writes a number key as `tostring(k)`, so `{[0] = "a", "b"}` becomes `{"0": "a", "1": "b"}`. A key of any other type returns `nil, "invalid key"`. Delete the old `_keys` and `_vals` encode branch in `to_bson` and the matching rewrite in the decoder. Today a real document with exactly the fields `_keys` and `_vals` reads back as a different table.
 - Produces: `bson.empty_array`, a sentinel that `to_bson` writes as an array with no elements (type 0x04). Commands such as `createUser` need it for `roles`. Issue #66 uses it too.
 - Produces: `bson.array_mt`. The decoder sets this metatable on every array that it reads, so that an empty array stays an array. The encoder writes a table with this metatable as an array. This is also true for an empty table. The decoder does not return the shared `bson.empty_array`, because a caller can change a decoded table.
 - Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
@@ -172,6 +172,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
   - `TEST: ordered keys`. `to_bson(bson.ordered{{"find","c"},{"filter",{}},{"limit",bson.int32(1)}})` has `find` as its first element name, and the element type of `limit` is `0x10`.
   - `TEST: int64 above 2^53`. Decoding the 8 bytes of `9007199254740993` gives `tostring(v) == "9007199254740993LL"`.
   - `TEST: empty table vs empty array`. `to_bson({f = {}})` writes `f` as type 0x03. `to_bson({f = bson.empty_array})` writes `f` as type 0x04 with no elements.
+  - `TEST: number keys`. `to_bson({t = {[0] = "a", "b"}})` writes `t` as a document with the keys `"0"` and `"1"`. A mixed table `{1, 2, x = 3}` writes a document with the keys `"1"`, `"2"` and `"x"`. A document with the fields `_keys` and `_vals` decodes with those two fields.
   - `TEST: nul in values`. The string `"a\0b"` round trips with a length of 3. The key `"a\0b"` returns `nil` and `invalid key`.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
 - [ ] **Step 3: Implement** the interfaces above. For int64 bytes, use `ffi.new("int64_t[1]")` and `ffi.string(p, 8)`, because the target CPUs are little-endian.
@@ -183,7 +184,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
 Owner decisions: Option B for numbers, 1-based arrays, both in the first release. Issues: #1, #14, #29, #59. PRs: #40, #57.
 
 **Files:**
-- Modify: `lib/resty/mongol/bson.lua` (`pack`), `lib/resty/mongol/init.lua` (exports), `lib/resty/mongol/gridfs_file.lua` (`read`, `update_md5`)
+- Modify: `lib/resty/mongol/bson.lua` (`pack`), `lib/resty/mongol/init.lua` (exports), `lib/resty/mongol/gridfs_file.lua` (`read`, `write`, `update_md5`)
 - Test: `t/bson.t`
 
 **Interfaces:**
@@ -199,7 +200,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `bson.null`, a unique sentinel table (owner decision). `to_bson` writes it as type 0x0A. A read of type 0x0A returns `bson.null` in documents and in arrays, so keys and array positions stay. Today a null reads as `nil`, so code such as `if doc.x then` changes meaning. This change ships in `1.0.0` (PR #39 idea, without its global `null`).
 - Produces: UTC dates read as the same wrapper that `bson.get_utc_date(ms)` makes, with the field `v`. The value `v` is signed, so dates before 1970 are correct (issue #53). Above 2^53, it is `int64_t` cdata. Today a date reads as a plain unsigned number, so this change ships in `1.0.0`.
 - Produces: binary values keep their subtype. `bson.get_bin_data(data, subtype)` takes an optional subtype, a number from 0 to 255 with a default of 0. A read of type 0x05 returns the same wrapper, with the fields `v` (the bytes) and `st` (the subtype byte), for every subtype. Today a read returns a plain string and drops the subtype, so this change ships in `1.0.0`. Subtype 0x02 has an extra inner length, and the encoder and decoder must handle it.
-- Produces: GridFS keeps working with the binary wrapper. `gridfs_file:read` and `update_md5` read chunk bytes from `r.data.v`, not from `r.data`. `read` still returns a Lua string. Without this change, `read()` raises `bad argument #1 to 'sub'` in `1.0.0`.
+- Produces: GridFS keeps working with the binary wrapper. `gridfs_file:read`, `write` and `update_md5` read chunk bytes from the `v` field of the chunk wrapper, for example `od.data.v` in `write`. `read` still returns a Lua string. Without this change, `read()` raises `bad argument #1 to 'sub'` in `1.0.0`.
 - Produces: `bson.timestamp(t, i)` writes type 0x11. A read of type 0x11 returns the same wrapper, with fields `t` and `i`. Today it reads as one int64 number, so this change ships in `1.0.0`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
@@ -386,7 +387,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `bson.null` on read, with an `if doc.x then` example.
   - `cursor:close()` in place of the `__gc` kill.
   - `skip` and `limit` before the first fetch.
-  They also list the fixes that a caller can see. `db:list()`, `db:add_user`, `db:listcollections`, `col:kill_cursors` and `conn:shutdown()` work now. A binary value reads as a wrapper with `v` and `st`, not as a plain string. A date reads as a wrapper with `v`, not as a plain number. An array reads as a table with `bson.array_mt`. `cursor:sort()` before the first fetch sorts all documents on the server, not only the first batch. A server error from `col:query` or `col:getmore` adds the error message as a fourth return value. `db:cmd` no longer returns a fourth value, the flags table.
+  They also list the fixes that a caller can see. `db:list()`, `db:add_user`, `db:listcollections`, `col:kill_cursors` and `conn:shutdown()` work now. A binary value reads as a wrapper with `v` and `st`, not as a plain string. A date reads as a wrapper with `v`, not as a plain number. An array reads as a table with `bson.array_mt`. `cursor:sort()` before the first fetch sorts all documents on the server, not only the first batch. A server error from `col:query` or `col:getmore` adds the error message as a fourth return value. `db:cmd` no longer returns a fourth value, the flags table. `col:find` now yields every matching document across batches (issues #12 and #74). `num_each_query` is only the batch size, and `cursor:limit(n)` caps the results. A table with number keys that is not an array now goes out as a document with string keys, not as `_keys` and `_vals`.
 - [ ] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
 
 ---
@@ -566,7 +567,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 
 **Interfaces:**
 - Produces: the 8 README GridFS methods with unchanged signatures: `find_one`, `remove`, `get`, `insert`, `new`, `read`, `write` and `update_md5`. `update_md5` stays client-side with `resty.md5`, because the server no longer computes it.
-- Chunks are written with `bson.int32` for `n` and with `binary` subtype `0x00` for `data`. Task 2b already moved `read` and `update_md5` to the `v` field of the chunk wrapper.
+- Chunks are written with `bson.int32` for `n` and with `binary` subtype `0x00` for `data`. Task 2b already moved `read`, `write` and `update_md5` to the `v` field of the chunk wrapper.
 - The files document stores `chunkSize` as int32 and `length` as int64 (issue #35).
 - `gridfs_file:write(buf, offset, size)` keeps its overwrite semantics. Chunks that exist get `update`, as today, so untouched bytes stay. Only chunks that do not exist yet are inserted, through `col:insert`, which splits them into batches as Task 4 defines (issue #36). The existing `t/gridfs_write.t` overwrite tests must pass unchanged.
 - `update_md5` stays, but `write` does not call it. The GridFS spec deprecated `md5`, so issue #37 is out of scope.
@@ -644,7 +645,7 @@ Open issues:
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
 | #1, #14, #29, #59 | Task 2b |
 | #53 | Task 2b (signed date wrapper) and Task 10 (JSON) |
-| #66, #67 | Task 10 (JSON and empty arrays) |
+| #66, #67 | Task 10 (JSON, empty arrays) |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |
