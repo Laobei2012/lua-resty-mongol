@@ -156,6 +156,12 @@ Fixtures: collection `read` has 1,000 documents `{_id = i, name = "user" .. i, a
   6. Delete the namespace in a `trap`, also when a step fails.
 - [ ] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
 - [ ] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`.
+  Example, with placeholders for the real names:
+  ```bash
+  tsh kube login <cluster>
+  KUBE_CONTEXT=<context> MONGO_NODE=<node-a> BENCH_NODE=<node-b> \
+    NEW_REF=<branch-or-sha> bench/k8s/run-k8s.sh ab
+  ```
 - [ ] **Step 7: Commit** `test(bench): add Kubernetes runner`.
 
 ## Task 5: First run and report
