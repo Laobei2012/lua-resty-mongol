@@ -369,7 +369,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `db:listcollections(num_each)` sends `listCollections` and returns `cursor.from_reply(...)`. The optional `num_each` goes out as `cursor = {batchSize = num_each}`, and `from_reply` uses it for each `getMore`. Without it, the command sends `cursor = {}`. `db:list(num_each)` is an alias for it, because the README documents that name.
 - Produces: any `getMore` error makes `next()` return `nil, err`. This includes code 43 (`CursorNotFound`) and code 175 (`QueryPlanKilled`). The cursor does not run the query again. Today `next()` runs the query again after `CursorNotFound`, which can return a document twice.
 
-- [ ] **Step 1: Write failing tests** in `t/cursor.t`:
+- [x] **Step 1: Write failing tests** in `t/cursor.t`:
   - `TEST: limit across batches`. Insert 25 documents, then `find({}, nil, 10)` with `limit(23)` yields exactly 23 documents, then `nil`.
   - `TEST: no batch size`. Insert 150 documents. `find({}, nil, 0)` yields exactly 150 documents. The first batch has 101 documents, so this test sends a `getMore` without `batchSize`.
   - `TEST: all documents` (issue #74). Insert 2,500 documents. `find({}, nil, 100)` without a limit yields exactly 2,500 documents.
@@ -381,10 +381,10 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: close`. After `close()`, `next()` returns `nil`.
   - `TEST: listcollections`. Create 3 collections, then `db:listcollections(2)` yields all 3 names. The second batch comes from a `getMore` on `$cmd.listCollections`.
   - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` returns exactly `nil` and a string.
-- [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `t/gridfs.t`, `t/gridfs_write.t` and the aligned GridFS block in `api.t` must also pass. The `1.0.0` release must not ship a documented call that raises a Lua error. If one fails, fix it in this task before the tag. `cluster.t` and the unaligned GridFS block in `api.t` can still fail. Mark them `--- SKIP` with the reasons "Task 12" and "Task 13". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
-- [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
+- [x] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `t/gridfs.t`, `t/gridfs_write.t` and the aligned GridFS block in `api.t` must also pass. The `1.0.0` release must not ship a documented call that raises a Lua error. If one fails, fix it in this task before the tag. `cluster.t` and the unaligned GridFS block in `api.t` can still fail. Mark them `--- SKIP` with the reasons "Task 12" and "Task 13". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
+- [x] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
 - [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
   - 1-based arrays and their effect on old data.
   - int32 and int64 numbers, and int64 cdata above 2^53.
