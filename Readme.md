@@ -1,5 +1,62 @@
 Sorry for long time no maintaining. If you want to continue update it, please contact me.
 
+Migrating to 1.0
+======
+
+Version 1.0 sends every request as `OP_MSG`, which MongoDB 6.0 and later require. The API keeps its names. These changes can break existing code. [CHANGELOG.md](CHANGELOG.md) has the full list.
+
+Arrays
+------
+
+Arrays use 1-based Lua indexes when you write and read them. Before, `{a, b}` was stored as `[null, a, b]`, and a stored `[a, b]` read as `{[0] = a, b}`. Arrays that the old version stored have a leading `null`, so they read back shifted by one. Fix that data with an update before you upgrade.
+
+A table with the keys 1 to n is an array. An empty table is a document. Use `bson.empty_array` (from `require "resty.mongol.bson"`) to write an empty array, for example for `roles` in `createUser`. Any other table is a document, and number keys become string keys.
+
+Numbers
+-------
+
+A whole number that fits in int32 is stored as int32. A larger whole number that fits in int64 is stored as int64. Any other number is stored as a double. Before, all numbers were doubles. Use `mongol.int32(n)`, `mongol.int64(n)` and `mongol.double(n)` to force a type.
+
+Values read back as Lua numbers. An int64 value above 2^53 reads as LuaJIT `int64_t` cdata, so that no digits are lost.
+
+Null
+----
+
+A BSON null reads as `bson.null`, not `nil`. The key or array position stays. This changes `if` tests:
+
+        local doc = col:find_one({})
+        if doc.x then            -- true for a null field
+        if doc.x ~= nil and doc.x ~= bson.null then   -- a real value
+
+Dates, binary data and timestamps
+---------------------------------
+
+- A UTC date reads as `{v = milliseconds}`, a signed value. Create one with `bson.get_utc_date(ms)`.
+- Binary data reads as `{v = bytes, st = subtype}`. `bson.get_bin_data(bytes, subtype)` takes an optional subtype.
+- A timestamp reads as `{t = seconds, i = increment}`.
+
+Commands and errors
+-------------------
+
+- `db:cmd(q)` returns `doc`, or `nil, errmsg, doc` on failure. It no longer returns a fourth value. A command with more than one key needs the command name first. Build it with `bson.ordered({{"name", value}, {"key", value}})`.
+- `col:query` and `col:getmore` add the server error message as a fourth value on a server error.
+- `col:update` and `col:delete` raise `bad argument` if the selector is not a table.
+- Socket and protocol errors return `nil, err`. The driver closes the socket, and `set_keepalive` then returns `nil, "closed"`.
+
+Cursors
+-------
+
+- `col:find` yields every matching document across batches. `num_each_query` is only the batch size. Use `cursor:limit(n)` for a total limit.
+- `cursor:skip(n)` is new. `cursor:skip(n)` and `cursor:limit(n)` must come before the first fetch.
+- `cursor:sort(field)` before the first fetch sorts all documents on the server.
+- The cursor has no `__gc` finalizer, because a finalizer cannot use cosockets. Call `cursor:close()` when you stop before the end. Otherwise the server removes the cursor after its idle timeout (10 minutes by default).
+
+Login
+-----
+
+`db:auth` still uses the old login in this version. Use a server without authentication until the SCRAM login arrives.
+
+
 Name
 ======
 lua-resty-mongol - Lua Mongodb driver for ngx_lua base on the cosocket API
