@@ -1357,3 +1357,298 @@ doc string false bad argument
 0
 --- no_error_log
 [error]
+
+
+
+=== TEST 47: find_one
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{name = "dog"}}, nil, true)
+            ngx.say(col:find_one({name = "dog"}).name)
+        }
+    }
+--- request
+GET /t
+--- response_body
+dog
+--- no_error_log
+[error]
+
+
+
+=== TEST 48: find_one miss
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            ngx.say(col:find_one({name = "nobody"}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil
+--- no_error_log
+[error]
+
+
+
+=== TEST 49: count
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{a = 1}, {a = 2}, {a = 3}, {a = 4}, {a = 5}}, nil, true)
+            ngx.say(col:count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+5
+--- no_error_log
+[error]
+
+
+
+=== TEST 50: negative int32
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{v = -1}}, nil, true)
+            ngx.say(col:find_one({}).v)
+        }
+    }
+--- request
+GET /t
+--- response_body
+-1
+--- no_error_log
+[error]
+
+
+
+=== TEST 51: array round trip
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{v = {"a", "b"}}}, nil, true)
+            ngx.say(col:count({v = {["$size"] = 2}}), " ", col:find_one({}).v[1])
+        }
+    }
+--- request
+GET /t
+--- response_body
+1 a
+--- no_error_log
+[error]
+
+
+
+=== TEST 52: add_user roles
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            db:cmd({dropUser = "u2"})
+            local r, err = db:add_user("u2", "p2")
+            ngx.say(r and true or false, " ", err)
+            db:cmd({dropUser = "u2"})
+        }
+    }
+--- request
+GET /t
+--- response_body
+true nil
+--- no_error_log
+[error]
+
+
+
+=== TEST 53: $or array
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            col:insert({{x = 1}, {y = 2}, {z = 3}}, nil, true)
+            ngx.say(col:count({["$or"] = {{x = 1}, {y = 2}}}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+2
+--- no_error_log
+[error]
+
+
+
+=== TEST 54: query cursor not found
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local a, b, c, d = col:getmore("\1\0\0\0\0\0\0\0")
+            ngx.say(select("#", col:getmore("\1\0\0\0\0\0\0\0")), " ", c.CursorNotFound, " ", type(d))
+        }
+    }
+--- request
+GET /t
+--- response_body
+4 true string
+--- no_error_log
+[error]
+
+
+
+=== TEST 55: query negative count
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local docs = {}
+            for i = 1, 200 do docs[i] = {i = i} end
+            col:insert(docs, nil, true)
+            local id, r = col:query({}, nil, 0, -200)
+            ngx.say(#r, " ", id == string.rep("\0", 8))
+        }
+    }
+--- request
+GET /t
+--- response_body
+200 true
+--- no_error_log
+[error]
+
+
+
+=== TEST 56: query server error
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local a, b, c, d = col:query({["$bad"] = 1})
+            ngx.say(select("#", col:query({["$bad"] = 1})), " ", c.QueryFailure, " ", type(d))
+        }
+    }
+--- request
+GET /t
+--- response_body
+4 true string
+--- no_error_log
+[error]
+
+
+
+=== TEST 57: find_and_modify
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local r = col:find_and_modify({query = {x = 1}, update = {["$set"] = {y = 2}}, upsert = true, new = true})
+            ngx.say(r.x, " ", r.y)
+        }
+    }
+--- request
+GET /t
+--- response_body
+1 2
+--- no_error_log
+[error]
+
+
+
+=== TEST 58: find_and_modify miss
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            ngx.say(col:find_and_modify({query = {x = 1}, update = {["$set"] = {y = 2}}}))
+            ngx.say(col:find_and_modify({query = {x = 1}, remove = true}))
+            ngx.say(col:find_and_modify({query = {x = 1}, update = {["$set"] = {y = 2}}, upsert = true}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil
+nil
+nil
+--- no_error_log
+[error]
