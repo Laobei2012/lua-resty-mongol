@@ -332,7 +332,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: if the reply has `value = bson.null`, `col:find_and_modify(options)` returns `nil`, as the old code did for a miss. A document inside the reply keeps `bson.null` in its fields.
 - `db:listcollections()` and `db:list()` move to Task 6, because they need a cursor built from a command reply. `db:add_user(u, p)` sends `createUser` with `roles = bson.empty_array`.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `TEST: find_one`. Insert `{name="dog"}`. `find_one({name="dog"}).name` is `dog`.
   - `TEST: find_one miss`. The result is `nil`.
   - `TEST: count`. Insert 5 documents, then `count({})` gives `5`. This covers issue #61.
@@ -345,12 +345,12 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: query server error`. `col:query({["$bad"] = 1})` returns 4 values. The flags table has `QueryFailure == true`, and the fourth value is a string.
   - `TEST: find_and_modify`. Upsert `{x=1}` with `new=true`, and `.x` is `1`.
   - `TEST: find_and_modify miss`. On an empty collection, an update without `upsert` returns `nil`, a `remove = true` returns `nil`, and an upsert without `new = true` returns `nil`.
-- [ ] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
-- [ ] **Step 3: Implement** the interfaces above.
+- [x] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
+- [x] **Step 3: Implement** the interfaces above.
   Delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`, `full_collection_name` and the imports that only they use. Task 4 left them in place for the old read methods (order change from the original plan).
-- [ ] **Step 4: Run** the same command. Expected: PASS, except `t/sanity.t` TEST 11 and TEST 12. These two tests read across batches, which needs the Task 6 cursor. Task 6 Step 4 runs them.
-- [ ] **Step 4b: Restore the full CI run.** In the Makefile, replace `$(PHASE1_TESTS)` with `t/*.t` and delete the `PHASE1_TESTS` list and its TODO. Remove `TEST_NGINX_PHASE1` from the Makefile target. In `t/objid.t` TEST 1 and in the `t/api.t` blocks that name Task 5 in a TODO comment, remove the TODO comment and the `$ENV{TEST_NGINX_PHASE1}` skip (keep the `TEST_NGINX_MONGO_BASELINE` part where it exists). Remove the TODO comment in `.github/workflows/test.yml`. Expected: `make test` runs every file.
-- [ ] **Step 5: Commit** `feat(col): reads over find/getMore commands`.
+- [x] **Step 4: Run** the same command. Expected: PASS, except `t/sanity.t` TEST 11 and TEST 12. These two tests read across batches, which needs the Task 6 cursor. Task 6 Step 4 runs them.
+- [x] **Step 4b: Restore the full CI run.** In the Makefile, replace `$(PHASE1_TESTS)` with `t/*.t` and delete the `PHASE1_TESTS` list and its TODO. Remove `TEST_NGINX_PHASE1` from the Makefile target. In `t/objid.t` TEST 1 and in the `t/api.t` blocks that name Task 5 in a TODO comment, remove the TODO comment and the `$ENV{TEST_NGINX_PHASE1}` skip (keep the `TEST_NGINX_MONGO_BASELINE` part where it exists). Remove the TODO comment in `.github/workflows/test.yml`. Expected: `make test` runs every file.
+- [x] **Step 5: Commit** `feat(col): reads over find/getMore commands`.
 
 ### Task 6: Cursor
 
