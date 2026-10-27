@@ -71,11 +71,15 @@ local function encode_msg ( dbname , cmd , sequences , flags , extra )
         for _ , seq in ipairs ( sequences ) do
             local docs = { }
             for i , d in ipairs ( seq [ 2 ] ) do
-                local s , derr = to_bson ( d )
-                if not s then
-                    return nil , derr
+                -- a string is a document that is already encoded
+                if type ( d ) ~= "string" then
+                    local derr
+                    d , derr = to_bson ( d )
+                    if not d then
+                        return nil , derr
+                    end
                 end
-                docs [ i ] = s
+                docs [ i ] = d
             end
             local payload = seq [ 1 ] .. "\0" .. t_concat ( docs )
             parts [ #parts + 1 ] = "\1"
