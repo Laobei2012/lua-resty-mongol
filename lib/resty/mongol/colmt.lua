@@ -1,28 +1,20 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
-local misc = require ( mod_name .. ".misc" )
-
-local assert = assert
 local error = error
-local ipairs = ipairs
+local ipairs , pairs = ipairs , pairs
 local type = type
-local t_concat = table.concat
-
-local attachpairs_start = misc.attachpairs_start
+local math_abs = math.abs
 
 local ll = require ( mod_name .. ".ll" )
-local num_to_le_uint = ll.num_to_le_uint
-local num_to_le_int = ll.num_to_le_int
-local le_uint_to_num = ll.le_uint_to_num
-local le_bpeek = ll.le_bpeek
-
-local getlib = require ( mod_name .. ".get" )
-local get_from_string = getlib.get_from_string
+local int64_to_le = ll.int64_to_le
+local le_to_int64 = ll.le_to_int64
 
 local bson = require ( mod_name .. ".bson" )
-local from_bson = bson.from_bson
 local to_bson = bson.to_bson
 local ordered = bson.ordered
+local int32 = bson.int32
+local int64 = bson.int64
+local null = bson.null
 
 local wire = require ( mod_name .. ".wire" )
 
@@ -31,77 +23,7 @@ local new_cursor = require ( mod_name .. ".cursor" )
 local colmethods = { }
 local colmt = { __index = colmethods }
 
-
-local opcodes = {
-    REPLY = 1 ;
-    MSG = 1000 ;
-    UPDATE = 2001 ;
-    INSERT = 2002 ;
-    QUERY = 2004 ;
-    GET_MORE = 2005 ;
-    DELETE = 2006 ;
-    KILL_CURSORS = 2007 ;
-}
-
-local function compose_msg ( requestID , reponseTo , opcode , message )
-    return num_to_le_uint ( #message + 16 ) .. requestID .. reponseTo .. opcode .. message
-end
-
-local function full_collection_name ( self , collection )
-    local db = assert ( self.db , "Not current in a database" )
-    return  db .. "." .. collection .. "\0"
-end
-
-local id = 0
-local function docmd ( conn , opcode , message ,  reponseTo )
-    id = id + 1
-    local req_id = id
-    local requestID = num_to_le_uint ( req_id )
-    reponseTo = reponseTo or "\255\255\255\255"
-    opcode = num_to_le_uint ( assert ( opcodes [ opcode ] ) )
-
-    local m = compose_msg ( requestID , reponseTo , opcode , message )
-    local sent = assert ( conn.sock:send ( m ) )
-    return req_id , sent
-end
-
-local function read_msg_header ( sock )
-    local header = assert ( sock:receive ( 16 ) )
-
-    local length = le_uint_to_num ( header , 1 , 4 )
-    local requestID = le_uint_to_num ( header , 5 , 8 )
-    local reponseTo = le_uint_to_num ( header , 9 , 12 )
-    local opcode = le_uint_to_num ( header , 13 , 16 )
-
-    return length , requestID , reponseTo , opcode
-end
-
-local function handle_reply ( conn , req_id )
-
-    local r_len , _ , r_res_id , opcode = read_msg_header ( conn.sock )
-    assert ( req_id == r_res_id )
-    assert ( opcode == opcodes.REPLY )
-    local data = assert ( conn.sock:receive ( r_len - 16 ) )
-    local get = get_from_string ( data )
-
-    local responseFlags = get ( 4 )
-    local cursorid = get ( 8 )
-
-    local t = { }
-    t.startingFrom = le_uint_to_num ( get ( 4 ) )
-    t.numberReturned = le_uint_to_num ( get ( 4 ) )
-    t.CursorNotFound = le_bpeek ( responseFlags , 0 )
-    t.QueryFailure = le_bpeek ( responseFlags , 1 )
-    t.ShardConfigStale = le_bpeek ( responseFlags , 2 )
-    t.AwaitCapable = le_bpeek ( responseFlags , 3 )
-
-    local r = { }
-    for i = 1 , t.numberReturned do
-        r[i] = from_bson(get)
-    end
-
-    return cursorid, r, t
-end
+local ZERO_ID = "\0\0\0\0\0\0\0\0"
 
 -- nil, false and 0 are false; Lua treats 0 as true, so the write
 -- arguments must not be tested directly
@@ -259,59 +181,124 @@ function colmethods:delete(selector, single_remove, safe)
     return r.n
 end
 
-function colmethods:kill_cursors(cursorIDs)
-    local n = #cursorIDs
-    cursorIDs = t_concat(cursorIDs)
-
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
-                .. num_to_le_uint(n) .. cursorIDs
-
-    return docmd(self.conn, "KILL_CURSORS", m )
+local function cursor_flags(start, n)
+    return {
+        CursorNotFound = false,
+        QueryFailure = false,
+        ShardConfigStale = false,
+        AwaitCapable = true,
+        startingFrom = start or 0,
+        numberReturned = n or 0,
+    }
 end
 
-function colmethods:query(query, returnfields, numberToSkip, numberToReturn, options)
+-- turns a find or getMore reply into the legacy return values
+local function cursor_result(r, err, doc, start, batch_name)
+    if not r then
+        if not doc then
+            return nil, err
+        end
+        local flags = cursor_flags(start, 0)
+        if doc.code == 43 then
+            flags.CursorNotFound = true
+        else
+            flags.QueryFailure = true
+        end
+        return ZERO_ID, {}, flags, err
+    end
+    local c = r.cursor
+    local batch = c[batch_name] or {}
+    return int64_to_le(c.id), batch, cursor_flags(start, #batch)
+end
+
+function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
+                          options)
     numberToSkip = numberToSkip or 0
+    options = options or {}
 
-    local flags = 0
-    if options then
-        flags = 2^1*( options.TailableCursor and 1 or 0 )
-            + 2^2*( options.SlaveOk and 1 or 0 )
-            + 2^3*( options.OplogReplay and 1 or 0 )
-            + 2^4*( options.NoCursorTimeout and 1 or 0 )
-            + 2^5*( options.AwaitData and 1 or 0 )
-            + 2^6*( options.Exhaust and 1 or 0 )
-            + 2^7*( options.Partial and 1 or 0 )
-    end
-
-    query = to_bson(query)
+    local cmd = {{"find", self.col}, {"filter", query or {}}}
     if returnfields then
-        returnfields = to_bson(returnfields)
-    else
-        returnfields = ""
+        cmd[#cmd + 1] = {"projection", returnfields}
+    end
+    if numberToSkip > 0 then
+        cmd[#cmd + 1] = {"skip", int32(numberToSkip)}
+    end
+    if options.sort then
+        cmd[#cmd + 1] = {"sort", options.sort}
     end
 
-    local m = num_to_le_uint(flags) .. full_collection_name(self, self.col)
-        .. num_to_le_uint(numberToSkip) .. num_to_le_int(numberToReturn or -1 )
-        .. query .. returnfields
+    local n = numberToReturn
+    local limit = options.limit
+    if n == nil then
+        -- the old code sent numberToReturn or -1
+        cmd[#cmd + 1] = {"singleBatch", true}
+        limit = 1
+    elseif n == 1 or n < 0 then
+        n = math_abs(n)
+        cmd[#cmd + 1] = {"singleBatch", true}
+        cmd[#cmd + 1] = {"batchSize", int32(n)}
+        limit = n
+    elseif n > 1 then
+        cmd[#cmd + 1] = {"batchSize", int32(n)}
+    end
+    if limit and limit > 0 then
+        cmd[#cmd + 1] = {"limit", int64(limit)}
+    end
 
-    local req_id = docmd(self.conn, "QUERY", m)
-    return handle_reply(self.conn, req_id)
+    if options.TailableCursor then cmd[#cmd + 1] = {"tailable", true} end
+    if options.AwaitData then cmd[#cmd + 1] = {"awaitData", true} end
+    if options.NoCursorTimeout then
+        cmd[#cmd + 1] = {"noCursorTimeout", true}
+    end
+    if options.Partial then
+        cmd[#cmd + 1] = {"allowPartialResults", true}
+    end
+
+    local conn = options.conn or self.conn
+    local r, err, doc = wire.command(conn, self.db, ordered(cmd))
+    return cursor_result(r, err, doc, numberToSkip, "firstBatch")
 end
 
-function colmethods:getmore(cursorID, numberToReturn, offset_i)
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
-                .. num_to_le_int(numberToReturn or 0) .. cursorID
+function colmethods:getmore(cursorID, numberToReturn, offset_i, opts)
+    if type(cursorID) ~= "string" or #cursorID ~= 8 then
+        error("bad argument #1 to 'getmore' (8-byte cursor id expected)", 2)
+    end
+    local cmd = {
+        {"getMore", int64(le_to_int64(cursorID, 1))},
+        {"collection", self.col},
+    }
+    if numberToReturn and numberToReturn > 0 then
+        cmd[3] = {"batchSize", int32(numberToReturn)}
+    end
+    local conn = opts and opts.conn or self.conn
+    local r, err, doc = wire.command(conn, self.db, ordered(cmd))
+    return cursor_result(r, err, doc, offset_i, "nextBatch")
+end
 
-    local req_id = docmd(self.conn, "GET_MORE" , m)
-    return handle_reply(self.conn, req_id)
+function colmethods:kill_cursors(cursorIDs, opts)
+    local ids = {}
+    for i, id in ipairs(cursorIDs) do
+        ids[i] = int64(le_to_int64(id, 1))
+    end
+    if #ids == 0 then
+        return true
+    end
+    local conn = opts and opts.conn or self.conn
+    local r, err = wire.command(conn, self.db, ordered{
+        {"killCursors", self.col},
+        {"cursors", ids},
+    })
+    if not r then
+        return nil, err
+    end
+    return true
 end
 
 function colmethods:count(query)
-    local r, err = self.db_obj:cmd(attachpairs_start({
-            count = self.col;
-            query = query or { } ;
-        } , "count" ) )
-
+    local r, err = wire.command(self.conn, self.db, ordered{
+        {"count", self.col},
+        {"query", query or {}},
+    })
     if not r then
         return nil, err
     end
@@ -335,23 +322,40 @@ function colmethods:find(query, returnfields, num_each_query)
 end
 
 function colmethods:find_one(query, returnfields)
-    local id, results = self:query(query, returnfields, 0, 1)
-    if id == "\0\0\0\0\0\0\0\0" and results[1] then
-        return results[1]
+    local id, results, _, err = self:query(query, returnfields, 0, 1)
+    if not id then
+        return nil, results
     end
-    return nil
+    if err then
+        return nil, err
+    end
+    return results[1]
 end
 
 -- see https://docs.mongodb.com/manual/reference/command/findAndModify
 function colmethods:find_and_modify(options)
-    assert(options.query)
-    assert(options.update or options.remove)
-    options.findAndModify = self.col
-    local doc,err = self.db_obj:cmd(attachpairs_start(options,"findAndModify"))
+    if type(options) ~= "table" or options.query == nil then
+        error("bad argument #1 to 'find_and_modify' (query expected)", 2)
+    end
+    if options.update == nil and not options.remove then
+        error("bad argument #1 to 'find_and_modify' "
+              .. "(update or remove expected)", 2)
+    end
+    local cmd = {{"findAndModify", self.col}}
+    for k, v in pairs(options) do
+        if k ~= "findAndModify" then
+            cmd[#cmd + 1] = {k, v}
+        end
+    end
+    local doc, err = wire.command(self.conn, self.db, ordered(cmd))
     if not doc then
-        return nil,err
+        return nil, err
+    end
+    if doc.value == null then
+        return nil
     end
     return doc.value
 end
+
 
 return colmt
