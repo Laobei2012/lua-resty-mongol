@@ -36,8 +36,21 @@ __DATA__
             -- a Lua value cannot keep the BSON type of a whole double,
             -- an int64 inside the int32 range, the key order of a
             -- document with more than one key, or a NaN payload
+            local wrappers = {
+                bson.binary_mt, bson.utc_date_mt, bson.timestamp_mt,
+                bson.int32_mt, bson.int64_mt, bson.double_mt,
+                require("resty.mongol.object_id").metatable,
+            }
+            local function is_wrapper(v)
+                local mt = getmetatable(v)
+                for _, w in ipairs(wrappers) do
+                    if mt == w then return true end
+                end
+                return v == bson.null
+            end
+            -- a wrapper counts as one value, not as its fields
             local function count_keys(v)
-                if type(v) ~= "table" then return 0 end
+                if type(v) ~= "table" or is_wrapper(v) then return 0 end
                 local n, max = 0, 0
                 for _, x in pairs(v) do
                     n = n + 1
