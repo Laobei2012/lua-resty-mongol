@@ -174,27 +174,39 @@ nilnumber out of range
                 {"int64(5)", bson.int64(5)},
             }
             for _, c in ipairs(cases) do
-                local e = t.elements(bson.to_bson({v = c[2]}))
-                ngx.say(c[1], " ", string.format("0x%02x", e[1].type))
+                local s = bson.to_bson({v = c[2]})
+                local e = t.elements(s)
+                local v = bson.decode(s).v
+                local shown
+                if type(v) == "cdata" then
+                    shown = "cdata " .. tostring(v)
+                elseif v ~= v then
+                    shown = "nan"
+                elseif v == 0 then
+                    shown = "zero sign " .. (1 / v < 0 and "-" or "+")
+                else
+                    shown = string.format("%.17g", v)
+                end
+                ngx.say(c[1], " ", string.format("0x%02x", e[1].type), " ", shown)
             end
         }
     }
 --- request
 GET /t
 --- response_body
-2^31-1 0x10
-2^31 0x12
--2^31-1 0x12
-0.5 0x01
--0.0 0x01
-1e300 0x01
-nan 0x01
-double(1) 0x01
-cdata 0x12
--2^31 0x10
-2^63 0x01
-int32(5) 0x10
-int64(5) 0x12
+2^31-1 0x10 2147483647
+2^31 0x12 2147483648
+-2^31-1 0x12 -2147483649
+0.5 0x01 0.5
+-0.0 0x01 zero sign -
+1e300 0x01 1.0000000000000001e+300
+nan 0x01 nan
+double(1) 0x01 1
+cdata 0x12 cdata 9007199254740993LL
+-2^31 0x10 -2147483648
+2^63 0x01 9.2233720368547758e+18
+int32(5) 0x10 5
+int64(5) 0x12 5
 --- no_error_log
 [error]
 
