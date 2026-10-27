@@ -1,32 +1,25 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
+local ngx = ngx
+local string = string
+local bit = require "bit"
+local tostring , tonumber = tostring , tonumber
+local math = math
+
 local misc = require ( mod_name .. ".misc" )
 local attachpairs_start = misc.attachpairs_start
 
 local setmetatable = setmetatable
-local pcall = pcall
 
 local colmt = require ( mod_name .. ".colmt" )
+local wire = require ( mod_name .. ".wire" )
 local gridfs = require ( mod_name .. ".gridfs" )
 
 local dbmethods = { }
 local dbmt = { __index = dbmethods }
 
 function dbmethods:cmd(q)
-    local collection = "$cmd"
-    local col = self:get_col(collection)
-    
-    local c_id , r , t = col:query(q)
-
-    if t.QueryFailure then
-        return nil, "Query Failure"
-    elseif not r[1] then
-        return nil, "No results returned"
-    elseif r[1].ok == 0 then -- Failure
-        return nil , r[1].errmsg , r[1] , t
-    else
-        return r[1]
-    end
+    return wire.command(self.conn, self.db, q)
 end
 
 function dbmethods:listcollections ( )
@@ -35,7 +28,7 @@ function dbmethods:listcollections ( )
 end
 
 function dbmethods:dropDatabase ( )
-    local r, err = self:cmd({ dropDatabase = true })
+    local r, err = self:cmd({ dropDatabase = 1 })
     if not r then
         return nil, err
     end
@@ -48,7 +41,7 @@ end
 
 --  XOR two byte strings together
 local function xor_bytestr( a, b )
-    local res = ""    
+    local res = ""
     for i=1,#a do
         res = res .. string.char(bit.bxor(string.byte(a,i,i), string.byte(b, i, i)))
     end
@@ -72,7 +65,6 @@ local function pbkdf2_hmac_sha1( pbkdf2_key, iterations, salt, len )
 end
 
 function dbmethods:add_user ( username , password )
-    local digest = pass_digest ( username , password )
     return self:update ( "system.users" , { user = username } , { ["$set"] = { pwd = password } } , true )
 end
 
@@ -81,7 +73,7 @@ function dbmethods:auth(username, password)
     if not r then
         return nil, err
     end
- 
+
     local digest = ngx.md5( r.nonce .. username .. pass_digest ( username , password ) )
 
     r, err = self:cmd(attachpairs_start({
@@ -101,8 +93,8 @@ function dbmethods:auth_scram_sha1(username, password)
     local nonce = ngx.encode_base64(string.sub(tostring(math.random()), 3 , 14))
     local first_bare = "n="  .. user .. ",r="  .. nonce
     local sasl_start_payload = ngx.encode_base64("n,," .. first_bare)
-    
-    r, err = self:cmd(attachpairs_start({
+
+    local r, err = self:cmd(attachpairs_start({
             saslStart = 1 ;
             mechanism = "SCRAM-SHA-1" ;
             autoAuthorize = 1 ;
@@ -111,7 +103,7 @@ function dbmethods:auth_scram_sha1(username, password)
     if not r then
         return nil, err
     end
-    
+
     local conversationId = r['conversationId']
     local server_first = r['payload']
     local parsed_s = ngx.decode_base64(server_first)
@@ -123,7 +115,7 @@ function dbmethods:auth_scram_sha1(username, password)
     local salt = parsed_t['s']
     local rnonce = parsed_t['r']
 
-    if not string.sub(rnonce, 1, 12) == nonce then
+    if string.sub(rnonce, 1, #nonce) ~= nonce then
         return nil, 'Server returned an invalid nonce.'
     end
     local without_proof = "c=biws,r=" .. rnonce
@@ -138,7 +130,7 @@ function dbmethods:auth_scram_sha1(username, password)
     local client_final = ngx.encode_base64(without_proof .. ',' .. client_proof)
     local server_key = ngx.hmac_sha1(salted_pass, "Server Key")
     local server_sig = ngx.encode_base64(ngx.hmac_sha1(server_key, auth_msg))
-    
+
     r, err = self:cmd(attachpairs_start({
             saslContinue = 1 ;
             conversationId = conversationId ;
@@ -155,7 +147,7 @@ function dbmethods:auth_scram_sha1(username, password)
     if parsed_t['v'] ~= server_sig then
         return nil, "Server returned an invalid signature."
     end
-    
+
     if not r['done'] then
         r, err = self:cmd(attachpairs_start({
             saslContinue = 1 ;

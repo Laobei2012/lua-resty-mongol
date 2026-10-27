@@ -1,5 +1,9 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
+local setmetatable = setmetatable
+local ngx = ngx
+local string = string
+
 local md5 = require "resty.md5"
 local str = require "resty.string"
 local bson = require ( mod_name .. ".bson" )
@@ -34,21 +38,21 @@ function gridfs_mt:get(fh, fields)
 end
 
 function gridfs_mt:remove(fields, continue_on_err, safe)
-    local r, err 
+    local r, err
     local n = 0
     if fields == {} then
-        r,err = self.chunk_col:delete({}, continue_on_err, safe) 
+        r,err = self.chunk_col:delete({}, continue_on_err, safe)
         if not r then return nil, "remove chunks failed: "..err end
-        r,err = self.file_col:delete({}, continue_on_err, safe) 
+        r,err = self.file_col:delete({}, continue_on_err, safe)
         if not r then return nil, "remove files failed: "..err end
         return r
     end
-        
+
     local cursor = self.file_col:find(fields, {_id=1})
     for k,v in cursor:pairs() do
-        r,err = self.chunk_col:delete({files_id=v._id}, continue_on_err, safe) 
+        r,err = self.chunk_col:delete({files_id=v._id}, continue_on_err, safe)
         if not r then return nil, "remove chunks failed: "..err end
-        r,err = self.file_col:delete({_id=v._id}, continue_on_err, safe) 
+        r,err = self.file_col:delete({_id=v._id}, continue_on_err, safe)
         if not r then return nil, "remove files failed: "..err end
         n = n + 1
     end
@@ -86,7 +90,7 @@ function gridfs_mt:insert(fh, meta, safe)
 
     local n = 0
     local length = 0
-    local r, err 
+    local r, err
     local md5_obj = md5:new()
     while true do
         local bytes = fh:read(meta.chunkSize)

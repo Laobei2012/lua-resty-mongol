@@ -1,1 +1,7 @@
 t/servroot
+.claude
+.claude.json
+t/spec/
+t/servroot*/
+.claude
+.claude.json

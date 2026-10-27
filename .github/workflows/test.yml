@@ -1,0 +1,63 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  OPENRESTY_VERSION: 1.31.1.1
+  DEVEL_UTILS_SHA: 95e99dea5744d16d4078c867b1cfc5617f91efc7
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install OpenResty and luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release luarocks
+          wget -O - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
+          sudo luarocks install luacheck
+      - name: luacheck
+        run: luacheck -q lib
+      - name: lj-releng
+        run: |
+          git clone https://github.com/openresty/openresty-devel-utils.git /tmp/devel-utils
+          git -C /tmp/devel-utils checkout "$DEVEL_UTILS_SHA"
+          export PATH=/usr/local/openresty/luajit/bin:$PATH
+          for f in lib/resty/mongol/*.lua; do /tmp/devel-utils/lj-releng "$f"; done
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mongo: ["6.0", "7.0", "8.0", "9.0"]
+    services:
+      mongo:
+        image: mongo:${{ matrix.mongo }}
+        ports:
+          - 27017:27017
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install OpenResty and Test::Nginx
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release cpanminus
+          wget -O - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
+          sudo cpanm --notest Test::Nginx
+      # TODO(Task 5): make test runs only the Phase 0 and Phase 1 files
+      # (PHASE1_TESTS in the Makefile). Task 5 restores the full run.
+      - name: Test
+        run: make test
+

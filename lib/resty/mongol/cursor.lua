@@ -1,5 +1,8 @@
+local setmetatable = setmetatable
+local assert = assert
+local next = next
+local table = table
 local t_insert = table.insert
-local t_remove = table.remove
 local t_concat = table.concat
 local strbyte = string.byte
 local strformat = string.format
@@ -49,16 +52,11 @@ function cursor_methods:sort(field, size)
     if size < 2 then return nil, "number of object must > 1" end
     if not field then return nil, "field should not be nil" end
 
-    local key, asc, t
-    for k,v in pairs(field) do
-        key = k
-        asc = v
-        break
-    end
+    local key, asc = next(field)
     if asc ~= 1 and asc ~= -1 then return nil, "order must be 1 or -1" end
 
-    local sort_f = 
-            function(a, b) 
+    local sort_f =
+            function(a, b)
                 if not a and not b then return false end
                 if not a then return true end
                 if not b then return false end
@@ -80,11 +78,11 @@ function cursor_methods:sort(field, size)
         elseif self.num_each ~= 0 and self.limit_n == 0 then
             size = self.num_each
         else
-            size = (self.num_each < self.limit_n 
+            size = (self.num_each < self.limit_n
                         and self.num_each) or self.limit_n
         end
-        
-        self.id, self.results, t = self.col:query(self.query, 
+
+        self.id, self.results = self.col:query(self.query,
                         self.returnfields, self.i, size)
         table.sort(self.results, sort_f)
     else
@@ -107,13 +105,13 @@ function cursor_methods:next()
 
     local t
     if not self.id then
-        self.id, self.results, t = self.col:query(self.query, 
+        self.id, self.results = self.col:query(self.query,
                         self.returnfields, self.i, self.num_each)
         if self.id == "\0\0\0\0\0\0\0\0" then
             self.done = true
         end
     else
-        self.id, self.results, t = self.col:getmore(self.id, 
+        self.id, self.results, t = self.col:getmore(self.id,
                         self.num_each, self.i)
         if self.id == "\0\0\0\0\0\0\0\0" then
             self.done = true
