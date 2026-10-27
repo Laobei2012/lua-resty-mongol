@@ -154,7 +154,7 @@ The driver splits a large insert into batches that stay inside the server limits
 ### Phase 5: New features
 
 1. `col:aggregate(pipeline, options)`, which returns a cursor (issue #55).
-2. Replica set connection with read preference `primary`, `primaryPreferred`, `secondary` and `secondaryPreferred`.
+2. Replica set connection with read preference `primary`, `primaryPreferred`, `secondary` and `secondaryPreferred`. The read preference applies only to reads. Writes and commands always go to the primary.
 3. GridFS on the new commands. Only the GridFS methods that the README documents keep their API.
 4. Sessions and transactions: `lsid`, `txnNumber`, `startTransaction`, `commitTransaction` and `abortTransaction`. CI adds a single-node replica set for these tests.
 5. Connection string parsing: `mongodb://` URIs, with `authSource`, `tls` and `replicaSet`.

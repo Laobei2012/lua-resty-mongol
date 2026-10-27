@@ -44,7 +44,7 @@
 |---|---|---|
 | `LICENSE` | MIT/X11 text, with the original authors | 0 |
 | `.github/workflows/test.yml` | CI matrix and service containers | 0, 3, 5 |
-| `Makefile` | `test`, `test-auth`, `test-replset` and `spec-data` targets | 0, 1 |
+| `Makefile` | `test`, `test-auth`, `test-replset`, `test-tls` and `spec-data` targets | 0, 1, 3 |
 | `t/lib/Mongol.pm` | Shared Test::Nginx setup: `$HttpConfig` and environment defaults | 0 |
 | `t/api.t` (new) | One test for each documented call, with a baseline on MongoDB 4.4 | 0 |
 | `t/bson_corpus.t` (new) | Runner for the official BSON corpus, downloaded by `make spec-data` and not committed | 1, 4 |
@@ -268,7 +268,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 **Files:**
 - Modify: `lib/resty/mongol/colmt.lua:30-208` (delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`)
-- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Most blocks call `db:auth("admin", "admin")` only as setup. Keep those blocks in their files, and delete the `db:auth()` lines and the `auth failed` lines from the expected output. This covers `t/sanity.t`, `t/cursor.t` (4 blocks), `t/gridfs.t` (2 blocks) and `t/gridfs_write.t` (15 blocks). Move only the blocks whose purpose is login, `t/cluster.t` TEST 2 (`db auth failed`) and TEST 8 (`db auth`), to `t/auth/legacy.t`. That file runs only in the Phase 3 auth job. In the moved blocks, log in against the `admin` database, because the CI root user lives there. Rewrite `t/sanity.t` TEST 16 for the Task 2b rules. `tab1 = {[0] = "a0", "a1", "a2"}` and the sparse `tab2` are not arrays, so they are stored as documents. The new expected values are `r.tab[1].a == "aa"`, `r.tab1["0"] == "a0"` and `r.tab2["2"] == "a20"`. Rewrite TEST 18 the same way. `$push` works only on arrays, so its fixtures for `tab1` and `tab2` become the arrays `{"a10", "a11", "a12"}` and `{"a22", "a23", "a24"}`. The update returns `1`. The new expected values are `r.tab[2].b == "bb"`, `r.tab[3] == "a3"`, `r.tab1[4] == "a13"` and `r.tab2[4] == "a25"`. Rewrite TEST 11. It inserts 10 documents and reads them with `find(..., 4)`. The value 4 is now the batch size and not a limit, so the test expects all 10 documents. Keep TEST 22 unchanged. It now passes with the standard `pairs`.
+- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Most blocks call `db:auth("admin", "admin")` only as setup. Keep those blocks in their files, and delete the `db:auth()` lines and the `auth failed` lines from the expected output. This covers `t/sanity.t`, `t/cursor.t` (4 blocks), `t/gridfs.t` (2 blocks) and `t/gridfs_write.t` (15 blocks). Move only the blocks whose purpose is login, `t/cluster.t` TEST 2 (`db auth failed`) and TEST 8 (`db auth`), to `t/auth/legacy.t`. That file runs only in the Phase 3 auth job. In the moved blocks, log in against the `admin` database, because the CI root user lives there. Rewrite `t/sanity.t` TEST 16 for the Task 2b rules. `tab1 = {[0] = "a0", "a1", "a2"}` and the sparse `tab2` are not arrays, so they are stored as documents. The new expected values are `r.tab[1].a == "aa"`, `r.tab1["0"] == "a0"` and `r.tab2["2"] == "a20"`. Rewrite TEST 18 the same way. `$push` works only on arrays, so its fixtures for `tab1` and `tab2` become the arrays `{"a10", "a11", "a12"}` and `{"a22", "a23", "a24"}`. The update returns `1`. The new expected values are `r.tab[2].b == "bb"`, `r.tab[3] == "a3"`, `r.tab1[4] == "a13"` and `r.tab2[4] == "a25"`. Rewrite TEST 11. It inserts 10 documents and reads them with `find(..., 4)`. The value 4 is now the batch size and not a limit, so the test expects all 10 documents. Rewrite TEST 12 the same way. It reads 10 documents twice with `find(..., 3)`, once with `{n = 0}` and once with `{n = 1}`. Each loop now prints all 10 documents. The first loop prints `nil` and `puppy` for each document, and the second prints `n` from 1 to 10 and `nil`. Keep TEST 22 unchanged. It now passes with the standard `pairs`.
 
 **Interfaces:**
 - Consumes: `wire.command`, `bson.ordered`, `bson.int32`.
@@ -338,7 +338,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: find_and_modify miss`. On an empty collection, an update without `upsert` returns `nil`, a `remove = true` returns `nil`, and an upsert without `new = true` returns `nil`.
 - [ ] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
 - [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** the same command. Expected: PASS.
+- [ ] **Step 4: Run** the same command. Expected: PASS, except `t/sanity.t` TEST 11 and TEST 12. These two tests read across batches, which needs the Task 6 cursor. Task 6 Step 4 runs them.
 - [ ] **Step 5: Commit** `feat(col): reads over find/getMore commands`.
 
 ### Task 6: Cursor
@@ -433,10 +433,12 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 1: Write failing tests:**
   - `TEST: pool option`. Two connects with `pool = "a"` show `get_reused_times() == 1` on the second.
   - `TEST: tls to plain server`. `connect(host, port, {ssl = true})` returns `nil, err` and raises no Lua error.
+  - In `t/tls/tls.t`, which runs only in the CI job `tls`: `TEST: tls verified`. `connect(host, 27017, {ssl = true})` succeeds, and `db:cmd({ping = 1})` returns `ok == 1`. `TEST: tls untrusted`. A second nginx block trusts a different CA, and the same `connect` returns `nil, err`. `TEST: tls reconnect`. After `close()`, `connect()` with no arguments succeeds, and `ping` returns `ok == 1`.
+- Produces: the CI job `tls`. It runs only with `mongo:9.0`, to keep CI short. A step makes a test CA and a server certificate for `localhost` with `openssl`. The job starts `mongod` with `--tlsMode requireTLS --tlsCertificateKeyFile`. `t/tls/tls.t` sets `lua_ssl_trusted_certificate` to the test CA. A new Makefile target `test-tls` runs `prove -I t/lib t/tls`. The certificates are made in CI and never committed.
   - `TEST: pool_size`. `connect(host, port, {pool = "b", pool_size = 1})` succeeds.
 - [ ] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test`. Expected: PASS.
+- [ ] **Step 4: Run** `make test` and, in the `tls` job, `make test-tls`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(conn): TLS and pool options, hello-based getprimary`. Tag the Phase 3 release.
 
 ---
@@ -533,16 +535,16 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 
 **Interfaces:**
 - Produces: `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
-- Produces: `mongol.connect_uri(str) -> conn | nil, err`. It connects to the first host that answers `hello`, then applies `readPreference` (issues #10 and #22):
-  - `primary`: follow `getprimary()`.
-  - `primaryPreferred`: use the primary. If no primary answers, use a secondary.
+- Produces: `mongol.connect_uri(str) -> conn | nil, err`. The returned `conn` always talks to the primary, and all writes and `db:cmd` calls use it. For `secondary` and `secondaryPreferred`, `conn.read_conn` holds a second connection to the selected secondary. If `conn.read_conn` is set, `col:query`, `col:find`, `col:find_one`, `col:count` and `col:aggregate` use it. A cursor keeps the connection of its first `query` for every `getMore` and `killCursors`. The read connection follows `readPreference` (issues #10 and #22):
+  - `primary`: no `read_conn`. Reads use the primary.
+  - `primaryPreferred`: no `read_conn` while a primary answers. If no primary answers, `connect_uri` returns `nil, err`, because writes need a primary.
   - `secondary`: use a host whose `hello` reply has `secondary = true`. If none answers, return `nil, err`.
   - `secondaryPreferred`: use a secondary. If none answers, use the primary.
   - For a non-primary read preference, `wire.command` adds `$readPreference = {mode = ...}`, which `mongos` needs.
   - If the URI has a user, it logs in.
-- Produces: a CI job `replset`. It runs `docker run -d --name rs -p 27017:27017 mongo:${{ matrix.mongo }} --replSet rs0`, then `docker exec rs mongosh --eval 'rs.initiate()'`, and waits for `isWritablePrimary`.
+- Produces: a CI job `replset` with a 3-member replica set. It starts three containers with `docker run -d --network host mongo:${{ matrix.mongo }} --replSet rs0 --port <p>`, for the ports 27017, 27018 and 27019. Then it runs `rs.initiate()` through `mongosh` with the members `localhost:27017` (priority 2), `localhost:27018` and `localhost:27019`, and waits until 27017 is primary. The existing `t/cluster.t` uses port 27018 as a secondary.
 
-- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. The `replset` job runs `make test-replset`.
+- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd` with `writeConcern = {w = 3}`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
 - [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
@@ -560,7 +562,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - `update_md5` stays, but `write` does not call it. The GridFS spec deprecated `md5`, so issue #37 is out of scope.
 - Fix two old bugs. After a write makes the file longer, `write` sets `self.file_size` to the new length. `update_md5` reads only chunks `0` to `ceil(length / chunk_size) - 1`. If the length is an exact multiple of the chunk size, the old code reads one chunk too many.
 - Add `TEST: write twice past end`. On a new file handle, `write("abc", 0)` and then `write("d", 3)` both succeed, and `read()` returns `abcd`. Add `TEST: md5 exact multiple`. With `chunkSize = 4` and an 8-byte file, `update_md5()` succeeds, and the stored `md5` equals `ngx.md5` of the 8 bytes. Add `TEST: large file split`. Set `wire.limits.max_message_size = 20000` and write a 100,000-byte file with `chunkSize = 4096`. `read()` returns the same bytes.
-- Add `TEST: chunkSize is int32` to `t/gridfs_write.t`. Read the files document with `db:cmd` and check the type byte of `chunkSize`.
+- Add `TEST: stored types` to `t/gridfs_write.t`. A decoded Lua number does not show its BSON type, so the test asks the server. `count({_id = id, chunkSize = {["$type"] = "int"}, length = {["$type"] = "long"}})` on the files collection gives `1`. The chunks collection gives the same count for `n` with `"int"` and `data` with `"binData"`.
 
 - [ ] **Step 1:** Remove the `--- SKIP` lines from `t/gridfs*.t`. Port the literal values to `$TEST_NGINX_MONGO_*`. Make sure that Task 4 removed every `db:auth()` call and every `auth failed` expected line from `t/gridfs.t` and `t/gridfs_write.t`. Keep every overwrite assertion as it is.
 - [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t`. Expected: FAIL.
@@ -631,7 +633,7 @@ Open issues:
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
 | #1, #14, #29, #59 | Task 2b |
 | #53 | Task 2b (signed date wrapper) and Task 10 (JSON) |
-| #66, #67 | Task 10 (JSON and empty arrays) |
+| #66, #67 | Task 10 (JSON, empty arrays) |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |
