@@ -101,15 +101,15 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - Produces: ObjectId bytes follow the current BSON spec: 4-byte big-endian seconds, then 5 random bytes, then a 3-byte big-endian counter. The 5 random bytes come from `resty.random.bytes(5)` on the first id in each worker, keyed by `ngx.worker.pid()`, so that forked workers never share them. The counter starts at a random value. The module calls no `ngx.var`, no `io.popen` and no `uname` at load.
 - Produces: `object_id.new_from_hex(hex24) -> oid | nil, err` (issue #33). `oid:tostring()` keeps its output.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `t/globals.t`, `TEST: require and new in init_by_lua`. `init_by_lua_block` runs `require("resty.mongol"):new()`. Expected: no `[error]` (issue #69).
   - `t/objid.t`, `TEST: id in timer`. `ngx.timer.at(0, ...)` creates an ObjectId and writes its hex to a shared dict. The content handler reads 24 hex characters (issues #47 and #63).
   - `t/objid.t`, `TEST: hex round trip`. `new_from_hex(id:tostring()):tostring() == id:tostring()`.
   - `t/objid.t`, `TEST: unique across workers`. Use `master_on()` and `workers(2)`. An `init_worker_by_lua_block` makes one ObjectId and stores its hex in a shared dict under the key `ngx.worker.id()`. The content handler reads both keys. The ids from the two workers differ in bytes 5 to 9.
-- [ ] **Step 2: Run** `prove t/objid.t t/globals.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** the same command. Expected: the new blocks PASS. The existing `t/objid.t` TEST 1 needs a server and the old opcodes, so it fails until Task 5.
-- [ ] **Step 5: Commit** `fix(objectid): spec layout, no ngx.var, loadable in any phase`.
+- [x] **Step 2: Run** `prove t/objid.t t/globals.t`. Expected: FAIL.
+- [x] **Step 3: Implement** the interfaces above.
+- [x] **Step 4: Run** the same command. Expected: the new blocks PASS. The existing `t/objid.t` TEST 1 needs a server and the old opcodes, so it fails until Task 5.
+- [x] **Step 5: Commit** `fix(objectid): spec layout, no ngx.var, loadable in any phase`.
 
 ### Task 1c: API coverage baseline
 

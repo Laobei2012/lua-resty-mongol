@@ -6,6 +6,10 @@ use Mongol;
 
 repeat_each(1);
 
+no_shuffle();
+master_on();
+workers(2);
+
 plan tests => repeat_each() * (3 * blocks());
 
 $ENV{TEST_NGINX_RESOLVER} = '8.8.8.8';
@@ -68,3 +72,81 @@ dog
 --- no_error_log
 [error]
 
+
+
+
+=== TEST 2: id in timer
+--- http_config eval
+"$::HttpConfig" . q{
+    lua_shared_dict ids 1m;
+}
+--- config
+    location /t {
+        content_by_lua_block {
+            local ok, err = ngx.timer.at(0, function()
+                local object_id = require "resty.mongol.object_id"
+                ngx.shared.ids:set("timer", object_id.new():tostring())
+            end)
+            if not ok then ngx.say(err) return end
+            ngx.sleep(0.1)
+            local hex = ngx.shared.ids:get("timer")
+            ngx.say(#hex, " ", hex:match("^%x+$") ~= nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+24 true
+--- no_error_log
+[error]
+
+
+
+=== TEST 3: hex round trip
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local object_id = require "resty.mongol.object_id"
+            local id = object_id.new()
+            local back = object_id.new_from_hex(id:tostring())
+            ngx.say(back:tostring() == id:tostring())
+            ngx.say(back == id)
+            ngx.say(object_id.new_from_hex("xyz"))
+        }
+    }
+--- request
+GET /t
+--- response_body
+true
+true
+nilinvalid hex string
+--- no_error_log
+[error]
+
+
+
+=== TEST 4: unique across workers
+--- http_config eval
+"$::HttpConfig" . q{
+    lua_shared_dict ids 1m;
+    init_worker_by_lua_block {
+        local object_id = require "resty.mongol.object_id"
+        ngx.shared.ids:set(ngx.worker.id(), object_id.new():tostring())
+    }
+}
+--- config
+    location /t {
+        content_by_lua_block {
+            local a = ngx.shared.ids:get(0)
+            local b = ngx.shared.ids:get(1)
+            -- bytes 5 to 9 are hex characters 9 to 18
+            ngx.say(a:sub(9, 18) ~= b:sub(9, 18))
+        }
+    }
+--- request
+GET /t
+--- response_body
+true
+--- no_error_log
+[error]

@@ -81,9 +81,10 @@ function connmethods:new_db_handle ( db )
 end
 
 function connmethods:set_timeout(timeout)
+    self.timeout = timeout
     local sock = self.sock
     if not sock then
-        return nil, "not initialized"
+        return true
     end
 
     return sock:settimeout(timeout)
@@ -111,6 +112,13 @@ function connmethods:connect(host, port)
     self.host = host or self.host
     self.port = port or self.port
     local sock = self.sock
+    if not sock then
+        sock = socket()
+        if self.timeout then
+            sock:settimeout(self.timeout)
+        end
+        self.sock = sock
+    end
 
     return sock:connect(self.host, self.port)
 end
@@ -128,7 +136,6 @@ connmt.__call = connmethods.new_db_handle
 
 new = function(self)
     return setmetatable ( {
-            sock = socket();
             host = "localhost";
             port = 27017;
         } , connmt )
