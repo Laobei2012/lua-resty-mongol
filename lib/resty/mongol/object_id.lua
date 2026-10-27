@@ -8,7 +8,6 @@ local tonumber = tonumber
 local type = type
 local t_concat = table.concat
 local floor = math.floor
-local random = math.random
 local ngx_time = ngx.time
 local ngx_worker_pid = ngx.worker.pid
 
@@ -59,14 +58,16 @@ local process_pid, process_rand, inc
 local function generate_id ( )
     local pid = ngx_worker_pid()
     if pid ~= process_pid then
-        process_rand = resty_random.bytes(5)
-        if not process_rand or #process_rand ~= 5 then
-            local b = {}
-            for i = 1, 5 do b[i] = strchar(random(0, 255)) end
-            process_rand = t_concat(b)
+        local rand = resty_random.bytes(5)
+        if not rand or #rand ~= 5 then
+            return nil, "random bytes failed"
         end
         local c = resty_random.bytes(3)
-        inc = c and ll.be_uint_to_num(c, 1, 3) or random(0, 0xFFFFFF)
+        if not c or #c ~= 3 then
+            return nil, "random bytes failed"
+        end
+        process_rand = rand
+        inc = ll.be_uint_to_num(c, 1, 3)
         process_pid = pid
     end
     inc = (inc + 1) % 0x1000000
@@ -80,7 +81,11 @@ local function new_object_id(str)
             return nil, "invalid object id"
         end
     else
-        str = generate_id()
+        local err
+        str, err = generate_id()
+        if not str then
+            return nil, err
+        end
     end
     return setmetatable({id = str,
                         tostring = _tostring,

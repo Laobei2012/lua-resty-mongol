@@ -150,3 +150,49 @@ GET /t
 true
 --- no_error_log
 [error]
+
+
+
+=== TEST 5: random failure returns nil, err
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local real = require "resty.random"
+            local calls = 0
+            local mode = "nil"
+            package.loaded["resty.random"] = {
+                bytes = function(n)
+                    calls = calls + 1
+                    if mode == "nil" then return nil end
+                    if mode == "second_short" and calls % 2 == 0 then
+                        return "x"
+                    end
+                    return real.bytes(n)
+                end,
+            }
+            package.loaded["resty.mongol.object_id"] = nil
+            local object_id = require "resty.mongol.object_id"
+
+            local id, err = object_id.new()
+            ngx.say(id, " ", err)
+
+            mode = "second_short"
+            calls = 0
+            id, err = object_id.new()
+            ngx.say(id, " ", err)
+
+            -- the failed calls must not cache a half-made state
+            mode = "ok"
+            id, err = object_id.new()
+            ngx.say(#id:tostring(), " ", err)
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil random bytes failed
+nil random bytes failed
+24 nil
+--- no_error_log
+[error]
