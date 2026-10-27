@@ -219,8 +219,14 @@ function colmethods:insert(docs, continue_on_error, safe)
 end
 
 function colmethods:update(selector, update, upsert, multiupdate, safe)
+    if type(selector) ~= "table" then
+        error("bad argument #1 to 'update' (table expected)", 2)
+    end
+    if type(update) ~= "table" then
+        error("bad argument #2 to 'update' (table expected)", 2)
+    end
     local stmt = {
-        q = selector or {},
+        q = selector,
         u = update,
         upsert = flag(upsert),
         multi = flag(multiupdate),
@@ -236,8 +242,11 @@ function colmethods:update(selector, update, upsert, multiupdate, safe)
 end
 
 function colmethods:delete(selector, single_remove, safe)
+    if type(selector) ~= "table" then
+        error("bad argument #1 to 'delete' (table expected)", 2)
+    end
     local stmt = {
-        q = selector or {},
+        q = selector,
         limit = flag(single_remove) and 1 or 0,
     }
     local r, err = write(self, {{"delete", self.col}}, "deletes", {stmt}, safe)
