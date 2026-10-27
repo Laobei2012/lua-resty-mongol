@@ -314,7 +314,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - It sends `find` with `filter`, `projection` and `skip` (int32). `numberToReturn` maps as in the legacy `OP_QUERY`:
     - `nil`: `singleBatch = true` and `limit = 1`, because the old code sends `numberToReturn or -1`.
     - `0`: no `batchSize` and no `limit`.
-    - `1` or a negative `n`: `singleBatch = true` and `limit = abs(n)`.
+    - `1` or a negative `n`: `singleBatch = true`, `limit = abs(n)` and `batchSize = abs(n)`. Without `batchSize`, the server stops the single batch at 101 documents.
     - A positive `n` above 1: `batchSize = n`, and no `limit`.
   - `options.limit` (new) is the total limit. The cursor sets it from `cursor:limit(n)`. `num_each_query` from `col:find` is only the batch size.
   - `options.sort` (new) becomes `sort`.
@@ -339,6 +339,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: add_user roles`. After a `dropUser` of `u2` whose error is ignored, `db:add_user("u2", "p2")` succeeds, which needs `roles` to be an empty array.
   - `TEST: $or array` (issue #14). Insert `{x = 1}` and `{y = 2}`. A `count` with `{["$or"] = {{x = 1}, {y = 2}}}` gives `2`.
   - `TEST: query cursor not found`. `col:getmore("\1\0\0\0\0\0\0\0")` returns 4 values. The third is a flags table with `CursorNotFound == true`, and the fourth is a string.
+  - `TEST: query negative count`. Insert 200 small documents. `col:query({}, nil, 0, -200)` returns 200 results and an id of 8 zero bytes.
   - `TEST: query server error`. `col:query({["$bad"] = 1})` returns 4 values. The flags table has `QueryFailure == true`, and the fourth value is a string.
   - `TEST: find_and_modify`. Upsert `{x=1}` with `new=true`, and `.x` is `1`.
   - `TEST: find_and_modify miss`. On an empty collection, an update without `upsert` returns `nil`, a `remove = true` returns `nil`, and an upsert without `new = true` returns `nil`.
@@ -649,7 +650,7 @@ Open issues:
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
 | #1, #14, #29, #59 | Task 2b |
 | #53 | Task 2b (signed date wrapper) and Task 10 (JSON) |
-| #66, #67 | Task 10 (JSON, empty arrays) |
+| #66, #67 | Task 10 (JSON and empty arrays) |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |
