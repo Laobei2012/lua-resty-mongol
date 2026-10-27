@@ -32,7 +32,7 @@
 
 1. A server that closes the socket or sends a short or invalid reply. Expected: the call returns `nil, err`, and the driver closes the socket so that `set_keepalive` cannot put a broken socket in the pool. Test: Task 3, `TEST: truncated reply`.
 2. A cursor with `limit` that is not a multiple of the batch size, over more than one `getMore`. Expected: exactly `limit` documents, then `nil`. Test: Task 6, `TEST: limit across batches`.
-3. Number edges: `2^31 - 1`, `2^31`, `-2^31 - 1`, `2^53 + 1` as cdata, `0.5`, `-0.0`, `1e300`, NaN. Expected: each value round trips with the type from the Phase 4 rule. Test: Task 2b, `TEST: number edges`.
+3. Number edges: `2^31 - 1`, `2^31`, `-2^31 - 1`, `2^53 + 1` as cdata, `0.5`, `-0.0`, `1e300`, NaN. Expected: each value round trips with the type from the Task 2b rule. Test: Task 2b, `TEST: number edges`.
 4. Strings with embedded `\0`, and binary data. Expected: an exact round trip for values. Keys with `\0` return `nil, err`. Test: Task 2, `TEST: nul in values`.
 5. A pooled socket reused by a request that needs a different login. Expected: the README pattern with one pool name for each user works, and `get_reused_times()` lets the caller skip a second login. Test: Task 8, `TEST: pooled login reuse`.
 
@@ -104,7 +104,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
   - `t/globals.t`, `TEST: require and new in init_by_lua`. `init_by_lua_block` runs `require("resty.mongol"):new()`. Expected: no `[error]` (issue #69).
   - `t/objid.t`, `TEST: id in timer`. `ngx.timer.at(0, ...)` creates an ObjectId and writes its hex to a shared dict. The content handler reads 24 hex characters (issues #47 and #63).
   - `t/objid.t`, `TEST: hex round trip`. `new_from_hex(id:tostring()):tostring() == id:tostring()`.
-  - `t/objid.t`, `TEST: unique across workers`. With `worker_processes 2`, ids from two workers differ in bytes 5 to 9.
+  - `t/objid.t`, `TEST: unique across workers`. Use `master_on()` and `workers(2)`. An `init_worker_by_lua_block` makes one ObjectId and stores its hex in a shared dict under the key `ngx.worker.id()`. The content handler reads both keys. The ids from the two workers differ in bytes 5 to 9.
 - [ ] **Step 2: Run** `prove t/objid.t t/globals.t`. Expected: FAIL.
 - [ ] **Step 3: Implement** the interfaces above.
 - [ ] **Step 4: Run** the same command. Expected: PASS.
@@ -138,7 +138,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
   - `TEST: count with filter`. Insert `{x = 1}`, `{x = 1}` and `{x = 2}`. `col:count({x = 1})` returns `2`.
   - `TEST: gridfs read aligned`. Insert a 3-chunk file with `chunkSize = 4` through `gridfs:insert`, as `t/gridfs.t` does. `read(4, 4)` returns bytes 5 to 8. `read()` returns the whole file.
   - `TEST: gridfs read unaligned`. Skip on the baseline. `read(3, 5)` returns bytes 6 to 8.
-  - `TEST: add_user`. Skip on the baseline. `db:add_user("u_api", "p")` returns a truthy value, and `db:cmd({usersInfo = "u_api"}).users[1].user` is `u_api`.
+  - `TEST: add_user`. Skip on the baseline. The block first runs `db:cmd({dropUser = "u_api"})` and ignores its error. `db:add_user("u_api", "p")` returns a truthy value, and `db:cmd({usersInfo = "u_api"}).users[1].user` is `u_api`.
   - `TEST: listcollections`. Skip on the baseline. After an insert into `c_api`, the cursor yields a document with `name == "c_api"`.
   - `TEST: db list`. Skip on the baseline. `db:list()` returns a cursor that yields the same documents as `db:listcollections()`.
   - `TEST: shutdown`. Skip on the baseline. Use `--- tcp_listen: 12345` and an empty `--- tcp_reply:`, so that the fake server reads the request and closes the socket. `conn:connect` to port 12345, then `conn:shutdown()`, raises no Lua error. The block has `--- no_error_log` of `[error]`.
@@ -212,12 +212,13 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `1e300` | `0x01` |
   | `0/0` | `0x01` |
   | `bson.double(1)` | `0x01` |
+  | `9007199254740993LL` (cdata) | `0x12` |
 
   Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: empty array round trip`. The document `{a: []}` decodes to a table whose `a` has `bson.array_mt`. `to_bson` of that table writes `a` as type 0x04. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: null decode`. A document `{x: null}` decodes to `t.x == bson.null`. Add `TEST: array with null`. The array `["a", null, "b"]` decodes to `{"a", bson.null, "b"}`, and encodes back as an array with 3 elements and a null in the middle. Add `TEST: date round trip`. The date `-1000` ms decodes to a wrapper with `v == -1000`, and encodes back as type 0x09 with the same 8 bytes. Add `TEST: binary subtype`. `bson.get_bin_data("abc", 4)` encodes as type 0x05 with subtype 0x04, and decodes to a wrapper with `v == "abc"` and `st == "\4"`. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
 - [ ] **Step 1b: Add the BSON corpus runner.** The official BSON test data is in `mongodb/specifications`, folder `source/bson-corpus/tests`. Its license is CC BY-NC-SA 3.0. Do not commit these files to this repo. Add a Makefile target `spec-data`. It downloads the folder from commit `9ea18a92308ed437e16dd95e6ff9c496daa61ecd` through `https://codeload.github.com/mongodb/specifications/tar.gz/<sha>` into `t/spec/bson-corpus/`. Add `t/spec/` to `.gitignore`. Make `test` depend on `spec-data`. Write `t/bson_corpus.t`. It needs no server. It reads each JSON file with `cjson` and runs three checks:
   - `valid` entries: `from_bson` of `canonical_bson` succeeds. Then `to_bson` of the result gives the same bytes. Skip the encode check in three cases, because a Lua value cannot carry the BSON type or the key order. The cases are a double with a whole value, an int64 inside the int32 range, and a document with more than one key.
   - `decodeErrors` entries: `from_bson` raises an error or returns `nil`. It must never return a document.
-  - The runner reads an allowlist of 13 files. The files are `array`, `binary`, `boolean`, `datetime`, `document` and `double`. The others are `int32`, `int64`, `null`, `oid`, `string`, `timestamp` and `top`. An entry that fails because of work in a later task goes in a `known_failures` table, with the task number. Task 10 adds the remaining files and empties `known_failures`.
+  - The runner reads an allowlist of 13 files. The files are `array`, `binary`, `boolean`, `datetime`, `document` and `double`. The others are `int32`, `int64`, `null`, `oid`, `string`, `timestamp` and `top`. An entry that fails because of work in a later task goes in a `known_failures` table, with the task number. Task 10 adds the files for the Task 10 types and empties `known_failures`. The files for deprecated types, such as `code`, `symbol`, `dbpointer` and `multi-type`, stay out of the allowlist.
 - [ ] **Step 2: Run** `prove t/bson.t t/bson_corpus.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/bson.t t/bson_corpus.t`. Expected: PASS.
@@ -233,7 +234,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 **Interfaces:**
 - Consumes: `bson.ordered`, `bson.to_bson`, `bson.from_bson`.
 - Produces: `wire.command(conn, dbname, cmd, sequences) -> reply_doc | nil, err, reply_doc`.
-  - `cmd` is an ordered document or a plain table. `wire.command` adds `$db = dbname` as the last key.
+  - `cmd` is an ordered document or a plain table. `wire.command` does not change `cmd`. It encodes `cmd` first, so that the command name stays the first key under the Phase 1 key-order rule. Then it adds `$db = dbname` to the encoded bytes, before the final NUL byte. `$readPreference` (Task 12) and the session fields from `session:apply` (Task 14) are added the same way. Do not set these keys in the Lua table, because `pairs` order can then put one of them first.
   - `sequences` is optional. It is a list of `{identifier, docs}` and becomes kind-1 sections.
   - If `reply.ok ~= 1`, the result is `nil, reply.errmsg, reply`.
   - On a socket or framing error, it calls `conn.sock:close()`, sets `conn.broken = true` and returns `nil, err`.
@@ -241,6 +242,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - It rejects reply opcodes other than 2013 with `nil, "unexpected opcode " .. op`.
   - It checks `flagBits` as the `OP_MSG` specification defines. Bits 0 to 15 are required bits. Bit 0 (`checksumPresent`) is allowed. Any other required bit, including bit 1 (`moreToCome`, which this driver never asks for), is an error. Bits 16 to 31 are optional, and the driver ignores them. It rejects a section kind other than 0 or 1, a reply without exactly one kind-0 section, and a section that ends past the message. Each case returns `nil, err`, closes the socket and sets `conn.broken = true`. Source: the MongoDB `OP_MSG` specification.
   - `conn:connect()` on a broken connection makes a new socket and clears `broken`.
+  - The driver does not check the reply's `responseTo`. A socket carries one request at a time, and any error closes it, so a reply always belongs to the last request. This rule lets the fake-server tests use a fixed `tcp_reply`.
 - Produces: `wire.limits`, a module table with `max_bson_size = 16777216`, `max_message_size = 48000000` and `max_write_batch_size = 100000`. These values are the same on MongoDB 6.0 to 9.0, so the driver does not read them from `hello`. Tests can lower them. If an encoded command is larger than `max_message_size`, `wire.command` returns `nil, "message too large"` and sends nothing.
 - Produces: `db:cmd(q)` calls `wire.command(self.conn, self.db, q)`. It keeps the return values `doc` and `nil, errmsg, doc`.
 - Produces: if `self.broken` is set, `conn:set_keepalive(...)` returns `nil, "closed"`.
@@ -250,6 +252,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: hello`. `conn:ismaster()` against `$TEST_NGINX_MONGO_HOST` returns `true`. The response body is `true`.
   - `TEST: cmd error`. `db:cmd({nosuchcmd = 1})` returns `nil` and a message that contains `no such command`.
   - `TEST: truncated reply`. Use `--- tcp_listen: 12345` and `--- tcp_reply` with 10 bytes. `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
+  - `TEST: $db does not reorder`. `db:cmd({hello = 1})` and `db:cmd({isMaster = 1})` both return a table with `ok == 1`, and the caller's table has no `$db` key after the call.
   - `TEST: bad replies`. Three blocks, each with `--- tcp_listen: 12345` and a hand-built `OP_MSG` reply. The first has `flagBits` bit 2 set. The second has a section of kind 2. The third has only a kind-1 section. Each `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
   - `TEST: optional flag bit`. A hand-built reply with `flagBits` bit 20 set and `{ok = 1}` in the body. `db:cmd({ping = 1})` returns a table with `ok == 1`.
   - `TEST: checksum flag`. Use `--- tcp_reply` with a hand-built `OP_MSG` reply that has bit 0 set and `{ok = 1}` in the body. `db:cmd` returns a table with `ok == 1`.
@@ -321,7 +324,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `col:kill_cursors(ids)` sends `killCursors` and returns `true | nil, err`.
 - Produces: `col:count(query)` sends ordered `{count, query}` and returns `reply.n`.
 - Produces: if the reply has `value = bson.null`, `col:find_and_modify(options)` returns `nil`, as the old code did for a miss. A document inside the reply keeps `bson.null` in its fields.
-- Produces: `db:listcollections()` returns a cursor built from the `listCollections` first batch. `db:list()` is an alias for it, because the README documents that name. `db:add_user(u, p)` sends `createUser` with `roles = bson.empty_array`.
+- `db:listcollections()` and `db:list()` move to Task 6, because they need a cursor built from a command reply. `db:add_user(u, p)` sends `createUser` with `roles = bson.empty_array`.
 
 - [ ] **Step 1: Write failing tests:**
   - `TEST: find_one`. Insert `{name="dog"}`. `find_one({name="dog"}).name` is `dog`.
@@ -329,11 +332,10 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: count`. Insert 5 documents, then `count({})` gives `5`. This covers issue #61.
   - `TEST: negative int32` (issue #59). A safe insert of `{v = -1}` and a `find_one` give `v == -1`.
   - `TEST: array round trip`. A safe insert of `{v = {"a", "b"}}`, then a `count` with `{v = {["$size"] = 2}}` gives `1`, and `find_one({}).v[1]` is `a`.
-  - `TEST: add_user roles`. `db:add_user("u2", "p2")` succeeds, which needs `roles` to be an empty array.
+  - `TEST: add_user roles`. After a `dropUser` of `u2` whose error is ignored, `db:add_user("u2", "p2")` succeeds, which needs `roles` to be an empty array.
   - `TEST: $or array` (issue #14). Insert `{x = 1}` and `{y = 2}`. A `count` with `{["$or"] = {{x = 1}, {y = 2}}}` gives `2`.
   - `TEST: query cursor not found`. `col:getmore("\1\0\0\0\0\0\0\0")` returns 4 values. The third is a flags table with `CursorNotFound == true`, and the fourth is a string.
   - `TEST: query server error`. `col:query({["$bad"] = 1})` returns 4 values. The flags table has `QueryFailure == true`, and the fourth value is a string.
-  - `TEST: listcollections`. After an insert into `c1`, the cursor yields a document with `name == "c1"`.
   - `TEST: find_and_modify`. Upsert `{x=1}` with `new=true`, and `.x` is `1`.
   - `TEST: find_and_modify miss`. On an empty collection, an update without `upsert` returns `nil`, a `remove = true` returns `nil`, and an upsert without `new = true` returns `nil`.
 - [ ] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
@@ -354,6 +356,9 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `skip(n)` and `limit(n)` must come before the first fetch. After the first fetch, they return `nil, "cursor already started"`.
   - After the first fetch, `sort` keeps today's client-side behavior.
   - Remove `cursor_mt.__gc`.
+- Produces: `cursor.from_reply(col, reply_cursor, num_each, session) -> cursor`. It takes `reply_cursor.firstBatch`, `reply_cursor.id` and `reply_cursor.ns`. Every `getMore` and `killCursors` uses the collection part of `ns`. For `listCollections`, this is `$cmd.listCollections`. Task 11 `aggregate` uses this constructor too.
+- Produces: `db:listcollections()` sends `listCollections` and returns `cursor.from_reply(...)`. `db:list()` is an alias for it, because the README documents that name.
+- Produces: any `getMore` error makes `next()` return `nil, err`. This includes code 43 (`CursorNotFound`) and code 175 (`QueryPlanKilled`). The cursor does not run the query again. Today `next()` runs the query again after `CursorNotFound`, which can return a document twice.
 
 - [ ] **Step 1: Write failing tests** in `t/cursor.t`:
   - `TEST: limit across batches`. Insert 25 documents, then `find({}, nil, 10)` with `limit(23)` yields exactly 23 documents, then `nil`.
@@ -364,7 +369,8 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - Rewrite the expected output of the existing `t/cursor.t` TEST 1. Its third case uses a batch size of 2 and `limit(5)`, so it now prints `1, 2, 3, 4, 5`, not `1, 2`.
   - `TEST: server sort`. Insert `n = 5, 2, 7, 1, 6, 3, 4`. Then `find({}, nil, 2)` with `skip(1)`, `limit(4)` and `sort({n=-1})` returns the first batch, `6, 5`. A new cursor with the same settings, read with `pairs()` after `sort`, yields `6, 5, 4, 3`. The batch size is 2, so the old client-side sort of one batch cannot pass this test.
   - `TEST: close`. After `close()`, `next()` returns `nil`.
-  - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` eventually returns `nil, err` or ends without a Lua error.
+  - `TEST: listcollections`. Create 3 collections, then `db:listcollections()` with a batch size of 2 yields all 3 names. The second batch comes from a `getMore` on `$cmd.listCollections`.
+  - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` returns exactly `nil` and a string.
 - [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `gridfs*.t`, `cluster.t` and the two GridFS blocks in `api.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
@@ -405,7 +411,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 - [ ] **Step 1: Write failing tests** in `t/auth/auth.t`. Each test logs in against the `admin` database:
   - `TEST: sha256 login`. `auth("admin", "admin")` gives `1`. Then `insert(..., true)` gives `0`.
-  - `TEST: sha1 login`. Create a user `u1` with `mechanisms = {"SCRAM-SHA-1"}`. `auth("u1", "p1")` gives `1`.
+  - `TEST: sha1 login`. Drop the user `u1` and ignore the error. Create a user `u1` with `mechanisms = {"SCRAM-SHA-1"}`. `auth("u1", "p1")` gives `1`.
   - `TEST: wrong password`. The result is `nil` and a message that contains `Authentication failed`.
   - `TEST: rfc7677 vector`. Run `scram.lua`'s client proof over the RFC 7677 example (`user`, `pencil`, nonce `rOprNGfwEbeRWgbNEkqO`) and compare it with the RFC proof. No server is needed.
   - `TEST: pooled login reuse`. Request 1 logs in and calls `set_keepalive(10000, 10)`. Request 2 calls `connect` with the same `pool`, sees `get_reused_times() > 0`, skips login, and its `find_one` succeeds.
@@ -418,7 +424,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 **Files:**
 - Modify: `lib/resty/mongol/init.lua` (`connect`, `getprimary`), every file that uses `ngx.var` (issue #58)
-- Test: `t/connect.t` (new), `t/cluster.t`
+- Test: `t/connect.t` (new)
 
 **Interfaces:**
 - Produces: `conn:connect(host, port, opts)`, modeled on `ledgetech/lua-resty-http` `connect(options)`. `opts` is optional.
@@ -433,7 +439,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 1: Write failing tests:**
   - `TEST: pool option`. Two connects with `pool = "a"` show `get_reused_times() == 1` on the second.
   - `TEST: tls to plain server`. `connect(host, port, {ssl = true})` returns `nil, err` and raises no Lua error.
-  - In `t/tls/tls.t`, which runs only in the CI job `tls`: `TEST: tls verified`. `connect(host, 27017, {ssl = true})` succeeds, and `db:cmd({ping = 1})` returns `ok == 1`. `TEST: tls untrusted`. A second nginx block trusts a different CA, and the same `connect` returns `nil, err`. `TEST: tls reconnect`. After `close()`, `connect()` with no arguments succeeds, and `ping` returns `ok == 1`.
+  - In `t/tls/tls.t`, which runs only in the CI job `tls`: `TEST: tls verified`. `connect("127.0.0.1", 27017, {ssl = true, ssl_server_name = "localhost"})` succeeds, and `db:cmd({ping = 1})` returns `ok == 1`. `TEST: tls untrusted`. A second nginx block trusts a different CA, and the same `connect` returns `nil, err`. All three blocks use `127.0.0.1` with `ssl_server_name = "localhost"`. A cosocket cannot resolve `localhost` without a `resolver`, and the certificate name is `localhost`. `TEST: tls reconnect`. After `close()`, `connect()` with no arguments succeeds, and `ping` returns `ok == 1`.
 - Produces: the CI job `tls`. It runs only with `mongo:9.0`, to keep CI short. A step makes a test CA and a server certificate for `localhost` with `openssl`. The job starts `mongod` with `--tlsMode requireTLS --tlsCertificateKeyFile`. `t/tls/tls.t` sets `lua_ssl_trusted_certificate` to the test CA. A new Makefile target `test-tls` runs `prove -I t/lib t/tls`. The certificates are made in CI and never committed.
   - `TEST: pool_size`. `connect(host, port, {pool = "b", pool_size = 1})` succeeds.
 - [ ] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
@@ -479,7 +485,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 **Files:** Modify `lib/resty/mongol/colmt.lua`. Test: `t/aggregate.t`.
 
 **Interfaces:**
-- Produces: `col:aggregate(pipeline, options) -> cursor | nil, err`. It sends ordered `{aggregate = col, pipeline, cursor = {batchSize = options.batch_size or 100}}` and returns a `cursor.lua` cursor on the reply (issue #55).
+- Produces: `col:aggregate(pipeline, options) -> cursor | nil, err`. It sends ordered `{aggregate = col, pipeline, cursor = {batchSize = options.batch_size or 100}}` and returns `cursor.from_reply(...)` from Task 6 on the reply (issue #55).
 
 - [ ] **Step 1: Write the failing test.** `TEST: group sum`: insert `{k="a",v=1}`, `{k="a",v=2}` and `{k="b",v=5}`. Then `$group` by `k` with a sum of `v`, and `$sort` on `_id`, yield `a 3` and `b 5`.
 - [ ] **Step 2: Run** `prove t/aggregate.t`. Expected: FAIL.
@@ -516,8 +522,8 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `TEST: started and succeeded`. A monitor that appends to a list, then `find_one({})`, records `started` and `succeeded`, both with `command_name == "find"` and the same `request_id`.
   - `TEST: failed`. `db:cmd({nosuchcmd = 1})` records `failed`, and `error` contains `no such command`.
   - `TEST: hook error`. A `started` hook that raises an error does not stop `find_one`, and the error log contains the hook error.
-  - `TEST: redaction`. With auth off, `db:cmd({createUser = "u3", pwd = "secret", roles = bson.empty_array})` records a `started` event whose `command` is empty, and no event text contains `secret`.
-  - `TEST: failed sensitive command`. Run the same `createUser` twice. The second call fails because the user exists. Its `failed` event has `error == "redacted"`, and no event text contains `secret` or `u3`.
+  - `TEST: redaction`. With auth off, the block first drops the user `u3` and ignores the error. Then `db:cmd({createUser = "u3", pwd = "secret", roles = bson.empty_array})` records a `started` event whose `command` is empty, and no event text contains `secret`.
+  - `TEST: failed sensitive command`. Drop the user `u3` and ignore the error. Then run the same `createUser` twice. The second call fails because the user exists. Its `failed` event has `error == "redacted"`, and no event text contains `secret` or `u3`.
   - `TEST: speculative hello`. `db:cmd({hello = 1, speculativeAuthenticate = {saslStart = 1}})` records events with an empty `command` and an empty `reply`.
   - `TEST: insert event`. `col:insert({{a = 1}, {a = 2}}, nil, true)` records a `started` event whose `command.documents` has 2 entries.
   - `TEST: hook mutation`. A `started` hook sets `ev.command.filter.a = 99` and then raises an error. `find_one({a = 1})` still finds the document with `a == 1`. A `succeeded` hook that clears `ev.reply` does not change the value that `find_one` returns.
@@ -531,7 +537,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 
 ### Task 12: Replica set CI, primary selection, URI
 
-**Files:** Create `lib/resty/mongol/uri.lua`. Modify `init.lua` and `.github/workflows/test.yml`. Test: `t/uri.t`, `t/cluster.t`.
+**Files:** Create `lib/resty/mongol/uri.lua`. Modify `init.lua` and `.github/workflows/test.yml`. Test: `t/uri.t`, `t/replset/cluster.t`. Move `t/cluster.t` TEST 5 to TEST 7 to `t/replset/cluster.t` and remove their skips. TEST 2 and TEST 8 moved to `t/auth/legacy.t` in Task 4, so `t/cluster.t` is then empty and is deleted.
 
 **Interfaces:**
 - Produces: `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
@@ -540,7 +546,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `primaryPreferred`: no `read_conn` while a primary answers. If no primary answers, `connect_uri` returns `nil, err`, because writes need a primary.
   - `secondary`: use a host whose `hello` reply has `secondary = true`. If none answers, return `nil, err`.
   - `secondaryPreferred`: use a secondary. If none answers, use the primary.
-  - For a non-primary read preference, `wire.command` adds `$readPreference = {mode = ...}`, which `mongos` needs.
+  - Every command on `read_conn` carries `$readPreference = {mode = ...}`. Over `OP_MSG`, a secondary rejects a read with `NotPrimaryNoSecondaryOk` without it. Commands on the primary `conn` never carry it.
   - If the URI has a user, it logs in.
 - Produces: a CI job `replset` with a 3-member replica set. It starts three containers with `docker run -d --network host mongo:${{ matrix.mongo }} --replSet rs0 --port <p>`, for the ports 27017, 27018 and 27019. Then it runs `rs.initiate()` through `mongosh` with the members `localhost:27017` (priority 2), `localhost:27018` and `localhost:27019`, and waits until 27017 is primary. The existing `t/cluster.t` uses port 27018 as a secondary.
 
@@ -633,7 +639,7 @@ Open issues:
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
 | #1, #14, #29, #59 | Task 2b |
 | #53 | Task 2b (signed date wrapper) and Task 10 (JSON) |
-| #66, #67 | Task 10 (JSON, empty arrays) |
+| #66, #67 | Task 10 (JSON and empty arrays) |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |
