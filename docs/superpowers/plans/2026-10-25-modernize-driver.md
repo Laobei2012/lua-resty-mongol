@@ -385,7 +385,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [x] **Step 3: Implement.**
 - [x] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `t/gridfs.t`, `t/gridfs_write.t` and the aligned GridFS block in `api.t` must also pass. The `1.0.0` release must not ship a documented call that raises a Lua error. If one fails, fix it in this task before the tag. `cluster.t` and the unaligned GridFS block in `api.t` can still fail. Mark them `--- SKIP` with the reasons "Task 12" and "Task 13". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
 - [x] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
-- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
+- [x] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
   - 1-based arrays and their effect on old data.
   - int32 and int64 numbers, and int64 cdata above 2^53.
   - Timestamp wrappers.
