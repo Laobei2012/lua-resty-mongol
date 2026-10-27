@@ -42,7 +42,7 @@ __DATA__
 --- request
 GET /t
 --- response_body
-auth fails
+Authentication failed.
 --- no_error_log
 [error]
 
