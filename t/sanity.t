@@ -259,7 +259,7 @@ cat
 --- request
 GET /t
 --- response_body
-4
+10
 --- no_error_log
 [error]
 
@@ -309,11 +309,39 @@ nil
 puppy
 nil
 puppy
+nil
+puppy
+nil
+puppy
+nil
+puppy
+nil
+puppy
+nil
+puppy
+nil
+puppy
+nil
+puppy
 1
 nil
 2
 nil
 3
+nil
+4
+nil
+5
+nil
+6
+nil
+7
+nil
+8
+nil
+9
+nil
+10
 nil
 --- no_error_log
 [error]
@@ -355,9 +383,8 @@ nil
     }
 --- request
 GET /t
---- response_body
-1
-ns not found
+--- response_body_like chomp
+^1\n(1|ns not found)\n$
 --- no_error_log
 [error]
 
@@ -370,7 +397,7 @@ ns not found
             conn = mongo:new()
             conn:set_timeout(10000) 
 
-            local ok, err = conn:connect("127.0.0.1",27017)
+            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
             if not ok then
                 ngx.say("connect failed: "..err)
             end
@@ -519,9 +546,9 @@ GET /t
             r = col:find_one({name="dog"})
             ngx.say(r["name"])
             ngx.say(r["tab"][1].a)
-            ngx.say(r["tab1"][0])
-            ngx.say(r["tab2"][0])
-            ngx.say(r["tab2"][2])
+            ngx.say(r["tab1"]["0"])
+            ngx.say(r["tab2"]["0"])
+            ngx.say(r["tab2"]["2"])
 
             --local update = {}
             --update["$push"] = {tab="a3"}
@@ -617,11 +644,8 @@ nil
             local t = {}
             table.insert(t,{a = "aa"})
             table.insert(t,{b = "bb"})
-            local t1 = {[0]="a10","a11","a12"}
-            local t2 = {}
-            t2[2] = "a22"
-            t2[3] = "a23"
-            t2[4] = "a24"
+            local t1 = {"a10","a11","a12"}
+            local t2 = {"a22","a23","a24"}
             
             r, err = col:insert({{name="dog",n="10",tab=t,tab1=t1,tab2=t2}}, nil, true)
             if not r then ngx.say("insert failed: "..err) end
@@ -637,10 +661,10 @@ nil
             if not r then ngx.say("find failed: "..err) end
             ngx.say(r["tab"][2].b)
             ngx.say(r["tab"][3])
-            ngx.say(r["tab1"][2])
             ngx.say(r["tab1"][3])
+            ngx.say(r["tab1"][4])
+            ngx.say(r["tab2"][3])
             ngx.say(r["tab2"][4])
-            ngx.say(r["tab2"][5])
 
 
             conn:close()
