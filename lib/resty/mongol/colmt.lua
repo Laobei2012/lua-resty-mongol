@@ -3,7 +3,9 @@ local mod_name = (...):match ( "^(.*)%..-$" )
 local misc = require ( mod_name .. ".misc" )
 
 local assert = assert
+local error = error
 local ipairs = ipairs
+local type = type
 local t_concat = table.concat
 
 local attachpairs_start = misc.attachpairs_start
@@ -20,6 +22,9 @@ local get_from_string = getlib.get_from_string
 local bson = require ( mod_name .. ".bson" )
 local from_bson = bson.from_bson
 local to_bson = bson.to_bson
+local ordered = bson.ordered
+
+local wire = require ( mod_name .. ".wire" )
 
 local new_cursor = require ( mod_name .. ".cursor" )
 
@@ -98,99 +103,151 @@ local function handle_reply ( conn , req_id )
     return cursorid, r, t
 end
 
+-- nil, false and 0 are false; Lua treats 0 as true, so the write
+-- arguments must not be tested directly
+local function flag(v)
+    return not (v == nil or v == false or v == 0)
+end
+
+-- the first error message of a write reply, or nil
+local function write_error(r)
+    local we = r.writeErrors
+    if type(we) == "table" and we[1] then
+        return we[1].errmsg or "write error"
+    end
+    local wce = r.writeConcernError
+    if type(wce) == "table" then
+        return wce.errmsg or "write concern error"
+    end
+end
+
+-- sends a write command; returns the reply | nil, err
+local function write(self, cmd, seq_name, docs, safe)
+    if not flag(safe) then
+        cmd[#cmd + 1] = {"writeConcern", {w = 0}}
+        local ok, err = wire.send_only(self.conn, self.db, ordered(cmd),
+                                       {{seq_name, docs}})
+        if not ok then
+            return nil, err
+        end
+        return -1
+    end
+    local r, err = wire.command(self.conn, self.db, ordered(cmd),
+                                {{seq_name, docs}})
+    if not r then
+        return nil, err
+    end
+    err = write_error(r)
+    if err then
+        return nil, err, r
+    end
+    return r
+end
+
 function colmethods:insert(docs, continue_on_error, safe)
+    if type(docs) ~= "table" then
+        error("bad argument #1 to 'insert' (table expected)", 2)
+    end
     if #docs < 1 then
         return nil, "docs needed"
     end
 
-    safe = safe or 0
-    continue_on_error = continue_on_error or 0
-    local flags = 2^0*continue_on_error
+    local is_ordered = not flag(continue_on_error)
+    local limits = wire.limits
 
-    local t = { }
-    for i , v in ipairs(docs) do
-        t[i] = to_bson(v)
-    end
-
-    local m = num_to_le_uint(flags)..full_collection_name(self, self.col)
-                ..t_concat(t)
-    local _, send = docmd(self.conn, "INSERT", m)
-    if send == 0 then
-        return nil, "send message failed"
-    end
-
-    if safe ~= 0 then
-        local r, err = self.db_obj:cmd({getlasterror=1})
-        if not r then
+    local encoded = {}
+    for i, d in ipairs(docs) do
+        local s, err = to_bson(d)
+        if not s then
             return nil, err
         end
-
-        if r["err"] then
-            return nil, r["err"]
-        else
-            return r["n"]
+        if #s > limits.max_bson_size then
+            return nil, "document too large"
         end
-    else
-        return -1 end
+        encoded[i] = s
+    end
+
+    local function command()
+        local cmd = {{"insert", self.col}, {"ordered", is_ordered}}
+        if not flag(safe) then
+            cmd[3] = {"writeConcern", {w = 0}}
+        end
+        return ordered(cmd)
+    end
+
+    -- the size of a message without its documents
+    local empty = wire.encode_msg(self.db, command(), {{"documents", {}}}, 0)
+    if not empty then
+        return nil, "message too large"
+    end
+    local base = #empty
+
+    local batches, batch, size = {}, {}, base
+    for _, s in ipairs(encoded) do
+        if base + #s > limits.max_message_size then
+            return nil, "document too large"
+        end
+        if #batch >= limits.max_write_batch_size
+           or size + #s > limits.max_message_size then
+            batches[#batches + 1] = batch
+            batch, size = {}, base
+        end
+        batch[#batch + 1] = s
+        size = size + #s
+    end
+    batches[#batches + 1] = batch
+
+    local first_err
+    for _, b in ipairs(batches) do
+        local cmd = {{"insert", self.col}, {"ordered", is_ordered}}
+        local r, err, reply = write(self, cmd, "documents", b, safe)
+        if not r then
+            -- a socket or command error stops an unordered insert too
+            if is_ordered or not reply then
+                return nil, err
+            end
+            first_err = first_err or err
+        end
+    end
+    if first_err then
+        return nil, first_err
+    end
+    if not flag(safe) then
+        return -1
+    end
+    return 0
 end
 
 function colmethods:update(selector, update, upsert, multiupdate, safe)
-    safe = safe or 0
-    upsert = upsert or 0
-    multiupdate = multiupdate or 0
-    local flags = 2^0*upsert + 2^1*multiupdate
-
-    selector = to_bson(selector)
-    update = to_bson(update)
-
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
-                .. num_to_le_uint ( flags ) .. selector .. update
-    local _, send = docmd(self.conn, "UPDATE", m)
-    if send == 0 then
-        return nil, "send message failed"
+    local stmt = {
+        q = selector or {},
+        u = update,
+        upsert = flag(upsert),
+        multi = flag(multiupdate),
+    }
+    local r, err = write(self, {{"update", self.col}}, "updates", {stmt}, safe)
+    if not r then
+        return nil, err
     end
-
-    if safe ~= 0 then
-        local r, err = self.db_obj:cmd({getlasterror=1})
-        if not r then
-            return nil, err
-        end
-
-        if r["err"] then
-            return nil, r["err"]
-        else
-            return r["n"]
-        end
-    else return -1 end
+    if r == -1 then
+        return -1
+    end
+    return r.n
 end
 
 function colmethods:delete(selector, single_remove, safe)
-    safe = safe or 0
-    single_remove = single_remove or 0
-    local flags = 2^0*single_remove
-
-    selector = to_bson(selector)
-
-    local m = "\0\0\0\0" .. full_collection_name(self, self.col)
-                .. num_to_le_uint(flags) .. selector
-
-    local _, sent = docmd(self.conn, "DELETE", m)
-    if sent == 0 then
-        return nil, "send message failed"
+    local stmt = {
+        q = selector or {},
+        limit = flag(single_remove) and 1 or 0,
+    }
+    local r, err = write(self, {{"delete", self.col}}, "deletes", {stmt}, safe)
+    if not r then
+        return nil, err
     end
-
-    if safe ~= 0 then
-        local r, err = self.db_obj:cmd({getlasterror=1})
-        if not r then
-            return nil, err
-        end
-
-        if r["err"] then
-            return nil, r["err"]
-        else
-            return r["n"]
-        end
-    else return -1 end
+    if r == -1 then
+        return -1
+    end
+    return r.n
 end
 
 function colmethods:kill_cursors(cursorIDs)
