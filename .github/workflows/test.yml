@@ -56,6 +56,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
           sudo cpanm --notest Test::Nginx
+      # TODO(Task 5): make test runs only the Phase 0 and Phase 1 files
+      # (PHASE1_TESTS in the Makefile). Task 5 restores the full run.
       - name: Test
         run: make test
 

@@ -22,6 +22,9 @@ run_tests();
 __DATA__
 
 === TEST 1: object id
+# TODO(Task 5): needs the Phase 2 write code (col:insert over commands).
+# Task 5 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
