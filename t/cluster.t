@@ -18,6 +18,8 @@ run_tests();
 __DATA__
 
 === TEST 5: is master
+# TODO(Task 12): skipped until the replica set CI job starts the members on ports 27017 and 27018. Task 12 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -51,6 +53,8 @@ true
 [error]
 
 === TEST 6: is not master
+# TODO(Task 12): skipped until the replica set CI job starts the members on ports 27017 and 27018. Task 12 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -84,6 +88,8 @@ false
 [error]
 
 === TEST 7: get primary
+# TODO(Task 12): skipped until the replica set CI job starts the members on ports 27017 and 27018. Task 12 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {

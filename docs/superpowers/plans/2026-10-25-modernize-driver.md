@@ -572,6 +572,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
+- [ ] **Step 4b: Remove the skips.** Remove the `skip_eval` line and the `TODO(Task 12)` comment from the three blocks of `t/cluster.t` (or from `t/replset/cluster.t` after the move).
 - [ ] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
 
 ### Task 13: GridFS on the new methods
@@ -592,6 +593,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS on all four servers.
+- [ ] **Step 4b: Remove the skips.** Remove `|| 1` and the `TODO(Task 13)` comment from `t/api.t` TEST 10 (gridfs read unaligned). Remove the `skip_eval` line and the `TODO(Task 13)` comment from `t/gridfs.t` TEST 2.
 - [ ] **Step 5: Commit** `feat(gridfs): port to command API`.
 
 ### Task 14: Sessions and transactions
