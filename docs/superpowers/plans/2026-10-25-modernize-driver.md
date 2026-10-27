@@ -164,6 +164,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
 - Produces: `bson.from_bson(get)` reads type 0x12 with `ll.le_to_int64`.
 - Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If `n` is 0, the table is a document, so `filter = {}` stays a document. If `n` is above 0 and every key is an integer from 1 to `n`, the table is an array. Any other table is a document.
 - Produces: `bson.empty_array`, a sentinel that `to_bson` writes as an array with no elements (type 0x04). Commands such as `createUser` need it for `roles`. Issue #66 uses it too.
+- Produces: `bson.array_mt`. The decoder sets this metatable on every array that it reads, so that an empty array stays an array. The encoder writes a table with this metatable as an array. This is also true for an empty table. The decoder does not return the shared `bson.empty_array`, because a caller can change a decoded table.
 - Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
 
 - [ ] **Step 1: Write failing tests** in `t/bson.t`:
@@ -195,6 +196,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: array indexes. Today a Lua array `{a, b}` is stored as `[null, a, b]`, and a stored array `[a, b]` reads back as `{[0] = a, b}`. The fix writes Lua index `i` as BSON key `i - 1`, and reads BSON key `k` as Lua index `k + 1`. Old data with a leading `null` reads back shifted by one. `CHANGELOG.md` must say so.
 - Produces: int32 reads are signed (issue #59).
 - Produces: `bson.null`, a unique sentinel table (owner decision). `to_bson` writes it as type 0x0A. A read of type 0x0A returns `bson.null` in documents and in arrays, so keys and array positions stay. Today a null reads as `nil`, so code such as `if doc.x then` changes meaning. This change ships in `1.0.0` (PR #39 idea, without its global `null`).
+- Produces: UTC dates read as the same wrapper that `bson.get_utc_date(ms)` makes, with the field `v`. The value `v` is signed, so dates before 1970 are correct (issue #53). Above 2^53, it is `int64_t` cdata. Today a date reads as a plain unsigned number, so this change ships in `1.0.0`.
 - Produces: binary values keep their subtype. `bson.get_bin_data(data, subtype)` takes an optional subtype, a number from 0 to 255 with a default of 0. A read of type 0x05 returns the same wrapper, with the fields `v` (the bytes) and `st` (the subtype byte), for every subtype. Today a read returns a plain string and drops the subtype, so this change ships in `1.0.0`. Subtype 0x02 has an extra inner length, and the encoder and decoder must handle it.
 - Produces: `bson.timestamp(t, i)` writes type 0x11. A read of type 0x11 returns the same wrapper, with fields `t` and `i`. Today it reads as one int64 number, so this change ships in `1.0.0`.
 
@@ -211,11 +213,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `0/0` | `0x01` |
   | `bson.double(1)` | `0x01` |
 
-  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: null decode`. A document `{x: null}` decodes to `t.x == bson.null`. Add `TEST: array with null`. The array `["a", null, "b"]` decodes to `{"a", bson.null, "b"}`, and encodes back as an array with 3 elements and a null in the middle. Add `TEST: binary subtype`. `bson.get_bin_data("abc", 4)` encodes as type 0x05 with subtype 0x04, and decodes to a wrapper with `v == "abc"` and `st == "\4"`. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
+  Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: empty array round trip`. The document `{a: []}` decodes to a table whose `a` has `bson.array_mt`. `to_bson` of that table writes `a` as type 0x04. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: null decode`. A document `{x: null}` decodes to `t.x == bson.null`. Add `TEST: array with null`. The array `["a", null, "b"]` decodes to `{"a", bson.null, "b"}`, and encodes back as an array with 3 elements and a null in the middle. Add `TEST: date round trip`. The date `-1000` ms decodes to a wrapper with `v == -1000`, and encodes back as type 0x09 with the same 8 bytes. Add `TEST: binary subtype`. `bson.get_bin_data("abc", 4)` encodes as type 0x05 with subtype 0x04, and decodes to a wrapper with `v == "abc"` and `st == "\4"`. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
 - [ ] **Step 1b: Add the BSON corpus runner.** The official BSON test data is in `mongodb/specifications`, folder `source/bson-corpus/tests`. Its license is CC BY-NC-SA 3.0. Do not commit these files to this repo. Add a Makefile target `spec-data`. It downloads the folder from commit `9ea18a92308ed437e16dd95e6ff9c496daa61ecd` through `https://codeload.github.com/mongodb/specifications/tar.gz/<sha>` into `t/spec/bson-corpus/`. Add `t/spec/` to `.gitignore`. Make `test` depend on `spec-data`. Write `t/bson_corpus.t`. It needs no server. It reads each JSON file with `cjson` and runs three checks:
   - `valid` entries: `from_bson` of `canonical_bson` succeeds. Then `to_bson` of the result gives the same bytes. Skip the encode check in three cases, because a Lua value cannot carry the BSON type or the key order. The cases are a double with a whole value, an int64 inside the int32 range, and a document with more than one key.
   - `decodeErrors` entries: `from_bson` raises an error or returns `nil`. It must never return a document.
-  - The runner reads an allowlist of files: `array`, `binary`, `boolean`, `document`, `double`, `int32`, `int64`, `null`, `oid`, `string`, `timestamp` and `top`. An entry that fails because of work in a later task goes in a `known_failures` table, with the task number. Task 10 adds the remaining files and empties `known_failures`.
+  - The runner reads an allowlist of 13 files. The files are `array`, `binary`, `boolean`, `datetime`, `document` and `double`. The others are `int32`, `int64`, `null`, `oid`, `string`, `timestamp` and `top`. An entry that fails because of work in a later task goes in a `known_failures` table, with the task number. Task 10 adds the remaining files and empties `known_failures`.
 - [ ] **Step 2: Run** `prove t/bson.t t/bson_corpus.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/bson.t t/bson_corpus.t`. Expected: PASS.
@@ -237,6 +239,8 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - On a socket or framing error, it calls `conn.sock:close()`, sets `conn.broken = true` and returns `nil, err`.
   - It accepts `flagBits` with bit 0 (`checksumPresent`) set, and drops the last 4 bytes.
   - It rejects reply opcodes other than 2013 with `nil, "unexpected opcode " .. op`.
+  - It rejects a reply with any `flagBits` bit set other than bit 0. It rejects a section kind other than 0 or 1, a reply without exactly one kind-0 section, and a section that ends past the message. Each case returns `nil, err`, closes the socket and sets `conn.broken = true`. Source: the MongoDB `OP_MSG` specification.
+  - `conn:connect()` on a broken connection makes a new socket and clears `broken`.
 - Produces: `wire.limits`, a module table with `max_bson_size = 16777216`, `max_message_size = 48000000` and `max_write_batch_size = 100000`. These values are the same on MongoDB 6.0 to 9.0, so the driver does not read them from `hello`. Tests can lower them. If an encoded command is larger than `max_message_size`, `wire.command` returns `nil, "message too large"` and sends nothing.
 - Produces: `db:cmd(q)` calls `wire.command(self.conn, self.db, q)`. It keeps the return values `doc` and `nil, errmsg, doc`.
 - Produces: if `self.broken` is set, `conn:set_keepalive(...)` returns `nil, "closed"`.
@@ -246,6 +250,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: hello`. `conn:ismaster()` against `$TEST_NGINX_MONGO_HOST` returns `true`. The response body is `true`.
   - `TEST: cmd error`. `db:cmd({nosuchcmd = 1})` returns `nil` and a message that contains `no such command`.
   - `TEST: truncated reply`. Use `--- tcp_listen: 12345` and `--- tcp_reply` with 10 bytes. `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
+  - `TEST: bad replies`. Three blocks, each with `--- tcp_listen: 12345` and a hand-built `OP_MSG` reply. The first has `flagBits` bit 2 set. The second has a section of kind 2. The third has only a kind-1 section. Each `db:cmd({ping = 1})` returns `nil, err`, and `conn:set_keepalive()` returns `nil, "closed"`.
   - `TEST: checksum flag`. Use `--- tcp_reply` with a hand-built `OP_MSG` reply that has bit 0 set and `{ok = 1}` in the body. `db:cmd` returns a table with `ok == 1`.
 - [ ] **Step 2: Run** `prove t/wire.t`. Expected: FAIL.
 - [ ] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
@@ -271,7 +276,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `update` sends `{q, u, upsert = flag(upsert), multi = flag(multiupdate)}` as BSON booleans. If the write is safe, it returns `reply.n`.
   - `delete` sends `{q, limit = flag(single_remove) and 1 or 0}`. If the write is safe, it returns `reply.n`.
   - Unsafe writes use `wire.send_only` from Task 3.
-  - `insert` splits `docs` into batches. A batch has at most `wire.limits.max_write_batch_size` documents. Its encoded size stays at least 16 KiB below `wire.limits.max_message_size`, to leave room for the command body. If one document is larger than `wire.limits.max_bson_size`, the call returns `nil, "document too large"` and sends nothing.
+  - `insert` splits `docs` into batches. A batch has at most `wire.limits.max_write_batch_size` documents. The driver computes the size of the message without documents: the 16-byte header, the 4-byte `flagBits`, the kind-0 section with the encoded command, and the kind-1 section header. The command and the header plus the documents of a batch must fit in `wire.limits.max_message_size`. If one document is larger than `wire.limits.max_bson_size`, or does not fit in a message alone, the call returns `nil, "document too large"` and sends nothing.
   - If the insert is ordered, the driver stops after the first batch with a write error. If it is unordered, the driver sends every batch and returns the first error message. In both cases, a safe insert without errors returns `0`.
   - If the write is unsafe, each call sends `writeConcern = {w = 0}` and returns `-1`.
   - If the reply has `writeErrors` or `writeConcernError`, the call returns `nil` and the first `errmsg`.
@@ -352,6 +357,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: all documents` (issue #74). Insert 2,500 documents. `find({}, nil, 100)` without a limit yields exactly 2,500 documents.
   - `TEST: skip`. Insert 10 documents with `n = 1..10`, then `skip(3)` and `sort({n=1})` give a first `n` of `4`.
   - `TEST: skip after fetch`. After `next()`, `skip(1)` returns `nil` and `cursor already started`.
+  - Rewrite the expected output of the existing `t/cursor.t` TEST 2. It inserts `n = 1..10` and sorts batches of 5. The server sorts all documents, so the descending sort now returns `10, 9, 8, 7, 6`, not `5, 4, 3, 2, 1`. The case with `limit(3)` returns `10, 9, 8`. The ascending cases do not change. `CHANGELOG.md` records this fix.
   - `TEST: server sort`. Insert `n = 5, 2, 7, 1, 6, 3, 4`. Then `find({}, nil, 2)` with `skip(1)`, `limit(4)` and `sort({n=-1})` returns `n` values in the order `6, 5, 4, 3`. The batch size is 2, so the old client-side sort of one batch cannot pass this test.
   - `TEST: close`. After `close()`, `next()` returns `nil`.
   - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` eventually returns `nil, err` or ends without a Lua error.
@@ -366,7 +372,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `bson.null` on read, with an `if doc.x then` example.
   - `cursor:close()` in place of the `__gc` kill.
   - `skip` and `limit` before the first fetch.
-  They also list the fixes that a caller can see. `db:list()`, `db:add_user`, `db:listcollections`, `col:kill_cursors` and `conn:shutdown()` work now. A binary value reads as a wrapper with `v` and `st`, not as a plain string. A server error from `col:query` or `col:getmore` adds the error message as a fourth return value. `db:cmd` no longer returns a fourth value, the flags table.
+  They also list the fixes that a caller can see. `db:list()`, `db:add_user`, `db:listcollections`, `col:kill_cursors` and `conn:shutdown()` work now. A binary value reads as a wrapper with `v` and `st`, not as a plain string. A date reads as a wrapper with `v`, not as a plain number. An array reads as a table with `bson.array_mt`. `cursor:sort()` before the first fetch sorts all documents on the server, not only the first batch. A server error from `col:query` or `col:getmore` adds the error message as a fourth return value. `db:cmd` no longer returns a fourth value, the flags table.
 - [ ] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
 
 ---
@@ -447,13 +453,12 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `bson.minkey()` | `0xFF` |
   | `bson.maxkey()` | `0x7F` |
 
-- Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
 - Reads of types 0x13, 0x0B, 0xFF and 0x7F raise an error today. Returning wrappers for them breaks no caller.
-- Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy for `cjson` (issues #53 and #67). In the copy, an ObjectId is a hex string and a date is an ISO 8601 string. `bson.null` becomes `cjson.null`.
+- Produces: `bson.to_json_safe(doc)` returns a copy for `cjson` (issues #53 and #67). `lua-cjson` does not call metamethods, so this function is the only JSON path. In the copy, an ObjectId is a hex string and a date is an ISO 8601 string. `bson.null` becomes `cjson.null`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Add `datetime`, `decimal128-1` to `decimal128-7`, `regex`, `minkey` and `maxkey` to the allowlist in `t/bson_corpus.t`. Empty its `known_failures` table. Run `prove t/bson_corpus.t`. Expected: PASS.
+- [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Add `decimal128-1` to `decimal128-7`, `regex`, `minkey` and `maxkey` to the allowlist in `t/bson_corpus.t`. Empty its `known_failures` table. Run `prove t/bson_corpus.t`. Expected: PASS.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, JSON helpers`. Tag the Phase 4 release.
 
@@ -564,11 +569,16 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 **Interfaces:**
 - Produces: `conn:start_session() -> session`. The `lsid` is `{id = binary(16 random bytes, subtype 0x04)}`.
 - Produces: `session:start_transaction()`, `session:commit_transaction() -> true | nil, err, reply` and `session:abort_transaction() -> true | nil, err, reply`. The commit and abort commands go to `admin`. A reply with `ok = 1` and a `writeConcernError` is a failure. The call returns `nil`, the error message and the reply, so that the caller can read `errorLabels`.
+- Produces: unknown commit results, from the transactions specification:
+  - The driver adds the label `UnknownTransactionCommitResult` to the reply in three cases: a socket error or timeout, error code 50 (`MaxTimeMSExpired`), and a `writeConcernError` with code 64 (`WriteConcernFailed`). After a socket error, the reply is `{ok = 0, errmsg = err, errorLabels = {"UnknownTransactionCommitResult"}}`.
+  - The session keeps the same `txnNumber` after a failed commit. A second `commit_transaction()` sends `commitTransaction` again with the same `txnNumber` and `writeConcern = {w = "majority", wtimeout = 10000}`.
+  - After a socket error, the caller calls `conn:connect()` again on the same `conn`, and then calls `commit_transaction()` again. The README shows this pattern.
 - Produces: the session path, with one new optional argument for each method:
   - `col:insert(docs, continue_on_error, safe, opts)`, `col:update(selector, update, upsert, multiupdate, safe, opts)` and `col:delete(selector, single_remove, safe, opts)`.
   - `col:query(..., options)` reads `options.session` from its existing fifth argument. `col:getmore(cursorID, numberToReturn, offset_i, opts)` and `col:kill_cursors(ids, opts)` get a new last argument.
   - `col:find(query, fields, num_each, opts)`, `col:find_one(query, fields, opts)` and `col:aggregate(pipeline, options)` read `session` from the last argument. A cursor stores the session and passes it to the first `query`, to every `getmore` and to `close`.
   - `wire.command(conn, dbname, cmd, sequences, session)` and `wire.send_only` get the session as their last argument. With a session, `wire.command` calls `session:apply(cmd)`, which adds `lsid`. In a transaction, it also adds `txnNumber` (int64), `autocommit = false`, and `startTransaction = true` on the first command.
+- Produces: outside a transaction, a write with a session and an unsafe `safe` value (`nil`, `false` or `0`) returns `nil, "unacknowledged write with a session"` and sends nothing. The sessions specification does not allow `lsid` with `w = 0`.
 - Produces: rules inside a transaction, from the MongoDB transactions specification:
   - Operations send no `writeConcern`. Only `commitTransaction` and `abortTransaction` carry one.
   - Any write is acknowledged and returns the safe-mode value, whatever `safe` is. The README documents this.
@@ -577,7 +587,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 
 - Produces: while a transaction is open, `conn:set_keepalive()` returns `nil, "transaction in progress"`, as `lua-resty-redis` does.
 
-- [ ] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`. `TEST: keepalive in txn` gets `nil` and `transaction in progress`. `TEST: two transactions` runs two committed transactions on one session. Both inserts are visible, and the second transaction sends a higher `txnNumber`. `TEST: mixed operations` starts a transaction and inserts with the session. Then it inserts without a session on the same connection, and aborts. `count == 1`, because only the insert without a session stays. `TEST: commit write concern error` replaces `wire.command` in the test with a stub that returns `{ok = 1, writeConcernError = {code = 64, errmsg = "waiting for replication timed out"}, errorLabels = {"UnknownTransactionCommitResult"}}`. `commit_transaction()` returns `nil`, the `errmsg`, and the reply with its `errorLabels`.
+- [ ] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`. `TEST: keepalive in txn` gets `nil` and `transaction in progress`. `TEST: two transactions` runs two committed transactions on one session. Both inserts are visible, and the second transaction sends a higher `txnNumber`. `TEST: mixed operations` starts a transaction and inserts with the session. Then it inserts without a session on the same connection, and aborts. `count == 1`, because only the insert without a session stays. `TEST: commit write concern error` replaces `wire.command` in the test with a stub that returns `{ok = 1, writeConcernError = {code = 64, errmsg = "waiting for replication timed out"}, errorLabels = {"UnknownTransactionCommitResult"}}`. `commit_transaction()` returns `nil`, the `errmsg`, and the reply with its `errorLabels`. `TEST: wtimeout without label` uses a stub reply with the same `writeConcernError` and no `errorLabels`. The returned reply has the label `UnknownTransactionCommitResult`. `TEST: lost commit reply` uses a stub that returns `nil, "timeout"` for the first `commitTransaction` and calls the real `wire.command` after that. The first commit returns `nil` and a reply with the label. After `conn:connect()`, the second commit returns `true`. The stub records that both commits sent the same `txnNumber`, and that the second one sent `w = "majority"`. `TEST: session with unsafe write` calls `insert` with a session and `safe` set to `nil`, `false` and `0`. Each call returns `nil` and `unacknowledged write with a session`.
 - [ ] **Step 2: Run** `make test-replset` in the `replset` job. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `make test-replset`. Expected: PASS.
@@ -614,7 +624,8 @@ Open issues:
 | #45, #50, #56 | Task 7 |
 | #32, #65 | Task 8 (TLS, pool options, README pool pattern) |
 | #1, #14, #29, #59 | Task 2b |
-| #53, #66, #67 | Task 10 |
+| #53 | Task 2b (signed date wrapper) and Task 10 (JSON) |
+| #66, #67 | Task 10 (JSON and empty arrays) |
 | #41, #48, #54 | Task 6 (server sort, `skip`) |
 | #55 | Task 11 |
 | #10, #22 | Task 12 |

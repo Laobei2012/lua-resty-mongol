@@ -103,6 +103,8 @@ The owner moved these changes from Phase 4 into Phase 1. The new protocol reads 
 7. Read type 0x11 (Timestamp) as a wrapper with `t` and `i`, not as one number.
 8. Add `bson.null` (owner decision). A BSON null reads as `bson.null` in documents and arrays, not as `nil`. Keys and array positions stay. `if doc.x then` is true for a null field, and the migration guide must say so.
 9. Read type 0x05 (binary) as a wrapper that keeps the subtype, not as a plain string.
+10. Read type 0x09 (UTC date) as a signed wrapper, not as a plain unsigned number (issue #53).
+11. Read every array as a table with a marker metatable, so that an empty array stays an array after a read and a write.
 
 ### Phase 2: CRUD on commands, same API
 
