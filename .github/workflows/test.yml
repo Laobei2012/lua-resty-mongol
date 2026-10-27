@@ -58,3 +58,26 @@ jobs:
           sudo cpanm --notest Test::Nginx
       - name: Test
         run: make test
+
+  baseline:
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:4.4
+        ports:
+          - 27017:27017
+    env:
+      TEST_NGINX_MONGO_BASELINE: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install OpenResty and Test::Nginx
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release cpanminus
+          wget -O - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
+          sudo cpanm --notest Test::Nginx
+      - name: Test old code on MongoDB 4.4
+        run: PATH=/usr/local/openresty/nginx/sbin:$PATH prove -I t/lib t/api.t

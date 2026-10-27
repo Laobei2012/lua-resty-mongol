@@ -128,7 +128,7 @@ Six methods are broken in the old code, so their blocks describe the target beha
 - Produces: the CI job `baseline`. It runs on `mongo:4.4` without auth, with `TEST_NGINX_MONGO_BASELINE=1`, and runs only `prove -I t/lib t/api.t`. Task 3 deletes this job.
 - Produces: `t/api.t` runs in `make test`. It fails on 6.0 to 9.0 until Task 5, as the other old tests do.
 
-- [ ] **Step 1: Write the tests** in `t/api.t`. Each block uses the database `mongol_api` and starts with a `drop` of the collection that it uses. Each block prints `select("#", ...)` of the call under test, so that the count of return values is recorded too:
+- [x] **Step 1: Write the tests** in `t/api.t`. Each block uses the database `mongol_api` and starts with a `drop` of the collection that it uses. Each block prints `select("#", ...)` of the call under test, so that the count of return values is recorded too:
   - `TEST: cmd ping`. `db:cmd({ping = 1})` returns a table with `ok == 1`.
   - `TEST: cmd error`. `db:cmd({nosuchcmd = 1})` returns `nil` and a string as its first two values. Print only these two, because the old code also returns a fourth value, the flags table.
   - `TEST: databases`. After an insert into `mongol_api`, `conn:databases()` returns a list that has an entry with `name == "mongol_api"`.
@@ -143,9 +143,9 @@ Six methods are broken in the old code, so their blocks describe the target beha
   - `TEST: listcollections`. Skip on the baseline. After an insert into `c_api`, the cursor yields a document with `name == "c_api"`.
   - `TEST: db list`. Skip on the baseline. `db:list()` returns a cursor that yields the same documents as `db:listcollections()`.
   - `TEST: shutdown`. Skip on the baseline. Use `--- tcp_listen: 12345` and an empty `--- tcp_reply:`, so that the fake server reads the request and closes the socket. `conn:connect` to port 12345, then `conn:shutdown()`, raises no Lua error. The block has `--- no_error_log` of `[error]`.
-- [ ] **Step 2: Add the `baseline` job** to `test.yml`.
-- [ ] **Step 3: Push and read the CI result.** Expected: in the `baseline` job, every block that does not skip passes. If a block fails there, the test is wrong, not the old code. Fix the test until it passes on the baseline.
-- [ ] **Step 4: Commit** `test: cover every documented API call, baseline on MongoDB 4.4`.
+- [x] **Step 2: Add the `baseline` job** to `test.yml`.
+- [x] **Step 3: Push and read the CI result.** Expected: in the `baseline` job, every block that does not skip passes. If a block fails there, the test is wrong, not the old code. Fix the test until it passes on the baseline.
+- [x] **Step 4: Commit** `test: cover every documented API call, baseline on MongoDB 4.4`.
 
 ---
 
