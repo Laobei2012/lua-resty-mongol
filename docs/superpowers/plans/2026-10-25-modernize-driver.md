@@ -168,16 +168,16 @@ Six methods are broken in the old code, so their blocks describe the target beha
 - Produces: `bson.array_mt`. The decoder sets this metatable on every array that it reads, so that an empty array stays an array. The encoder writes a table with this metatable as an array. This is also true for an empty table. The decoder does not return the shared `bson.empty_array`, because a caller can change a decoded table.
 - Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
 
-- [ ] **Step 1: Write failing tests** in `t/bson.t`:
+- [x] **Step 1: Write failing tests** in `t/bson.t`:
   - `TEST: ordered keys`. `to_bson(bson.ordered{{"find","c"},{"filter",{}},{"limit",bson.int32(1)}})` has `find` as its first element name, and the element type of `limit` is `0x10`.
   - `TEST: int64 above 2^53`. Decoding the 8 bytes of `9007199254740993` gives `tostring(v) == "9007199254740993LL"`.
   - `TEST: empty table vs empty array`. `to_bson({f = {}})` writes `f` as type 0x03. `to_bson({f = bson.empty_array})` writes `f` as type 0x04 with no elements.
   - `TEST: number keys`. `to_bson({t = {[0] = "a", "b"}})` writes `t` as a document with the keys `"0"` and `"1"`. A mixed table `{1, 2, x = 3}` writes a document with the keys `"1"`, `"2"` and `"x"`. A document with the fields `_keys` and `_vals` decodes with those two fields.
   - `TEST: nul in values`. The string `"a\0b"` round trips with a length of 3. The key `"a\0b"` returns `nil` and `invalid key`.
-- [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above. For int64 bytes, use `ffi.new("int64_t[1]")` and `ffi.string(p, 8)`, because the target CPUs are little-endian.
-- [ ] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson): ordered documents and int32/int64 wrappers`.
+- [x] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
+- [x] **Step 3: Implement** the interfaces above. For int64 bytes, use `ffi.new("int64_t[1]")` and `ffi.string(p, 8)`, because the target CPUs are little-endian.
+- [x] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(bson): ordered documents and int32/int64 wrappers`.
 
 ### Task 2b: Number encoding and array indexes (breaking)
 
@@ -203,7 +203,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: GridFS keeps working with the binary wrapper. `gridfs_file:read`, `write` and `update_md5` read chunk bytes from the `v` field of the chunk wrapper, for example `od.data.v` in `write`. `read` still returns a Lua string. Without this change, `read()` raises `bad argument #1 to 'sub'` in `1.0.0`.
 - Produces: `bson.timestamp(t, i)` writes type 0x11. A read of type 0x11 returns the same wrapper, with fields `t` and `i`. Today it reads as one int64 number, so this change ships in `1.0.0`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
+- [x] **Step 1: Write failing tests.** `TEST: number edges` encodes each value and checks the element type byte:
 
   | Input | Type byte |
   |---|---|
@@ -218,14 +218,14 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `9007199254740993LL` (cdata) | `0x12` |
 
   Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: empty array round trip`. The document `{a: []}` decodes to a table whose `a` has `bson.array_mt`. `to_bson` of that table writes `a` as type 0x04. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: null decode`. A document `{x: null}` decodes to `t.x == bson.null`. Add `TEST: array with null`. The array `["a", null, "b"]` decodes to `{"a", bson.null, "b"}`, and encodes back as an array with 3 elements and a null in the middle. Add `TEST: date round trip`. The date `-1000` ms decodes to a wrapper with `v == -1000`, and encodes back as type 0x09 with the same 8 bytes. Add `TEST: binary subtype`. `bson.get_bin_data("abc", 4)` encodes as type 0x05 with subtype 0x04, and decodes to a wrapper with `v == "abc"` and `st == "\4"`. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
-- [ ] **Step 1b: Add the BSON corpus runner.** The official BSON test data is in `mongodb/specifications`, folder `source/bson-corpus/tests`. Its license is CC BY-NC-SA 3.0. Do not commit these files to this repo. Add a Makefile target `spec-data`. It downloads the folder from commit `9ea18a92308ed437e16dd95e6ff9c496daa61ecd` through `https://codeload.github.com/mongodb/specifications/tar.gz/<sha>` into `t/spec/bson-corpus/`. Add `t/spec/` to `.gitignore`. Make `test` depend on `spec-data`. Write `t/bson_corpus.t`. It needs no server. It reads each JSON file with `cjson` and runs three checks:
+- [x] **Step 1b: Add the BSON corpus runner.** The official BSON test data is in `mongodb/specifications`, folder `source/bson-corpus/tests`. Its license is CC BY-NC-SA 3.0. Do not commit these files to this repo. Add a Makefile target `spec-data`. It downloads the folder from commit `9ea18a92308ed437e16dd95e6ff9c496daa61ecd` through `https://codeload.github.com/mongodb/specifications/tar.gz/<sha>` into `t/spec/bson-corpus/`. Add `t/spec/` to `.gitignore`. Make `test` depend on `spec-data`. Write `t/bson_corpus.t`. It needs no server. It reads each JSON file with `cjson` and runs three checks:
   - `valid` entries: `from_bson` of `canonical_bson` succeeds. Then `to_bson` of the result gives the same bytes. Skip the encode check in three cases, because a Lua value cannot carry the BSON type or the key order. The cases are a double with a whole value, an int64 inside the int32 range, and a document with more than one key.
   - `decodeErrors` entries: `from_bson` raises an error or returns `nil`. It must never return a document.
   - The runner reads an allowlist of 13 files. The files are `array`, `binary`, `boolean`, `datetime`, `document` and `double`. The others are `int32`, `int64`, `null`, `oid`, `string`, `timestamp` and `top`. An entry that fails because of work in a later task goes in a `known_failures` table, with the task number. Task 10 adds the files for the Task 10 types and empties `known_failures`. The files for deprecated types, such as `code`, `symbol`, `dbpointer` and `multi-type`, stay out of the allowlist.
-- [ ] **Step 2: Run** `prove t/bson.t t/bson_corpus.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `prove t/bson.t t/bson_corpus.t`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson)!: int32/int64 numbers and 1-based arrays`. The body explains both breaking changes.
+- [x] **Step 2: Run** `prove t/bson.t t/bson_corpus.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `prove t/bson.t t/bson_corpus.t`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(bson)!: int32/int64 numbers and 1-based arrays`. The body explains both breaking changes.
 
 ### Task 3: OP_MSG transport and db:cmd
 

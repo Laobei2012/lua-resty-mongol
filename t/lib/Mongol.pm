@@ -13,6 +13,7 @@ $ENV{TEST_NGINX_MONGO_USER} ||= 'admin';
 $ENV{TEST_NGINX_MONGO_PASS} ||= 'admin';
 
 my $pwd = cwd();
+$ENV{TEST_NGINX_ROOT} ||= $pwd;
 
 our $HttpConfig = qq{
     lua_package_path "$pwd/lib/?.lua;$pwd/lib/?/init.lua;$pwd/t/lib/?.lua;;";

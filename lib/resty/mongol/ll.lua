@@ -1,41 +1,48 @@
-local string = string
-local loadstring = loadstring
 -- Library for reading low level data
 
-local assert = assert
+local ffi = require "ffi"
+
 local unpack = unpack
 local floor = math.floor
 local strbyte , strchar = string.byte , string.char
+local tonumber = tonumber
+local type = type
+local ffi_new , ffi_string , ffi_copy = ffi.new , ffi.string , ffi.copy
 
 local le_uint_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
 	local b = { strbyte ( s , i , j ) }
 	local n = 0
-	for i=#b , 1 , -1 do
-		n = n*2^8 + b [ i ]
+	for k=#b , 1 , -1 do
+		n = n*2^8 + b [ k ]
 	end
 	return n
 end
 local le_int_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
 	local n = le_uint_to_num ( s , i , j )
-	local overflow = 2^(8*(j-i) + 7)
-	if n > 2^overflow then
-		n = - ( n % 2^overflow )
+	local bits = 8 * ( j - i + 1 )
+	if n >= 2^( bits - 1 ) then
+		n = n - 2^bits
 	end
 	return n
 end
 local num_to_le_uint = function ( n , bytes )
 	bytes = bytes or 4
+	if n < 0 or n >= 2^(8*bytes) or n ~= floor ( n ) then
+		return nil , "number out of range"
+	end
 	local b = { }
 	for i=1 , bytes do
 		b [ i ] , n = n % 2^8 , floor ( n / 2^8 )
 	end
-	assert ( n == 0 )
 	return strchar ( unpack ( b ) )
 end
 local num_to_le_int = function ( n , bytes )
 	bytes = bytes or 4
+	if n < -2^(8*bytes-1) or n >= 2^(8*bytes-1) then
+		return nil , "number out of range"
+	end
 	if n < 0 then -- Converted to unsigned.
 		n = 2^(8*bytes) + n
 	end
@@ -46,18 +53,20 @@ local be_uint_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
 	local b = { strbyte ( s , i , j ) }
 	local n = 0
-	for i=1 , #b do
-		n = n*2^8 + b [ i ]
+	for k=1 , #b do
+		n = n*2^8 + b [ k ]
 	end
 	return n
 end
 local num_to_be_uint = function ( n , bytes )
 	bytes = bytes or 4
+	if n < 0 or n >= 2^(8*bytes) or n ~= floor ( n ) then
+		return nil , "number out of range"
+	end
 	local b = { }
 	for i=bytes , 1 , -1 do
 		b [ i ] , n = n % 2^8 , floor ( n / 2^8 )
 	end
-	assert ( n == 0 )
 	return strchar ( unpack ( b ) )
 end
 
@@ -81,9 +90,6 @@ local le_bpeek = function ( s , bitnum )
 	local char = strbyte ( s , byte )
 	return floor ( ( char % 2^(bit+1) ) / 2^bit ) == 1
 end
--- Test with:
---local sum = 0 for i=0,31 do v = le_bpeek ( num_to_le_uint ( N , 4 ) , i )
---    sum=sum + ( v and 1 or 0 )*2^i end assert ( sum == N )
 
 local be_bpeek = function ( s , bitnum )
 	local byte = floor ( bitnum / 8 ) + 1
@@ -91,46 +97,41 @@ local be_bpeek = function ( s , bitnum )
 	local char = strbyte ( s , byte )
 	return floor ( ( char % 2^(bit+1) ) / 2^bit ) == 1
 end
--- Test with:
---local sum = 0 for i=0,31 do v = be_bpeek ( num_to_be_uint ( N , 4 ) , i )
---    sum=sum + ( v and 1 or 0 )*2^(31-i) end assert ( sum == N )
 
+-- the target CPUs are little-endian, so the in-memory bytes are the
+-- BSON bytes
+local dbuf = ffi_new ( "double[1]" )
+local ibuf = ffi_new ( "int64_t[1]" )
 
-local hasffi , ffi = pcall ( require , "ffi" )
-local to_double , from_double
-do
-	local s , e , d
-	if hasffi then
-		d = ffi.new ( "double[1]" )
-	else
-		-- Can't use with to_double as we can't strip debug info :(
-		d = string.dump ( loadstring ( [[return 523123.123145345]] ) )
-		s , e = d:find ( "\3\54\208\25\126\204\237\31\65" )
-		s = d:sub ( 1 , s )
-		e = d:sub ( e+1 , -1 )
-	end
+local function to_double ( n )
+	dbuf [ 0 ] = n
+	return ffi_string ( dbuf , 8 )
+end
 
-	function to_double ( n )
-		if hasffi then
-			d [ 0 ] = n
-			return ffi.string ( d , 8 )
-		else
-			-- Should be the 8 bytes following the second \3 (LUA_TSTRING == '\3')
-			local str = string.dump ( loadstring ( [[return ]] .. n ) )
-			local _ , _ , mat = str:find ( "\3(........)" , str:find ( "\3" ) + 1 )
-			return mat
-		end
+local function from_double ( str , i )
+	ffi_copy ( dbuf , i and str:sub ( i , i + 7 ) or str , 8 )
+	return dbuf [ 0 ]
+end
+
+-- v is a whole Lua number or int64_t cdata
+local function int64_to_le ( v )
+	ibuf [ 0 ] = v
+	return ffi_string ( ibuf , 8 )
+end
+
+-- returns a Lua number up to 2^53, int64_t cdata above that
+local function le_to_int64 ( s , i )
+	i = i or 1
+	ffi_copy ( ibuf , s:sub ( i , i + 7 ) , 8 )
+	local v = ibuf [ 0 ]
+	if v >= -9007199254740992LL and v <= 9007199254740992LL then
+		return tonumber ( v )
 	end
-	function from_double ( str )
-		assert ( #str == 8 )
-		if hasffi then
-			ffi.copy ( d , str , 8 )
-			return d [ 0 ]
-		else
-			str = s .. str .. e
-			return loadstring ( str ) ( )
-		end
-	end
+	return v
+end
+
+local function is_int64 ( v )
+	return type ( v ) == "cdata" and ffi.istype ( "int64_t" , v )
 end
 
 return {
@@ -149,4 +150,8 @@ return {
 
 	to_double = to_double ;
 	from_double = from_double ;
+
+	int64_to_le = int64_to_le ;
+	le_to_int64 = le_to_int64 ;
+	is_int64 = is_int64 ;
 }
