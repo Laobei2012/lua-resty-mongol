@@ -73,6 +73,8 @@ Each phase ends with green CI on all four server versions and a tagged release.
 3. Make the tests read the host, port, user and password from environment variables.
 4. Replace `module(...)` with a local module table. `require "resty.mongol"` still returns an object with `:new()`.
 5. Record which tests fail. All tests are expected to fail at this point.
+6. Add a test for each documented call. A CI job runs these tests with the old code on MongoDB 4.4, the last server that the old code supports. The passing tests record the old behavior that later phases keep.
+7. Use the official BSON corpus from `mongodb/specifications` in Phase 1 and Phase 4. Its license is CC BY-NC-SA 3.0, so CI downloads it and the repo does not contain it.
 
 Phase 0 is the one exception to the green CI rule. Its exit gate is a CI run that starts all four servers and reports the test results.
 

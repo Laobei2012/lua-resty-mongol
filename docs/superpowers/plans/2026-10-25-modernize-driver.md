@@ -44,8 +44,10 @@
 |---|---|---|
 | `LICENSE` | MIT/X11 text, with the original authors | 0 |
 | `.github/workflows/test.yml` | CI matrix and service containers | 0, 3, 5 |
-| `Makefile` | `test` target runs `prove -r t` | 0 |
+| `Makefile` | `test`, `test-auth`, `test-replset` and `spec-data` targets | 0, 1 |
 | `t/lib/Mongol.pm` | Shared Test::Nginx setup: `$HttpConfig` and environment defaults | 0 |
+| `t/api.t` (new) | One test for each documented call, with a baseline on MongoDB 4.4 | 0 |
+| `t/bson_corpus.t` (new) | Runner for the official BSON corpus, downloaded by `make spec-data` and not committed | 1, 4 |
 | `lib/resty/mongol/init.lua` | Connection object. Local module table, no `module()` | 0, 1, 3 |
 | `lib/resty/mongol/misc.lua` | `attachpairs_start` and a local `opairs` that honors `__pairs`. No `_G` write | 0 |
 | `lib/resty/mongol/ll.lua` | Byte helpers, plus int64 encode and decode | 1 |
@@ -108,6 +110,41 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - [ ] **Step 4: Run** the same command. Expected: PASS.
 - [ ] **Step 5: Commit** `fix(objectid): spec layout, no ngx.var, loadable in any phase`.
 
+### Task 1c: API coverage baseline
+
+The tests before this task never call 8 documented methods and 3 undocumented ones. This task adds a test for each documented method. A `baseline` CI job runs the tests on `mongo:4.4` with the old protocol code. MongoDB 4.4 is the last server that the old code can talk to. A block that passes there records the real old behavior. Later tasks must keep it on 6.0 to 9.0.
+
+Three methods are broken in the old code, so their blocks describe the target behavior and skip on the baseline. `db:add_user` calls `self:update`, which does not exist. `db:listcollections` reads `system.namespaces`, which WiredTiger does not have. `gridfs_file:read(size, offset)` starts at the right chunk but ignores the offset inside that chunk. `conn:shutdown()` raises a Lua error, because the server closes the socket before it replies.
+
+**Files:**
+- Create: `t/api.t`
+- Modify: `.github/workflows/test.yml` (new job `baseline`)
+- Test: `t/api.t`
+
+**Interfaces:**
+- Consumes: `t/lib/Mongol.pm` and `$TEST_NGINX_MONGO_*` from Task 1.
+- Produces: a block that must not run on the baseline has `--- skip_eval: 1: $ENV{TEST_NGINX_MONGO_BASELINE}` and a comment with the reason.
+- Produces: the CI job `baseline`. It runs on `mongo:4.4` without auth, with `TEST_NGINX_MONGO_BASELINE=1`, and runs only `prove -I t/lib t/api.t`. Task 3 deletes this job.
+- Produces: `t/api.t` runs in `make test`. It fails on 6.0 to 9.0 until Task 5, as the other old tests do.
+
+- [ ] **Step 1: Write the tests** in `t/api.t`. Each block uses the database `mongol_api` and starts with a `drop` of the collection that it uses. Each block prints `select("#", ...)` of the call under test, so that the count of return values is recorded too:
+  - `TEST: cmd ping`. `db:cmd({ping = 1})` returns a table with `ok == 1`.
+  - `TEST: cmd error`. `db:cmd({nosuchcmd = 1})` returns `nil` and a string as its first two values. Print only these two, because the old code also returns a fourth value, the flags table.
+  - `TEST: databases`. After an insert into `mongol_api`, `conn:databases()` returns a list that has an entry with `name == "mongol_api"`.
+  - `TEST: dropDatabase`. `db:dropDatabase()` returns `1`. After it, `conn:databases()` has no entry for `mongol_api`.
+  - `TEST: query and getmore`. Insert 5 documents with `n = 1..5`. `col:query({}, nil, 0, 2)` returns an 8-byte id that is not all zeros, 2 results, and a flags table. `col:getmore(id, 10, 2)` returns 3 results and an id of 8 zero bytes.
+  - `TEST: kill_cursors`. `col:query({}, nil, 0, 2)` on the same 5 documents, then `col:kill_cursors({id})`, returns a truthy value. A later `col:getmore(id, 10)` returns flags with `CursorNotFound == true`.
+  - `TEST: getprimary standalone`. `conn:getprimary()` returns a connection whose `ismaster()` is `true`.
+  - `TEST: count with filter`. Insert `{x = 1}`, `{x = 1}` and `{x = 2}`. `col:count({x = 1})` returns `2`.
+  - `TEST: gridfs read aligned`. Insert a 3-chunk file with `chunkSize = 4` through `gridfs:insert`, as `t/gridfs.t` does. `read(4, 4)` returns bytes 5 to 8. `read()` returns the whole file.
+  - `TEST: gridfs read unaligned`. Skip on the baseline. `read(3, 5)` returns bytes 6 to 8.
+  - `TEST: add_user`. Skip on the baseline. `db:add_user("u_api", "p")` returns a truthy value, and `db:cmd({usersInfo = "u_api"}).users[1].user` is `u_api`.
+  - `TEST: listcollections`. Skip on the baseline. After an insert into `c_api`, the cursor yields a document with `name == "c_api"`.
+  - `TEST: shutdown`. Skip on the baseline. Use `--- tcp_listen` with a server that reads the request and closes the socket. `conn:connect` to that port, then `conn:shutdown()`, raises no Lua error. The block has `--- no_error_log` of `[error]`.
+- [ ] **Step 2: Add the `baseline` job** to `test.yml`.
+- [ ] **Step 3: Push and read the CI result.** Expected: in the `baseline` job, every block that does not skip passes. If a block fails there, the test is wrong, not the old code. Fix the test until it passes on the baseline.
+- [ ] **Step 4: Commit** `test: cover every documented API call, baseline on MongoDB 4.4`.
+
 ---
 
 ## Phase 1: Wire protocol
@@ -124,7 +161,7 @@ Issues: #47, #58, #63, #69, #33. PRs: #49, #20 (ideas only, superseded).
 - Produces: `bson.ordered({ {k1, v1}, {k2, v2}, ... })`. It returns a document whose keys `to_bson` writes in the given order.
 - Produces: `bson.to_bson(t) -> string | nil, err`. It no longer raises. Keys with `\0` return `nil, "invalid key"`.
 - Produces: `bson.from_bson(get)` reads type 0x12 with `ll.le_to_int64`.
-- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If `n` is 0, the table is a document, so `filter = {}` stays a document. Otherwise, if every key is an integer from 1 to `n`, the table is an array.
+- Produces: array detection does not depend on `pairs` order (issue #52). Let `n` be the count of keys. If `n` is 0, the table is a document, so `filter = {}` stays a document. If `n` is above 0 and every key is an integer from 1 to `n`, the table is an array. Any other table is a document.
 - Produces: `bson.empty_array`, a sentinel that `to_bson` writes as an array with no elements (type 0x04). Commands such as `createUser` need it for `roles`. Issue #66 uses it too.
 - Produces: `ll.num_to_le_uint` and `ll.num_to_le_int` return `nil, "number out of range"` and do not `assert` (issue #16, PR #20).
 
@@ -173,9 +210,13 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   | `bson.double(1)` | `0x01` |
 
   Also add `TEST: array encode`. `to_bson({v = {"a", "b"}})` has element names `"0"` and `"1"` inside `v`, and no null element. Add `TEST: array decode`. A hand-built BSON array `["a", "b"]` decodes to `t[1] == "a"`, `t[2] == "b"` and `t[0] == nil`. Add `TEST: negative int32 decode`. The int32 bytes `ff ff ff ff` decode to `-1`. Add `TEST: null decode`. A document `{x: null}` decodes to `t.x == bson.null`. Add `TEST: array with null`. The array `["a", null, "b"]` decodes to `{"a", bson.null, "b"}`, and encodes back as an array with 3 elements and a null in the middle. Add `TEST: timestamp round trip`. `bson.timestamp(100, 7)` encodes as type 0x11 and decodes to `t == 100` and `i == 7`.
-- [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
+- [ ] **Step 1b: Add the BSON corpus runner.** The official BSON test data is in `mongodb/specifications`, folder `source/bson-corpus/tests`. Its license is CC BY-NC-SA 3.0. Do not commit these files to this repo. Add a Makefile target `spec-data`. It downloads the folder from commit `9ea18a92308ed437e16dd95e6ff9c496daa61ecd` through `https://codeload.github.com/mongodb/specifications/tar.gz/<sha>` into `t/spec/bson-corpus/`. Add `t/spec/` to `.gitignore`. Make `test` depend on `spec-data`. Write `t/bson_corpus.t`. It needs no server. It reads each JSON file with `cjson` and runs three checks:
+  - `valid` entries: `from_bson` of `canonical_bson` succeeds. Then `to_bson` of the result gives the same bytes. Skip the encode check in three cases, because a Lua value cannot carry the BSON type or the key order. The cases are a double with a whole value, an int64 inside the int32 range, and a document with more than one key.
+  - `decodeErrors` entries: `from_bson` raises an error or returns `nil`. It must never return a document.
+  - The runner reads an allowlist of files: `array`, `binary`, `boolean`, `document`, `double`, `int32`, `int64`, `null`, `oid`, `string`, `timestamp` and `top`. An entry that fails because of work in a later task goes in a `known_failures` table, with the task number. Task 10 adds the remaining files and empties `known_failures`.
+- [ ] **Step 2: Run** `prove t/bson.t t/bson_corpus.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `prove t/bson.t`. Expected: PASS.
+- [ ] **Step 4: Run** `prove t/bson.t t/bson_corpus.t`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(bson)!: int32/int64 numbers and 1-based arrays`. The body explains both breaking changes.
 
 ### Task 3: OP_MSG transport and db:cmd
@@ -206,6 +247,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - [ ] **Step 2: Run** `prove t/wire.t`. Expected: FAIL.
 - [ ] **Step 3: Implement** `wire.lua`. Header: `messageLength`, `requestID`, `responseTo`, `opCode = 2013`. Body: `flagBits`, section kind 0 with the command, then one kind-1 section for each sequence (`int32 size`, `cstring identifier`, docs). Keep the request id counter as a module upvalue.
 - [ ] **Step 3b: Add the send-only path.** `wire.send_only(conn, dbname, cmd, sequences) -> true | nil, err` sets `flagBits` bit 1 (`moreToCome`) and reads no reply. Task 4 uses it for `w = 0` writes. Add `TEST: unsafe write then command`. It calls `wire.send_only` with an `insert` command and `writeConcern = {w = 0}`, then `db:cmd({ping = 1})` on the same socket, and gets `ok == 1`. This test does not use `col:insert`, which Task 4 ports. Source: the MongoDB `OP_MSG` specification.
+- [ ] **Step 3c: Delete the `baseline` CI job** from Task 1c. The old protocol code is gone, and MongoDB 4.4 is not a supported server.
 - [ ] **Step 4: Run** `prove t/wire.t t/bson.t`. Expected: PASS on all four servers in CI.
 - [ ] **Step 5: Commit** `feat(wire): send all commands as OP_MSG`.
 
@@ -217,7 +259,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 **Files:**
 - Modify: `lib/resty/mongol/colmt.lua:30-208` (delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`)
-- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth/legacy.t`, which runs only in the Phase 3 auth job. This covers `t/sanity.t`, `t/cluster.t` TESTs 2 and 8, and the `db:auth()` calls in `t/cursor.t` (4 blocks) and `t/gridfs.t` (2 blocks) and `t/gridfs_write.t` (15 blocks). In the blocks that stay, delete the `db:auth()` lines and the `auth failed` lines from the expected output.
+- Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Move every block that calls `db:auth()` or expects an auth failure to `t/auth/legacy.t`, which runs only in the Phase 3 auth job. This covers `t/sanity.t`, `t/cluster.t` TESTs 2 and 8, and the `db:auth()` calls in `t/cursor.t` (4 blocks) and `t/gridfs.t` (2 blocks) and `t/gridfs_write.t` (15 blocks). In the blocks that stay, delete the `db:auth()` lines and the `auth failed` lines from the expected output. Rewrite `t/sanity.t` TEST 16 for the Task 2b rules. `tab1 = {[0] = "a0", "a1", "a2"}` and the sparse `tab2` are not arrays, so they are stored as documents. The new expected values are `r.tab[1].a == "aa"`, `r.tab1["0"] == "a0"` and `r.tab2["2"] == "a20"`. Keep TEST 22 unchanged. It now passes with the standard `pairs`.
 
 **Interfaces:**
 - Consumes: `wire.command`, `bson.ordered`, `bson.int32`.
@@ -304,9 +346,16 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` eventually returns `nil, err` or ends without a Lua error.
 - [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `wire.t`, `sanity.t`, `cursor.t` and `globals.t` PASS on all four servers. `gridfs*.t` and `cluster.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5".
+- [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `gridfs*.t`, `cluster.t` and the two GridFS blocks in `api.t` can still fail. Mark them `--- SKIP` with the reason "Phase 5". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
 - [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
-- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe the 1-based arrays and their effect on old data, int32 and int64 numbers, int64 cdata above 2^53, Timestamp wrappers, `bson.null` on read with an `if doc.x then` example, `cursor:close()` in place of the `__gc` kill, and `skip`/`limit` before the first fetch.
+- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
+  - 1-based arrays and their effect on old data.
+  - int32 and int64 numbers, and int64 cdata above 2^53.
+  - Timestamp wrappers.
+  - `bson.null` on read, with an `if doc.x then` example.
+  - `cursor:close()` in place of the `__gc` kill.
+  - `skip` and `limit` before the first fetch.
+  They also list the fixes that a caller can see. `db:add_user`, `db:listcollections` and `conn:shutdown()` work now. `db:cmd` no longer returns a fourth value, the flags table.
 - [ ] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
 
 ---
@@ -389,11 +438,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 
 - Produces: UTC dates read as signed int64, so that dates before 1970 are correct (issue #53).
 - Reads of types 0x13, 0x0B, 0xFF and 0x7F raise an error today. Returning wrappers for them breaks no caller.
-- Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy with ObjectId as a hex string, dates as ISO 8601 strings and `bson.null` as `cjson.null`, for `cjson` (issues #53 and #67).
+- Produces: ObjectId and UTC date wrappers have a `__tojson` metamethod. `bson.to_json_safe(doc)` returns a copy for `cjson` (issues #53 and #67). In the copy, an ObjectId is a hex string and a date is an ISO 8601 string. `bson.null` becomes `cjson.null`.
 
 - [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`, which raises no error and contains the ObjectId hex.
 - [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Use the corpus files `decimal128-1.json` to `decimal128-7.json` from `mongodb/specifications`, `source/bson-corpus/tests`.
+- [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Add `datetime`, `decimal128-1` to `decimal128-7`, `regex`, `minkey` and `maxkey` to the allowlist in `t/bson_corpus.t`. Empty its `known_failures` table. Run `prove t/bson_corpus.t`. Expected: PASS.
 - [ ] **Step 4: Run** `make test`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, JSON helpers`. Tag the Phase 4 release.
 
@@ -432,10 +481,10 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - Without a monitor, `wire.command` does one `if` check and nothing else.
   - The driver calls each hook through `pcall`. A hook error goes to `ngx.log(ngx.ERR, ...)` and does not change the command result.
   - Sensitive commands are `authenticate`, `saslStart`, `saslContinue`, `getnonce`, `createUser`, `updateUser`, `copydbgetnonce`, `copydbsaslstart` and `copydb`. A `hello` or `isMaster` that contains `speculativeAuthenticate` is sensitive too. The check runs inside `wire.command`, so it also covers calls through the public `db:cmd()`. For a sensitive command, `command` and `reply` are empty tables, and `failed.error` is the string `"redacted"`.
-  - Event tables are deep copies. The driver builds them before it sends and after it decodes. A hook that changes an event, even when it raises an error after the change, cannot change the data on the wire or the value that the caller gets. The copies are made only when a monitor is set.
-  - The driver reads the monitor once, when the command starts, and keeps it in a local variable. The terminal event goes to that same monitor, even if another request or the `started` hook calls `set_monitor` in the meantime.
+  - Event tables are deep copies. The driver builds them before it sends and after it decodes. A hook can change an event and then raise an error. In both cases, the data on the wire and the value that the caller gets do not change. If no monitor is set, the driver makes no copies.
+  - At the start of a command, the driver reads the monitor once and keeps it in a local variable. The terminal event goes to that same monitor. Another request or the `started` hook can call `set_monitor` during the command. This does not change where the terminal event goes.
   - Every `started` event has exactly one terminal event. A send failure, a timeout, a closed socket and a reply that cannot be parsed each produce `failed`.
-  - `succeeded` means that the command succeeded, not that the write succeeded. A reply `{ok = 1, writeErrors = ...}` produces `succeeded`. For an unsafe write, `succeeded` confirms only that the driver sent it.
+  - `succeeded` means that the command succeeded, not that the write succeeded. A reply `{ok = 1, writeErrors = ...}` produces `succeeded`. For an unsafe write, `succeeded` shows only that the driver sent it.
   - For a `wire.send_only` write, `succeeded` fires after the send, with `reply = {ok = 1}`.
   - `duration_ms` comes from `ngx.now()` after `ngx.update_time()`.
 
@@ -452,7 +501,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `TEST: failure on closed socket`. Use `--- tcp_listen` with a server that closes at once. One `started` and one `failed` event are recorded.
   - `TEST: remove monitor`. After `set_monitor(nil)`, `find_one` records nothing.
 - [ ] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example (`nginx-lua-prometheus` counter and histogram) and the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
+- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example, a `nginx-lua-prometheus` counter and histogram. Add the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
 - [ ] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
 - [ ] **Step 5: Commit** `feat(wire): command monitoring hook`.
 
