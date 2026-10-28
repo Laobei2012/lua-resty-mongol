@@ -62,7 +62,8 @@ jobs:
         run: make test
 
   auth:
-    runs-on: ubuntu-latest
+    # Linux 6.19 and newer blocks mongo:8.0 and later; see the test job.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
@@ -90,7 +91,8 @@ jobs:
         run: make test-auth
 
   tls:
-    runs-on: ubuntu-latest
+    # Linux 6.19 and newer blocks mongo:8.0 and later; see the test job.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Make the test certificates
