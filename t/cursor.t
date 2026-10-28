@@ -710,3 +710,47 @@ list id is a string true nil true nilclosed
 list no batch true nil true nilclosed
 --- no_error_log
 [error]
+
+
+
+=== TEST 15: bad limit and skip arguments
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local wire = require "resty.mongol.wire"
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            col:delete({}, nil, true)
+            local docs = {}
+            for i = 1, 5 do docs[i] = {n = i} end
+            col:insert(docs, nil, true)
+            local c = col:find({}, nil, 10)
+            for _, name in ipairs({"limit", "skip"}) do
+                for _, bad in ipairs({"nil", "string", "negative", "fraction"}) do
+                    local v = ({["nil"] = nil, string = "x", negative = -1, fraction = 1.5})[bad]
+                    local ok, err = pcall(c[name], c, v)
+                    ngx.say(name, " ", bad, " ", ok, " ", tostring(err):find("bad argument", 1, true) ~= nil)
+                end
+            end
+            local n = 0
+            for _ in c:pairs() do n = n + 1 end
+            ngx.say(n)
+        }
+    }
+--- request
+GET /t
+--- response_body
+limit nil false true
+limit string false true
+limit negative false true
+limit fraction false true
+skip nil false true
+skip string false true
+skip negative false true
+skip fraction false true
+5
+--- no_error_log
+[error]
