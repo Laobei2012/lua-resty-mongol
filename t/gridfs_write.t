@@ -1026,3 +1026,32 @@ nilinvalid offset
 nilinvalid size
 --- no_error_log
 [error]
+
+
+
+=== TEST 24: empty file and the meta table
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            local meta = {chunkSize = 4, filename = "empty"}
+            assert(fs:insert(t.string_fh(""), meta, true))
+            ngx.say(type(meta.chunkSize), " ", meta.length, " ", meta.md5)
+            local gf = fs:find_one({filename = "empty"})
+            ngx.say(string.format("%q", gf:read()), " ", gf.file_size, " ", gf:update_md5())
+            local out = {}
+            ngx.say(fs:get({write = function(self, d) out[#out + 1] = d return self end}, {filename = "empty"}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+number nil nil
+"" 0 true
+true
+--- no_error_log
+[error]

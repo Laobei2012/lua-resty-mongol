@@ -83,6 +83,9 @@ end
 -- the file and is cut at the end of the file
 function gridfs_file_mt:read(size, offset)
     offset = offset or 0
+    if offset == 0 and self.file_size == 0 and (size == nil or size >= 0) then
+        return ""
+    end
     if offset < 0 or offset >= self.file_size then
         return nil, "invalid offset"
     end

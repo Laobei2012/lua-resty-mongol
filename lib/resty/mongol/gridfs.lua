@@ -1,5 +1,6 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
+local pairs = pairs
 local setmetatable = setmetatable
 local ngx = ngx
 local string = string
@@ -14,6 +15,21 @@ local gridfs_mt = { }
 local gridfs = { __index = gridfs_mt }
 local get_bin_data = bson.get_bin_data
 local get_utc_date = bson.get_utc_date
+
+-- the document for the files collection: chunkSize is int32 and length is
+-- int64, as the GridFS specification says. The table of the caller is not
+-- changed.
+local function files_doc(meta, length, md5_value)
+    local doc = {}
+    for k, v in pairs(meta) do
+        doc[k] = v
+    end
+    doc.chunkSize = bson.int32(meta.chunkSize)
+    doc.length = bson.int64(length)
+    doc.md5 = md5_value
+    doc.uploadDate = get_utc_date(ngx.time() * 1000)
+    return doc
+end
 
 function gridfs_mt:find_one(fields)
     local r = self.file_col:find_one(fields)
@@ -33,8 +49,12 @@ end
 function gridfs_mt:get(fh, fields)
     local f = self:find_one(fields)
     if not f then return nil, "file not found" end
-    local r = fh:write(f:read())
-    return r
+    local data, err = f:read()
+    if not data then return nil, err end
+    local ok
+    ok, err = fh:write(data)
+    if not ok then return nil, err end
+    return true
 end
 
 function gridfs_mt:remove(fields, continue_on_err, safe)
@@ -65,10 +85,7 @@ function gridfs_mt:new(meta)
     meta.chunkSize = meta.chunkSize or 256*1024
     meta.filename = meta.filename or meta._id:tostring()
 
-    meta.md5 = 0
-    meta.uploadDate = get_utc_date(ngx.time() * 1000)
-    meta.length = 0
-    local r, err = self.file_col:insert({meta}, nil, true)
+    local r, err = self.file_col:insert({files_doc(meta, 0, 0)}, nil, true)
     if not r then return nil, err end
 
     return setmetatable({
@@ -98,7 +115,7 @@ function gridfs_mt:insert(fh, meta, safe)
 
         md5_obj:update(bytes)
         r, err = self.chunk_col:insert({{ files_id = meta._id,
-                                n = n,
+                                n = bson.int32(n),
                                 data = get_bin_data(bytes),
                                 }}, nil, safe)
         if safe and not r then return nil, err end
@@ -108,10 +125,7 @@ function gridfs_mt:insert(fh, meta, safe)
     end
     local md5hex = str.to_hex(md5_obj:final())
 
-    meta.md5 = md5hex
-    meta.uploadDate = get_utc_date(ngx.time() * 1000)
-    meta.length = length
-    r, err = self.file_col:insert({meta}, nil, safe)
+    r, err = self.file_col:insert({files_doc(meta, length, md5hex)}, nil, safe)
     if safe and not r then return nil, err end
     return r
 end
