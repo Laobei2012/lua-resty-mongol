@@ -214,5 +214,5 @@ nil string
 nil string
 falsebad argument #1 to 'connect_uri' (string expected)
 true
---- no_error_log
-[error]
+--- error_log
+connect() failed
