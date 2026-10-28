@@ -154,3 +154,39 @@ GET /t
 true 0
 --- no_error_log
 [error]
+
+
+=== TEST 5: failed reconnect login cannot enter the pool
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local admin = assert(mongo.connect_uri("mongodb://admin:admin@" .. H .. ":" .. P .. "/admin"))
+            local db = admin:new_db_handle("admin")
+            local user = "reconnect_password_test"
+            db:cmd({dropUser = user})
+            assert(db:cmd(bson.ordered{{"createUser", user}, {"pwd", "before"}, {"roles", bson.empty_array}}))
+            local conn = assert(mongo.connect_uri("mongodb://" .. user .. ":before@" .. H .. ":" .. P .. "/admin"))
+            assert(conn:close())
+            assert(db:cmd(bson.ordered{{"updateUser", user}, {"pwd", "after"}}))
+            local ok, err = conn:connect()
+            ngx.say(ok == nil, " ", err:find("Authentication failed", 1, true) ~= nil)
+            ngx.say(conn:set_keepalive(10000, 5) == nil)
+            ok, err = conn:connect()
+            ngx.say(ok == nil, " ", err and err:find("Authentication failed", 1, true) ~= nil)
+            conn:close()
+            assert(db:cmd({dropUser = user}))
+            admin:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+true true
+true
+true true
+--- no_error_log
+[error]
