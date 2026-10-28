@@ -449,16 +449,16 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - The README says that `ssl_verify` needs `lua_ssl_trusted_certificate`.
 - Produces: `conn:getprimary()` uses `hello` and `isWritablePrimary`, with the same return values as today.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `TEST: pool option`. Two connects with `pool = "a"` show `get_reused_times() == 1` on the second.
   - `TEST: tls to plain server`. `connect(host, port, {ssl = true})` returns `nil, err` and raises no Lua error.
   - In `t/tls/tls.t`, which runs only in the CI job `tls`: `TEST: tls verified`. `connect("127.0.0.1", 27017, {ssl = true, ssl_server_name = "localhost"})` succeeds, and `db:cmd({ping = 1})` returns `ok == 1`. `TEST: tls untrusted`. A second nginx block trusts a different CA, and the same `connect` returns `nil, err`. All three blocks use `127.0.0.1` with `ssl_server_name = "localhost"`. A cosocket cannot resolve `localhost` without a `resolver`, and the certificate name is `localhost`. `TEST: tls reconnect`. After `close()`, `connect()` with no arguments succeeds, and `ping` returns `ok == 1`.
 - Produces: the CI job `tls`. It runs only with `mongo:9.0`, to keep CI short. A step makes a test CA and a server certificate for `localhost` with `openssl`. The job starts `mongod` with `--tlsMode requireTLS --tlsCertificateKeyFile server.pem --tlsCAFile ca.pem --tlsAllowConnectionsWithoutCertificates`. MongoDB does not start with TLS and no CA file. The last flag lets the driver connect without a client certificate. `t/tls/tls.t` sets `lua_ssl_trusted_certificate` to the test CA. A new Makefile target `test-tls` runs `prove -I t/lib t/tls`. The certificates are made in CI and never committed.
   - `TEST: pool_size`. `connect(host, port, {pool = "b", pool_size = 1})` succeeds.
-- [ ] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test` and, in the `tls` job, `make test-tls`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(conn): TLS and pool options, hello-based getprimary`. Tag the Phase 3 release.
+- [x] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `make test` and, in the `tls` job, `make test-tls`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(conn): TLS and pool options, hello-based getprimary`. Tag the Phase 3 release.
 
 ---
 
