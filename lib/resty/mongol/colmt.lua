@@ -311,7 +311,7 @@ function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
     -- always uses its own (primary) connection, because a transaction runs
     -- on the primary only.
     local session = session_of(self, options)
-    local conn = session and session.conn or options.conn
+    local conn = options.conn or session and session.conn
                  or self.conn.read_conn or self.conn
     local r, err, doc = wire.command(conn, self.db, ordered(cmd), nil, nil,
                                      session)
@@ -329,8 +329,11 @@ function colmethods:getmore(cursorID, numberToReturn, offset_i, opts)
     if numberToReturn and numberToReturn > 0 then
         cmd[3] = {"batchSize", int32(numberToReturn)}
     end
+    -- the same connection as query: an explicit connection, the session, the
+    -- secondary of a read preference, the primary
     local session = session_of(self, opts)
-    local conn = opts and opts.conn or self.conn
+    local conn = opts and opts.conn or session and session.conn
+                 or self.conn.read_conn or self.conn
     local r, err, doc = wire.command(conn, self.db, ordered(cmd), nil, nil,
                                      session)
     return cursor_result(conn, r, err, doc, offset_i, "nextBatch")
@@ -345,7 +348,8 @@ function colmethods:kill_cursors(cursorIDs, opts)
         return true
     end
     local session = session_of(self, opts)
-    local conn = opts and opts.conn or self.conn
+    local conn = opts and opts.conn or session and session.conn
+                 or self.conn.read_conn or self.conn
     local r, err = wire.command(conn, self.db, ordered{
         {"killCursors", self.col},
         {"cursors", ids},
