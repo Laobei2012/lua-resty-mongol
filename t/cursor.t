@@ -662,3 +662,51 @@ GET /t
 true nil string
 --- no_error_log
 [error]
+
+
+
+=== TEST 14: listcollections with a bad success reply
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local wire = require "resty.mongol.wire"
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            local replies = {
+                {"no cursor", {ok = 1}},
+                {"no ns", {ok = 1, cursor = {id = 0, firstBatch = {}}}},
+                {"ns is a number", {ok = 1, cursor = {id = 0, ns = 5, firstBatch = {}}}},
+                {"id is a string", {ok = 1, cursor = {id = "x", ns = "test.$cmd.listCollections", firstBatch = {}}}},
+                {"no batch", {ok = 1, cursor = {id = 0, ns = "test.$cmd.listCollections"}}},
+            }
+            local real = wire.command
+            for _, name in ipairs({"listcollections", "list"}) do
+                for _, r in ipairs(replies) do
+                    local reply = r[2]
+                    wire.command = function() return reply end
+                    local ok, a, b = pcall(db[name], db)
+                    wire.command = real
+                    ngx.say(name, " ", r[1], " ", ok, " ", a, " ", type(b) == "string", " ", conn:set_keepalive())
+                    conn:connect()
+                end
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+listcollections no cursor true nil true nilclosed
+listcollections no ns true nil true nilclosed
+listcollections ns is a number true nil true nilclosed
+listcollections id is a string true nil true nilclosed
+listcollections no batch true nil true nilclosed
+list no cursor true nil true nilclosed
+list no ns true nil true nilclosed
+list ns is a number true nil true nilclosed
+list id is a string true nil true nilclosed
+list no batch true nil true nilclosed
+--- no_error_log
+[error]
