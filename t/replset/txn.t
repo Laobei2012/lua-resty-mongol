@@ -184,7 +184,7 @@ GET /t
             local doc = col:find_one({a = 1}, nil, {session = s})
             ngx.say(doc and doc.a)
             local seen = 0
-            for _ in col:find({}, nil, 1, {session = s}):pairs() do seen = seen + 1 end
+            for _ in col:find({}, nil, 2, {session = s}):pairs() do seen = seen + 1 end
             for _ in col:aggregate({}, {session = s}):pairs() do seen = seen + 1 end
             assert(s:commit_transaction())
             mongo.set_monitor(nil)

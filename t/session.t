@@ -63,7 +63,7 @@ true
             ngx.say(col:insert({{a = 1}, {a = 2}}, nil, true, {session = s}))
             ngx.say(col:update({a = 1}, {["$set"] = {b = 1}}, 0, 0, true, {session = s}))
             local n = 0
-            for _ in col:find({}, nil, 1, {session = s}):pairs() do n = n + 1 end
+            for _ in col:find({}, nil, 2, {session = s}):pairs() do n = n + 1 end
             ngx.say(n, " ", col:find_one({a = 2}, nil, {session = s}).a)
             local c = 0
             for _ in col:aggregate({}, {session = s}):pairs() do c = c + 1 end
