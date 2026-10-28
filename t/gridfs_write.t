@@ -1455,3 +1455,43 @@ string nil string false string
 abcdefgh true
 --- no_error_log
 [error]
+
+
+
+=== TEST 34: write checks the stored chunks
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local chunks = db:get_col("fs14.chunks")
+            local cases = {
+                {"boolean", true}, {"number", 5}, {"document", {v = "abcd"}},
+                {"subtype 128", bson.get_bin_data("abcd", 128)}, {"null", bson.null},
+            }
+            for _, c in ipairs(cases) do
+                assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "w_" .. c[1]}, true))
+                local gf = fs:find_one({filename = "w_" .. c[1]})
+                chunks:update({files_id = gf.files_id, n = 0}, {["$set"] = {data = c[2]}}, 0, 0, true)
+                local pok, r, err = pcall(gf.write, gf, "X", 0)
+                ngx.say(c[1], " ", pok, " ", r, " ", type(err))
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+boolean true nil string
+number true nil string
+document true nil string
+subtype 128 true nil string
+null true nil string
+--- no_error_log
+[error]
