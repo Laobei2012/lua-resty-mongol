@@ -63,7 +63,10 @@ end
 -- listCollections); the collection for getMore and killCursors comes
 -- from the namespace of the reply
 local function from_reply(col, reply_cursor, num_each, session)
-    local batch = reply_cursor.firstBatch or {}
+    local batch, err = check_reply(col.conn, reply_cursor, "firstBatch", true)
+    if not batch then
+        return nil, err
+    end
     local name = reply_cursor.ns:match("^[^.]+%.(.*)$") or reply_cursor.ns
     local ncol = setmetatable({
             conn = col.conn;
