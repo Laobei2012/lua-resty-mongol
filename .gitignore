@@ -5,3 +5,4 @@ t/spec/
 t/servroot*/
 .claude
 .claude.json
+t/tls/certs/

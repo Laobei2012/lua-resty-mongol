@@ -420,7 +420,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `db:auth(user, password)` sends `hello` with `saslSupportedMechs = db .. "." .. user`. If the server lists SHA-256, it picks SHA-256. Otherwise, it picks SHA-1. `db:auth_scram_sha1(u, p)` stays as an alias.
 - Produces: a CI job `auth`. It runs the four-version matrix with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`, and runs only `make test-auth`.
 
-- [ ] **Step 1: Write failing tests** in `t/auth/auth.t`. Each test logs in against the `admin` database:
+- [x] **Step 1: Write failing tests** in `t/auth/auth.t`. Each test logs in against the `admin` database:
   - `TEST: sha256 login`. `auth("admin", "admin")` gives `1`. Then `insert(..., true)` gives `0`.
   - `TEST: sha1 login`. Drop the user `u1` and ignore the error. Create a user `u1` with `mechanisms = {"SCRAM-SHA-1"}`. `auth("u1", "p1")` gives `1`.
   - `TEST: wrong password`. The result is `nil` and a message that contains `Authentication failed`.
@@ -428,10 +428,10 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: bad server signature`. For each mechanism, a stub answers `saslStart` correctly and answers the first `saslContinue` with a wrong `v=`. `authenticate` returns `nil` and `server signature mismatch`.
   - `TEST: rfc7677 vector`. Run `scram.lua`'s client proof over the RFC 7677 example (`user`, `pencil`, nonce `rOprNGfwEbeRWgbNEkqO`) and compare it with the RFC proof. No server is needed.
   - `TEST: pooled login reuse`. Request 1 logs in and calls `set_keepalive(10000, 10)`. Request 2 calls `connect` with the same `pool`, sees `get_reused_times() > 0`, skips login, and its `find_one` succeeds.
-- [ ] **Step 2: Run** `make test-auth` against a server with auth on. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** `make test-auth`. Expected: PASS in all four auth jobs.
-- [ ] **Step 5: Commit** `feat(auth): SCRAM-SHA-256 with SHA-1 fallback`.
+- [x] **Step 2: Run** `make test-auth` against a server with auth on. Expected: FAIL.
+- [x] **Step 3: Implement** the interfaces above.
+- [x] **Step 4: Run** `make test-auth`. Expected: PASS in all four auth jobs.
+- [x] **Step 5: Commit** `feat(auth): SCRAM-SHA-256 with SHA-1 fallback`.
 
 ### Task 8: TLS, connect options, getprimary, ngx.var
 
@@ -449,16 +449,16 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - The README says that `ssl_verify` needs `lua_ssl_trusted_certificate`.
 - Produces: `conn:getprimary()` uses `hello` and `isWritablePrimary`, with the same return values as today.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `TEST: pool option`. Two connects with `pool = "a"` show `get_reused_times() == 1` on the second.
   - `TEST: tls to plain server`. `connect(host, port, {ssl = true})` returns `nil, err` and raises no Lua error.
   - In `t/tls/tls.t`, which runs only in the CI job `tls`: `TEST: tls verified`. `connect("127.0.0.1", 27017, {ssl = true, ssl_server_name = "localhost"})` succeeds, and `db:cmd({ping = 1})` returns `ok == 1`. `TEST: tls untrusted`. A second nginx block trusts a different CA, and the same `connect` returns `nil, err`. All three blocks use `127.0.0.1` with `ssl_server_name = "localhost"`. A cosocket cannot resolve `localhost` without a `resolver`, and the certificate name is `localhost`. `TEST: tls reconnect`. After `close()`, `connect()` with no arguments succeeds, and `ping` returns `ok == 1`.
 - Produces: the CI job `tls`. It runs only with `mongo:9.0`, to keep CI short. A step makes a test CA and a server certificate for `localhost` with `openssl`. The job starts `mongod` with `--tlsMode requireTLS --tlsCertificateKeyFile server.pem --tlsCAFile ca.pem --tlsAllowConnectionsWithoutCertificates`. MongoDB does not start with TLS and no CA file. The last flag lets the driver connect without a client certificate. `t/tls/tls.t` sets `lua_ssl_trusted_certificate` to the test CA. A new Makefile target `test-tls` runs `prove -I t/lib t/tls`. The certificates are made in CI and never committed.
   - `TEST: pool_size`. `connect(host, port, {pool = "b", pool_size = 1})` succeeds.
-- [ ] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test` and, in the `tls` job, `make test-tls`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(conn): TLS and pool options, hello-based getprimary`. Tag the Phase 3 release.
+- [x] **Step 2: Run** `prove t/connect.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `make test` and, in the `tls` job, `make test-tls`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(conn): TLS and pool options, hello-based getprimary`. Tag the Phase 3 release.
 
 ---
 

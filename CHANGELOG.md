@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased (Phase 3)
+
+### Authentication
+
+- `db:auth(user, password)` asks the server for the mechanism of the user
+  (`hello` with `saslSupportedMechs`). It uses SCRAM-SHA-256 if the server
+  lists it, or if the list is missing or empty (for example, for a user
+  that does not exist). It uses SCRAM-SHA-1 if the list has only that
+  mechanism. It still returns `1`, or `nil, err`.
+- SCRAM-SHA-256 needs an ASCII password. A password with other characters
+  returns `nil, "non-ASCII password not supported"`, because full SASLprep
+  is not implemented.
+- `db:auth_scram_sha1(user, password)` keeps its name and uses SCRAM-SHA-1.
+- A bad server reply (a wrong nonce or signature, a bad payload or salt)
+  returns `nil, err` and closes the socket, so it never goes back to the
+  pool.
+- The client checks the server nonce and the server signature. A wrong
+  value returns `nil, "server nonce mismatch"` or `nil, "server signature
+  mismatch"`. The old SCRAM-SHA-1 code compared a boolean with a string,
+  so it never rejected a bad nonce. It also used `math.random` for the
+  nonce. The new code uses `resty.random`.
+- The salted password is cached in the worker, so pooled connections skip
+  PBKDF2.
+- MONGODB-CR (`getnonce`) is removed. MongoDB 4.0 and later do not
+  support it.
+- Login state belongs to the socket, as before. After `set_keepalive`, a
+  reused socket stays logged in as the same user. Use
+  `get_reused_times()` to skip a second login. Give each user a separate
+  pool name with the `pool` option of `connect`.
+
+### Connection
+
+- `conn:connect(host, port, opts)` takes an optional table `opts`:
+  `pool`, `pool_size` and `backlog` go to the connection pool. `ssl`,
+  `ssl_verify` (default `true`), `ssl_server_name` (default `host`) and
+  `ssl_reused_session` control TLS. With `ssl`, `connect` returns the TLS
+  session as a second value. The two-argument call does not change.
+- `ssl_verify` needs `lua_ssl_trusted_certificate` in `nginx.conf`.
+- A failed TLS handshake closes the socket and returns `nil, err`.
+- With `ssl` and no `pool`, the default pool name holds the host, port, `ssl_verify` and `ssl_server_name`. A TLS socket is never reused by a plain or by a differently verified connection. A `pool` name that you give never equals a generated name. Use one pool name for one TLS setting.
+- `connect` remembers the host, port and options of the last successful
+  call. `conn:connect()` with no arguments uses them again.
+
 ## 1.0.0 (unreleased)
 
 This is the major release that contains every breaking change of the

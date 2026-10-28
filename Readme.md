@@ -54,7 +54,12 @@ Cursors
 Login
 -----
 
-`db:auth` still uses the old login in this version. Use a server without authentication until the SCRAM login arrives.
+`db:auth` uses SCRAM-SHA-256, or SCRAM-SHA-1 if the server lists only that for the user. MONGODB-CR is gone. A SCRAM-SHA-256 password must be ASCII. A socket stays logged in as the same user after `set_keepalive`. Give each user a separate pool name with the `pool` option of `connect`, and check `get_reused_times()` before you log in again:
+
+        local ok = conn:connect(host, port, {pool = "app_user"})
+        if conn:get_reused_times() == 0 then
+            db:auth("app_user", password)
+        end
 
 
 Name
@@ -100,8 +105,13 @@ it returns a connection object.
 ###Connection objects have server wide methods.
 ------------
 
-####ok,err = conn:connect(host, port)
-Default host and port is: `localhost` and `27017`.
+####ok,err = conn:connect(host, port, opts)
+Default host and port is: `localhost` and `27017`. `opts` is an optional table:
+
+ - `pool`, `pool_size`, `backlog`: passed to the cosocket connection pool. Use a separate `pool` name for each database user. If you give no `pool` with `ssl`, the pool name holds the host, port, `ssl_verify` and `ssl_server_name`, so a TLS socket is only reused with the same TLS settings. If you give a `pool` name, you own it: use one pool name for one TLS setting only. A pooled TLS socket skips the handshake, so it never checks new TLS rules.
+ - `ssl`: set to `true` to use TLS. `ssl_verify` defaults to `true` and needs `lua_ssl_trusted_certificate` in `nginx.conf`. `ssl_server_name` defaults to `host`. `ssl_reused_session` is a session from an earlier call; with `ssl`, `connect` returns the new session as a second value.
+
+`conn:connect()` with no arguments uses the host, port and `opts` of the last successful call.
 
 ####ok,err = conn:set_timeout(msec)
 Sets socket connecting, reading, writing timeout value, unit is milliseconds.

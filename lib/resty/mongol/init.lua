@@ -2,7 +2,9 @@ local mod_name = (...)
 
 local _M = { _VERSION = "1.0.0" }
 
+local error = error
 local ipairs = ipairs
+local type = type
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
@@ -36,6 +38,18 @@ end
 function connmethods:getprimary ( searched )
     searched = searched or { [ self.host .. ":" .. self.port ] = true }
 
+    -- the hosts that hello names use the TLS options of the seed, but not
+    -- its pool name, which belongs to the seed
+    local discovery_opts
+    local sopts = self.opts
+    if sopts and sopts.ssl then
+        discovery_opts = {
+            ssl = true,
+            ssl_verify = sopts.ssl_verify,
+            ssl_server_name = sopts.ssl_server_name,
+        }
+    end
+
     local db = self:new_db_handle("admin")
     local r, err = db:cmd({ hello = 1 })
     if not r then
@@ -47,7 +61,7 @@ function connmethods:getprimary ( searched )
                 searched[v] = true
                 local host, port = parse_host(v)
                 local conn = new()
-                local ok, err = conn:connect(host, port)
+                local ok, err = conn:connect(host, port, discovery_opts)
                 if not ok then
                     return nil, "connect failed: "..err..v
                 end
@@ -126,9 +140,20 @@ function connmethods:get_reused_times()
     return sock:getreusedtimes()
 end
 
-function connmethods:connect(host, port)
-    self.host = host or self.host
-    self.port = port or self.port
+-- opts: pool, pool_size, backlog (for the connection pool), and ssl,
+-- ssl_verify (default true), ssl_server_name (default host) and
+-- ssl_reused_session (for the TLS handshake). A call with no arguments
+-- reuses the host, port and opts of the last successful connect.
+function connmethods:connect(host, port, opts)
+    if opts ~= nil and type(opts) ~= "table" then
+        error("bad argument #3 to 'connect' (table expected)", 2)
+    end
+    if host == nil and port == nil and opts == nil then
+        opts = self.opts
+    end
+    host = host or self.host
+    port = port or self.port
+
     local sock = self.sock
     if not sock or self.broken then
         sock = socket()
@@ -139,7 +164,52 @@ function connmethods:connect(host, port)
         self.sock = sock
     end
 
-    return sock:connect(self.host, self.port)
+    -- A TLS socket that goes back to the pool is already past its
+    -- handshake, so a later connect with other TLS rules would skip them.
+    -- Without a pool name from the caller, the pool name holds the TLS
+    -- settings.
+    -- The prefixes "plain:", "tls:" and "user:" keep the three kinds of
+    -- names apart, so that a name can never equal another kind, not even
+    -- the cosocket default "host:port".
+    local pool
+    if opts and opts.pool then
+        pool = "user:" .. opts.pool
+    elseif opts and opts.ssl then
+        pool = "tls:" .. host .. ":" .. port .. ":"
+               .. (opts.ssl_verify == false and "noverify" or "verify") .. ":"
+               .. (opts.ssl_server_name or host)
+    else
+        pool = "plain:" .. host .. ":" .. port
+    end
+
+    local ok, err = sock:connect(host, port, {
+        pool = pool,
+        pool_size = opts and opts.pool_size,
+        backlog = opts and opts.backlog,
+    })
+    if not ok then
+        return nil, err
+    end
+
+    local session
+    if opts and opts.ssl then
+        local verify = opts.ssl_verify
+        if verify == nil then
+            verify = true
+        end
+        session, err = sock:sslhandshake(opts.ssl_reused_session,
+                                         opts.ssl_server_name or host, verify)
+        if not session then
+            sock:close()
+            return nil, err
+        end
+    end
+
+    self.host, self.port, self.opts = host, port, opts
+    if session then
+        return ok, session
+    end
+    return ok
 end
 
 function connmethods:close()
