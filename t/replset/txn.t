@@ -629,3 +629,62 @@ true
 2
 --- no_error_log
 [error]
+
+
+=== TEST 15: keepalive waits for every session transaction to finish
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            db:cmd({drop = "txn_multiple"})
+            assert(db:cmd({create = "txn_multiple"}))
+            local col = db:get_col("txn_multiple")
+            local function blocked()
+                local ok, err = conn:set_keepalive(10000, 5)
+                ngx.say(ok == nil and err == "transaction in progress")
+                -- Recover the socket on the old implementation so cleanup still runs.
+                if ok then assert(conn:connect()) end
+            end
+            for i, ending in ipairs({"commit_transaction", "abort_transaction"}) do
+                local a, b = assert(conn:start_session()), assert(conn:start_session())
+                assert(a:start_transaction())
+                assert(b:start_transaction())
+                assert(col:insert({{a = i}}, nil, true, {session = a}))
+                assert(col:insert({{b = i}}, nil, true, {session = b}))
+                assert(b[ending](b))
+                local ok, err = b[ending](b)
+                ngx.say(ok == nil and err == "no transaction in progress")
+                blocked()
+                assert(b:start_transaction())
+                assert(a:abort_transaction())
+                blocked()
+                ok, err = a:abort_transaction()
+                ngx.say(ok == nil and err == "no transaction in progress")
+                blocked()
+                -- Empty transaction cleanup must also release exactly its own entry.
+                assert(b[ending](b))
+                ngx.say(conn:set_keepalive(10000, 5) ~= nil)
+                assert(conn:connect())
+            end
+            conn:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+--- no_error_log
+[error]
