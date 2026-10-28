@@ -192,3 +192,45 @@ secondary false true
 secondaryPreferred false true
 --- no_error_log
 [error]
+
+
+
+=== TEST 6: raw getmore and kill_cursors follow query
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?readPreference=secondary"))
+            local db = conn:new_db_handle("test")
+            local col = db:get_col("rs_fix")
+            db:cmd({drop = "rs_fix"})
+            local docs = {}
+            for i = 1, 25 do docs[i] = {n = i} end
+            -- on every member before the test reads
+            assert(db:cmd(bson.ordered{{"insert", "rs_fix"}, {"documents", docs}, {"writeConcern", {w = 3}}}))
+            
+            local id, r, flags = col:query({}, nil, 0, 10)
+            ngx.say(#r, " ", flags.QueryFailure)
+            local id2, r2, flags2 = col:getmore(id, 10, 10)
+            ngx.say(#r2, " ", flags2.CursorNotFound)
+            local id3 = col:query({}, nil, 0, 5)
+            ngx.say(col:kill_cursors({id3}))
+            local _, _, flags3 = col:getmore(id3, 5)
+            ngx.say(flags3.CursorNotFound)
+        }
+    }
+--- request
+GET /t
+--- response_body
+10 false
+10 false
+true
+true
+--- no_error_log
+[error]
