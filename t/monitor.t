@@ -766,3 +766,45 @@ GET /t
 visible
 --- no_error_log
 [error]
+
+
+=== TEST 20: redaction survives extra fields changing during receive
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local uint = require("resty.mongol.ll").num_to_le_uint
+            for _, kind in ipairs({"succeeded", "failed"}) do
+                local extra = {{"speculativeAuthenticate", {secret = "login"}}}
+                local reply = {ok = kind == "succeeded" and 1 or 0, errmsg = "login secret"}
+                local body = string.rep("\0", 5) .. bson.to_bson(reply)
+                local header = uint(16 + #body) .. uint(1) .. uint(0) .. uint(2013)
+                local reads = 0
+                local conn = {host = "test", port = 27017, sock = {
+                    send = function() return true end,
+                    receive = function()
+                        -- The request has already been sent with the login field.
+                        extra[1] = nil
+                        reads = reads + 1
+                        return reads == 1 and header or body
+                    end,
+                }}
+                local event
+                mongo.set_monitor({[kind] = function(ev) event = ev end})
+                wire.command(conn, "admin", {hello = 1}, nil, extra)
+                mongo.set_monitor(nil)
+                ngx.say(kind, " ", event ~= nil, " ", event and
+                        (kind == "succeeded" and next(event.reply) == nil or event.error == "redacted"))
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+succeeded true true
+failed true true
+--- no_error_log
+[error]
