@@ -203,10 +203,16 @@ function connmethods:connect(host, port, opts)
     local reconnect = host == nil and port == nil and opts == nil
     if reconnect then
         opts = self.opts
-    elseif self.read_conn then
-        -- another address: the connection to the secondary is not valid
-        self.read_conn:close()
-        self.read_conn = nil
+    else
+        -- An explicit connect replaces a connect_uri connection: all the
+        -- state of the string goes (the connection to the secondary and
+        -- how to log in). Only a reconnect with no arguments keeps it, so a
+        -- login never follows the connection to another address or pool.
+        if self.read_conn then
+            self.read_conn:close()
+            self.read_conn = nil
+        end
+        self.relogin = nil
     end
     host = host or self.host
     port = port or self.port
