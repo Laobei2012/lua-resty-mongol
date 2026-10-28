@@ -230,9 +230,25 @@ end
 
 -- sends cmd to dbname and reads the reply;
 -- returns reply | nil, err, reply
-function _M.command ( conn , dbname , cmd , sequences , extra )
+-- adds the fields of a session (lsid, and for a transaction txnNumber,
+-- autocommit and startTransaction) after the other extra fields
+local function with_session ( session , extra )
+    local list = { }
+    for i = 1 , #( extra or { } ) do
+        list [ i ] = extra [ i ]
+    end
+    for _ , kv in ipairs ( session:fields ( ) ) do
+        list [ #list + 1 ] = kv
+    end
+    return list
+end
+
+function _M.command ( conn , dbname , cmd , sequences , extra , session )
     if conn.read_preference then
         extra = with_read_preference ( conn , extra )
+    end
+    if session then
+        extra = with_session ( session , extra )
     end
     -- one check when no monitor is set
     local mon = monitor.current
@@ -240,6 +256,9 @@ function _M.command ( conn , dbname , cmd , sequences , extra )
         encode_msg ( dbname , cmd , sequences , 0 , extra , mon ~= nil )
     if not msg then
         return nil , err
+    end
+    if session then
+        session:mark_sent ( )
     end
     local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
                                            seqinfo , request_id )
@@ -268,15 +287,21 @@ function _M.command ( conn , dbname , cmd , sequences , extra )
 end
 
 -- sends cmd with moreToCome and reads no reply; for w = 0 writes
-function _M.send_only ( conn , dbname , cmd , sequences , extra )
+function _M.send_only ( conn , dbname , cmd , sequences , extra , session )
     if conn.read_preference then
         extra = with_read_preference ( conn , extra )
+    end
+    if session then
+        extra = with_session ( session , extra )
     end
     local mon = monitor.current
     local msg , err , request_id , cmd_bytes , seqinfo =
         encode_msg ( dbname , cmd , sequences , MORE_TO_COME , extra , mon ~= nil )
     if not msg then
         return nil , err
+    end
+    if session then
+        session:mark_sent ( )
     end
     local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
                                            seqinfo , request_id )

@@ -18,6 +18,7 @@ local dbmt = require ( mod_name .. ".dbmt" )
 local bson = require ( mod_name .. ".bson" )
 local monitor = require ( mod_name .. ".monitor" )
 local uri = require ( mod_name .. ".uri" )
+local session = require ( mod_name .. ".session" )
 
 -- sets the command monitor of this worker (nil removes it); see monitor.lua
 function _M.set_monitor(m)
@@ -39,6 +40,11 @@ end
 _M.int32 = bson.int32
 _M.int64 = bson.int64
 _M.double = bson.double
+
+-- a logical session on this connection (the primary connection)
+function connmethods:start_session()
+    return session.new(self)
+end
 
 function connmethods:ismaster()
     local db = self:new_db_handle("admin")
@@ -148,6 +154,9 @@ function connmethods:set_keepalive(...)
     end
     if self.broken then
         return nil, "closed"
+    end
+    if self.active_session then
+        return nil, "transaction in progress"
     end
 
     return sock:setkeepalive(...)
