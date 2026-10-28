@@ -55,16 +55,18 @@ true true
             local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?readPreference=secondaryPreferred"))
             ngx.say((conn.read_conn:ismaster()))
             local col = conn:new_db_handle("test"):get_col("rs_t")
+            -- the read goes to the secondary; it may not see a document yet
+            local _, err = col:find_one({})
+            ngx.say(err)
             ngx.say(col:insert({{a = 1}}, nil, true))
-            ngx.say(col:find_one({}) ~= nil or "none")
         }
     }
 --- request
 GET /t
 --- response_body
 false
+nil
 0
-true
 --- no_error_log
 [error]
 
@@ -126,7 +128,8 @@ GET /t
             local seen = {}
             wire.command = function(c, dbname, cmd, seq, extra)
                 local name = cmd[1] and cmd[1][1] or next(cmd)
-                local pref = extra and extra[1] and extra[1][1] == "$readPreference" and extra[1][2].mode or "-"
+                -- wire.command adds $readPreference for a connection with read_preference
+    local pref = c.read_preference or "-"
                 seen[#seen + 1] = name .. ":" .. (c == conn.read_conn and "read" or "primary") .. ":" .. pref
                 return real(c, dbname, cmd, seq, extra)
             end
