@@ -102,6 +102,43 @@ it returns a connection object.
 		mongol = require "resty.mongol"
 		conn = mongol:new() -- return a conntion object
 
+Command monitoring
+======
+
+`mongol.set_monitor(m)` sets a monitor for the current worker. `m` is a table with the optional functions `started(ev)`, `succeeded(ev)` and `failed(ev)`, or `nil` to remove the monitor. The driver sends no metrics itself. Connect the monitor to your own metrics or logs.
+
+Every event has `command_name`, `db`, `request_id`, `host` and `port`. `started` adds `command`, a copy of the command with the document sequences merged in (for example `documents` for `insert`). `succeeded` adds `duration_ms` and `reply`. `failed` adds `duration_ms` and `error`.
+
+ - The hooks run in the request. They must not block, so they must not use cosockets for slow work.
+ - A hook that raises an error is logged and does not change the result of the command.
+ - `succeeded` means that the command succeeded, not that the write succeeded. A reply with `writeErrors` is a succeeded command. For an unsafe write (`safe` false), `succeeded` only means that the driver sent the message. To count write errors, read `ev.reply.writeErrors` and `ev.reply.writeConcernError`.
+ - Login commands (`authenticate`, `saslStart`, `saslContinue`, `getnonce`), `createUser`, `updateUser`, and a `hello` with `speculativeAuthenticate` have an empty `command` and `reply`, and `failed.error` is `"redacted"`.
+ - Without a monitor, the cost is one check for each command.
+
+An example with [nginx-lua-prometheus](https://github.com/knyar/nginx-lua-prometheus), set in `init_worker_by_lua_block`:
+
+        prometheus = require("prometheus").init("prometheus_metrics")
+        local commands = prometheus:counter("mongo_commands_total",
+                                            "MongoDB commands", {"command", "result"})
+        local write_errors = prometheus:counter("mongo_write_errors_total",
+                                                "Write errors", {"command"})
+        local latency = prometheus:histogram("mongo_command_seconds",
+                                             "MongoDB command time", {"command"})
+
+        require("resty.mongol").set_monitor({
+            succeeded = function(ev)
+                commands:inc(1, {ev.command_name, "ok"})
+                latency:observe(ev.duration_ms / 1000, {ev.command_name})
+                if ev.reply.writeErrors then
+                    write_errors:inc(#ev.reply.writeErrors, {ev.command_name})
+                end
+            end,
+            failed = function(ev)
+                commands:inc(1, {ev.command_name, "error"})
+                latency:observe(ev.duration_ms / 1000, {ev.command_name})
+            end,
+        })
+
 ###Connection objects have server wide methods.
 ------------
 

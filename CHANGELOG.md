@@ -2,6 +2,20 @@
 
 ## Unreleased (Phase 5)
 
+### Command monitoring
+
+- `mongol.set_monitor(m)` is new. `m` has the optional functions
+  `started(ev)`, `succeeded(ev)` and `failed(ev)`, as in the MongoDB
+  Command Logging and Monitoring specification. The driver sends no
+  metrics itself. The `Readme.md` has a Prometheus example.
+- Login commands, `createUser`, `updateUser` and a `hello` with
+  `speculativeAuthenticate` are redacted: `command` and `reply` are empty
+  and `failed.error` is `"redacted"`.
+- A hook that raises an error is logged and does not change the result of
+  the command. Without a monitor, each command does one check.
+- `succeeded` means that the command succeeded, not that the write
+  succeeded. A reply with `writeErrors` is a succeeded command.
+
 ### Aggregation
 
 - `col:aggregate(pipeline, options)` is new (issue #55). It returns a cursor

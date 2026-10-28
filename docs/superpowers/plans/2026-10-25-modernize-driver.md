@@ -536,7 +536,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - For a `wire.send_only` write, `succeeded` fires after the send, with `reply = {ok = 1}`.
   - `duration_ms` comes from `ngx.now()` after `ngx.update_time()`.
 
-- [ ] **Step 1: Write failing tests** in `t/monitor.t`:
+- [x] **Step 1: Write failing tests** in `t/monitor.t`:
   - `TEST: started and succeeded`. A monitor that appends to a list, then `find_one({})`, records `started` and `succeeded`, both with `command_name == "find"` and the same `request_id`.
   - `TEST: failed`. `db:cmd({nosuchcmd = 1})` records `failed`, and `error` contains `no such command`.
   - `TEST: hook error`. A `started` hook that raises an error does not stop `find_one`, and the error log contains the hook error.
@@ -548,10 +548,10 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `TEST: monitor removed in flight`. A `started` hook calls `set_monitor(nil)`. The same command still records its `succeeded` event.
   - `TEST: failure on closed socket`. Use `--- tcp_listen: 12345` and an empty `--- tcp_reply:`, so that the fake server closes at once. One `started` and one `failed` event are recorded.
   - `TEST: remove monitor`. After `set_monitor(nil)`, `find_one` records nothing.
-- [ ] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example, a `nginx-lua-prometheus` counter and histogram. Add the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
-- [ ] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(wire): command monitoring hook`.
+- [x] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
+- [x] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example, a `nginx-lua-prometheus` counter and histogram. Add the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
+- [x] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(wire): command monitoring hook`.
 
 ### Task 12: Replica set CI, primary selection, URI
 
