@@ -360,11 +360,11 @@ true true
 --- config
     location /t {
         content_by_lua_block {
-                        local conn = require("resty.mongol"):new()
+            local conn = require("resty.mongol"):new()
             conn:set_timeout(1000)
             conn:connect("127.0.0.1", 12345)
-            local ok, err = pcall(conn.shutdown, conn)
-            ngx.say(ok)
+            local ok, r = pcall(conn.shutdown, conn)
+            ngx.say(ok, " ", r)
         }
     }
 --- tcp_listen: 12345
@@ -372,6 +372,6 @@ true true
 --- request
 GET /t
 --- response_body
-true
+true true
 --- no_error_log
 [error]
