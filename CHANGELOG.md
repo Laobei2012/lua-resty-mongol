@@ -6,11 +6,16 @@
 
 - `db:auth(user, password)` asks the server for the mechanism of the user
   (`hello` with `saslSupportedMechs`). It uses SCRAM-SHA-256 if the server
-  lists it, and SCRAM-SHA-1 if not. It still returns `1`, or `nil, err`.
+  lists it, or if the list is missing or empty (for example, for a user
+  that does not exist). It uses SCRAM-SHA-1 if the list has only that
+  mechanism. It still returns `1`, or `nil, err`.
 - SCRAM-SHA-256 needs an ASCII password. A password with other characters
   returns `nil, "non-ASCII password not supported"`, because full SASLprep
   is not implemented.
 - `db:auth_scram_sha1(user, password)` keeps its name and uses SCRAM-SHA-1.
+- A bad server reply (a wrong nonce or signature, a bad payload or salt)
+  returns `nil, err` and closes the socket, so it never goes back to the
+  pool.
 - The client checks the server nonce and the server signature. A wrong
   value returns `nil, "server nonce mismatch"` or `nil, "server signature
   mismatch"`. The old SCRAM-SHA-1 code compared a boolean with a string,
