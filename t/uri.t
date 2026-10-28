@@ -249,6 +249,9 @@ connect() failed
                     return v
                 end})
             end
+            -- the driver reads ngx.socket.tcp when it loads, so load it again
+            package.loaded["resty.mongol"] = nil
+            mongo = require "resty.mongol"
             
             local function pool_of(u)
                 pools = {}
@@ -288,8 +291,8 @@ GET /t
 true true true
 true true
 true
---- no_error_log
-[error]
+--- error_log
+peer closed connection in SSL handshake
 
 
 
@@ -323,6 +326,9 @@ true
                     return v
                 end})
             end
+            -- the driver reads ngx.socket.tcp when it loads, so load it again
+            package.loaded["resty.mongol"] = nil
+            mongo = require "resty.mongol"
             
             local function show(str)
                 local h, err = uri.parse_host(str)
@@ -403,7 +409,7 @@ GET /t
 "mongodb://%2Ftmp%2Fmongodb-27017.sock" nil unix domain sockets are not supported
 "mongodb://%2Ftmp%2Fmongodb-27017.sock/db" nil unix domain sockets are not supported
 "mongodb:///tmp/mongodb-27017.sock" nil no host
-"mongodb://h1,/tmp/x.sock" nil unix domain sockets are not supported
+"mongodb://h1,/tmp/x.sock" nil invalid host
 "mongodb://bad host" nil invalid host
 "mongodb://h!x" nil invalid host
 --- no_error_log
