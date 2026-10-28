@@ -335,6 +335,6 @@ nil string
 --- request
 GET /t
 --- response_body eval
-"user:$ENV{TEST_NGINX_MONGO_PORT}\nplain:$ENV{TEST_NGINX_MONGO_HOST}:$ENV{TEST_NGINX_MONGO_PORT}\ntrue\n"
+"user:$ENV{TEST_NGINX_MONGO_PORT}\nplain:" . length($ENV{TEST_NGINX_MONGO_HOST}) . ":$ENV{TEST_NGINX_MONGO_HOST}" . length($ENV{TEST_NGINX_MONGO_PORT}) . ":$ENV{TEST_NGINX_MONGO_PORT}\ntrue\n"
 --- no_error_log
 [crit]

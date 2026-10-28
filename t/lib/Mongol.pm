@@ -11,6 +11,9 @@ $ENV{TEST_NGINX_MONGO_HOST} ||= '127.0.0.1';
 $ENV{TEST_NGINX_MONGO_PORT} ||= 27017;
 $ENV{TEST_NGINX_MONGO_USER} ||= 'admin';
 $ENV{TEST_NGINX_MONGO_PASS} ||= 'admin';
+# a secondary of the replica set, for t/replset
+$ENV{TEST_NGINX_MONGO_SECONDARY_HOST} ||= '127.0.0.1';
+$ENV{TEST_NGINX_MONGO_SECONDARY_PORT} ||= 27018;
 
 my $pwd = cwd();
 $ENV{TEST_NGINX_ROOT} ||= $pwd;

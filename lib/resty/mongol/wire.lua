@@ -18,6 +18,7 @@ local le_uint_to_num = ll.le_uint_to_num
 local le_int_to_num = ll.le_int_to_num
 
 local bson = require ( mod_name .. ".bson" )
+local monitor = require ( mod_name .. ".monitor" )
 local to_bson = bson.to_bson
 local bson_append = bson.append
 local bson_decode = bson.decode
@@ -49,12 +50,17 @@ local function fail ( conn , err )
 end
 
 -- builds the OP_MSG bytes; extra is a list of {key, value} pairs that
--- go after the fields of cmd, after $db
-local function encode_msg ( dbname , cmd , sequences , flags , extra )
+-- go after the fields of cmd, after $db. Returns the message, nil, the
+-- request id, the encoded command (without $db) and, if want_info is
+-- true, the encoded documents of each sequence: {{identifier, {bytes}}}.
+-- The monitor reads these, so that it sees what goes on the wire.
+local function encode_msg ( dbname , cmd , sequences , flags , extra , want_info )
     local body , err = to_bson ( cmd )
     if not body then
         return nil , err
     end
+    local cmd_bytes = body
+    local seqinfo = want_info and { } or nil
     local fields = { { "$db" , dbname } }
     if extra then
         for i = 1 , #extra do
@@ -81,6 +87,9 @@ local function encode_msg ( dbname , cmd , sequences , flags , extra )
                 end
                 docs [ i ] = d
             end
+            if seqinfo then
+                seqinfo [ #seqinfo + 1 ] = { seq [ 1 ] , docs }
+            end
             local payload = seq [ 1 ] .. "\0" .. t_concat ( docs )
             parts [ #parts + 1 ] = "\1"
             parts [ #parts + 1 ] = num_to_le_uint ( #payload + 4 )
@@ -94,7 +103,8 @@ local function encode_msg ( dbname , cmd , sequences , flags , extra )
     end
     request_id = ( request_id + 1 ) % 2147483647
     return num_to_le_uint ( total ) .. num_to_le_uint ( request_id )
-        .. "\0\0\0\0" .. num_to_le_uint ( OP_MSG ) .. msg , nil , request_id
+        .. "\0\0\0\0" .. num_to_le_uint ( OP_MSG ) .. msg , nil , request_id ,
+        cmd_bytes , seqinfo
 end
 
 -- parses the bytes after the 16-byte header; returns the body document
@@ -205,21 +215,63 @@ local function send ( conn , msg )
     return true
 end
 
+-- A connection to a secondary has read_preference set; every command on it
+-- carries $readPreference, because a secondary refuses a read without it.
+-- The commands on the primary connection never carry it.
+local function with_read_preference ( conn , extra )
+    local list = { { "$readPreference" , { mode = conn.read_preference } } }
+    if extra then
+        for i = 1 , #extra do
+            list [ #list + 1 ] = extra [ i ]
+        end
+    end
+    return list
+end
+
 -- sends cmd to dbname and reads the reply;
 -- returns reply | nil, err, reply
-function _M.command ( conn , dbname , cmd , sequences , extra )
-    local msg , err = encode_msg ( dbname , cmd , sequences , 0 , extra )
+-- adds the fields of a session (lsid, and for a transaction txnNumber,
+-- autocommit and startTransaction) after the other extra fields
+local function with_session ( session , extra )
+    local list = { }
+    for i = 1 , #( extra or { } ) do
+        list [ i ] = extra [ i ]
+    end
+    for _ , kv in ipairs ( session:fields ( ) ) do
+        list [ #list + 1 ] = kv
+    end
+    return list
+end
+
+function _M.command ( conn , dbname , cmd , sequences , extra , session )
+    if conn.read_preference then
+        extra = with_read_preference ( conn , extra )
+    end
+    if session then
+        extra = with_session ( session , extra )
+    end
+    -- one check when no monitor is set
+    local mon = monitor.current
+    local msg , err , request_id , cmd_bytes , seqinfo =
+        encode_msg ( dbname , cmd , sequences , 0 , extra , mon ~= nil )
     if not msg then
         return nil , err
     end
+    local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
+                                           seqinfo , request_id , extra )
     local ok
     ok , err = send ( conn , msg )
     if not ok then
+        if state then monitor.failed ( state , err ) end
         return nil , err
+    end
+    if session then
+        session:mark_sent ( )
     end
     local reply
     reply , err = receive ( conn )
     if not reply then
+        if state then monitor.failed ( state , err ) end
         return nil , err
     end
     if reply.ok ~= 1 then
@@ -227,19 +279,41 @@ function _M.command ( conn , dbname , cmd , sequences , extra )
         if type ( errmsg ) ~= "string" then
             errmsg = "command failed"
         end
+        if state then monitor.failed ( state , errmsg ) end
         return nil , errmsg , reply
     end
+    if state then monitor.succeeded ( state , reply ) end
     return reply
 end
 
 -- sends cmd with moreToCome and reads no reply; for w = 0 writes
-function _M.send_only ( conn , dbname , cmd , sequences , extra )
-    local msg , err = encode_msg ( dbname , cmd , sequences , MORE_TO_COME ,
-                                   extra )
+function _M.send_only ( conn , dbname , cmd , sequences , extra , session )
+    if conn.read_preference then
+        extra = with_read_preference ( conn , extra )
+    end
+    if session then
+        extra = with_session ( session , extra )
+    end
+    local mon = monitor.current
+    local msg , err , request_id , cmd_bytes , seqinfo =
+        encode_msg ( dbname , cmd , sequences , MORE_TO_COME , extra , mon ~= nil )
     if not msg then
         return nil , err
     end
-    return send ( conn , msg )
+    local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
+                                           seqinfo , request_id , extra )
+    local ok
+    ok , err = send ( conn , msg )
+    if not ok then
+        if state then monitor.failed ( state , err ) end
+        return nil , err
+    end
+    if session then
+        session:mark_sent ( )
+    end
+    -- the server sends no reply: succeeded means that the driver sent it
+    if state then monitor.succeeded ( state , { ok = 1 } ) end
+    return true
 end
 
 _M.fail = fail

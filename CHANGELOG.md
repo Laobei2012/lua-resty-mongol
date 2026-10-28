@@ -1,5 +1,165 @@
 # Changelog
 
+## Unreleased (Phase 5)
+
+### Sessions and transactions
+
+- The README clarifies session cleanup: the driver sends no `endSessions`;
+  unused server sessions expire according to the server's logical session
+  timeout.
+- `conn:set_keepalive()` rejects pooling until every session's open
+  transaction finishes. Previously only the last session was tracked, so
+  finishing its transaction could pool a socket while another remained open.
+- Non-table collection options raise `bad argument` before I/O. Previously
+  some values caused an indexing error or were silently accepted, hiding
+  caller mistakes in the optional session argument.
+- A failed first send keeps the transaction's `startTransaction` field for
+  a retry after reconnect. Previously the send failure consumed it, so the
+  server rejected the retry as an operation in a transaction it never saw.
+- `conn:start_session()` is new. It returns a session with an `lsid`. Pass it
+  as `opts.session` (the last argument) of `col:insert`, `col:update`,
+  `col:delete`, `col:query`, `col:getmore`, `col:kill_cursors`, `col:find`,
+  `col:find_one` and `col:aggregate`. A bad session raises `bad argument`,
+  also a session from another connection.
+- `session:start_transaction()`, `session:commit_transaction()` and
+  `session:abort_transaction()` are new (they need a replica set). They
+  return `true`, or `nil, err` (commit and abort also return the reply as a
+  third value). A transaction runs on the primary connection only: it
+  ignores `conn.read_conn` and the read preference.
+- Inside a transaction every write is acknowledged, whatever `safe` says, and
+  returns the value of a safe write. The operations carry no write concern;
+  only commit and abort do. A cursor keeps the session, so each `getMore` has
+  the same `lsid` and `txnNumber`.
+- Outside a transaction a write with a session and a false `safe` returns
+  `nil, "unacknowledged write with a session"` and sends nothing.
+- A commit that fails with a socket error, a timeout, error 50, a
+  `RetryableWriteError` label, or a write concern error other than 79 and 100
+  gets the label `UnknownTransactionCommitResult` in the reply. Commit again
+  with `session:commit_transaction()`: it sends the same `txnNumber` with
+  `w = "majority"`. After a socket error, call `conn:connect()` with no
+  arguments (and `db:auth()` if you use a login) before you commit again.
+- `session:abort_transaction()` ends the transaction whatever the result, so
+  the session can start a new one.
+- `conn:set_keepalive()` returns `nil, "transaction in progress"` while a
+  transaction is open.
+- `col:count` is not part of a transaction. It reads collection metadata and
+  can count the documents of an open transaction; use an aggregation.
+
+### GridFS
+
+- `gridfs_file:read(size, offset)` honors the offset inside a chunk. Before,
+  it started at the right chunk but took the bytes from the start of it.
+  `size` defaults to the rest of the file and is cut at the end of the
+  file. Reading an empty file returns `""`.
+- `gridfs:get(fh, fields)` returns `true` (it returned the file handle), or
+  `nil, err`.
+- `gridfs_file:write(buf, offset, size)` sets `file_size` and `length` when
+  the file gets longer, so a second write at the new end works. It returns
+  the number of bytes written. Existing chunks are updated and the bytes
+  around the written range stay. New chunks are inserted in batches that fit
+  the server limits (issues #35 and #36).
+- `gridfs_file:update_md5()` reads the chunks 0 to ceil(length / chunk size)
+  - 1. It read one chunk too many when the length is a multiple of the
+  chunk size. `write` still does not call it; the `md5` field is
+  deprecated in the GridFS specification (issue #37 is out of scope).
+- The files document stores `chunkSize` as int32 and `length` as int64
+  (issue #35). The chunk documents store `n` as int32 and `data` as binary
+  subtype 0.
+- `gridfs:new(meta)` and `gridfs:insert(fh, meta, safe)` do not add `md5`,
+  `uploadDate` and `length` to your `meta` table any more. They still set
+  `_id`, `filename` and `chunkSize` in it. Reason: those three values belong
+  to one stored file. If you reuse a `meta` table for a second file, the old
+  `length` and `md5` of the first file would go with it. The driver builds the
+  files document from a copy of the table.
+- The chunks collection gets the unique index `{files_id: 1, n: 1}` from
+  `new`, `insert` and `write` (once for each bucket object). The stored
+  `length` only grows, an update that matches no chunk or file is an error,
+  and two writers on the same bytes are last writer wins.
+- `read` and `update_md5` check that chunks exist, hold binary data of
+  subtype 0, and have the right length. `read` returns `nil, err` for a bad
+  chunk, and `update_md5` returns `false, err`. `write` checks the binary
+  type and subtype of existing chunks and returns `nil, err` for bad data.
+- `new` and `insert` raise `bad argument` for a `chunkSize` that is not a
+  positive whole number. `write` raises `bad argument` for arguments of the
+  wrong type and returns `nil, "invalid size"` for a negative size.
+- A new file has no `md5` field (it was `0`), and `write` removes the `md5`.
+  Call `update_md5()` to store a digest.
+- A failed query makes `write`, `remove`, `find_one` and `get` return
+  `nil, err`. `remove` returned 0 before.
+
+### Connection strings and replica sets
+
+- `mongol.connect_uri(str)` is new (issues #10 and #22). It parses a
+  `mongodb://` string, tries the seeds and the members that `hello` names,
+  and returns a connection to the primary, or `nil, err`. Writes and
+  `db:cmd` always use the primary. A user in the string logs in on
+  `authSource` (the option, else the database of the string, else `admin`).
+  `mongodb+srv://` is not supported. The `replicaSet` option is read but
+  not checked.
+- `readPreference` applies to reads only (`col:query`, `col:find`,
+  `col:find_one`, `col:count` and `col:aggregate`):
+  - `primary` (the default) and `primaryPreferred`: the primary serves the
+    reads. If no primary answers, `connect_uri` returns `nil, err`.
+  - `secondary`: a second connection, `conn.read_conn`, goes to a member
+    that is a secondary. If there is none, `connect_uri` returns `nil, err`.
+  - `secondaryPreferred`: the same, but the primary serves the reads if
+    there is no secondary.
+  - Any other value returns `nil, err`. Every command on `conn.read_conn`
+    carries `$readPreference`, and the commands on the primary never do.
+  - A secondary can be a little late, so a read right after a write can
+    miss the document.
+  - A cursor keeps the connection of its first query for `getMore` and
+    `killCursors`. `conn:close()` and `conn:set_keepalive()` also act on
+    `conn.read_conn`.
+- `uri.parse(str)` (module `resty.mongol.uri`) returns `{hosts, db, user,
+  password, options}` or `nil, err`. It decodes percent-encoding in the user
+  name, the password and the database. Unescaped `@` or `:` in the user
+  information, a bad port or a bad `tls` value is an error.
+- With `tls=true` the handshake verifies the certificate against the host
+  name. ngx_lua does not match a certificate name against an IP address, so
+  use host names in the string when you use `tls=true`.
+- `conn:connect()` with no arguments reconnects `conn.read_conn` too, keeps
+  its read preference, and logs in again for a `connect_uri` connection with
+  a user. `connect(host, port)` with an address closes and drops `read_conn`.
+- A raw `col:getmore` and `col:kill_cursors` use the same connection as
+  `col:query` (the secondary of a read preference).
+- A repeated option in the string: the last one wins. A unix domain socket,
+  an IPv6 literal that is not one, and a bad host are errors.
+- The pool names that the driver makes (`plain:`, `tls:` and for a user in a
+  string) have the length of each part in front of it, so two different
+  settings never share a pool. `uri.parse_host` is the one parser for the
+  string and for the members that `hello` names (`[::1]:27017` works).
+- The `started` event of the monitor holds the fields that the driver adds
+  after `$db`, such as `$readPreference`.
+- `getprimary` and `connect_uri` now give the port of a member as a number.
+  Before, `getprimary` gave a string, or an empty string for a member
+  without a port.
+
+### Command monitoring
+
+- `mongol.set_monitor(m)` is new. `m` has the optional functions
+  `started(ev)`, `succeeded(ev)` and `failed(ev)`, as in the MongoDB
+  Command Logging and Monitoring specification. The driver sends no
+  metrics itself. The `Readme.md` has a Prometheus example.
+- Login commands, `createUser`, `updateUser` and a `hello` with
+  `speculativeAuthenticate` are redacted: `command` and `reply` are empty
+  and `failed.error` is `"redacted"`.
+- A hook that raises an error is logged and does not change the result of
+  the command. Without a monitor, each command does one check.
+- `succeeded` means that the command succeeded, not that the write
+  succeeded. A reply with `writeErrors` is a succeeded command.
+- The `command` of an event is decoded from the bytes that the driver sent, so
+  it has the keys that went on the wire. `bson.null` and empty arrays keep
+  their meaning in events, and a hook cannot change the tables of the caller.
+
+### Aggregation
+
+- `col:aggregate(pipeline, options)` is new (issue #55). It returns a cursor
+  over the results, or `nil, err`. The cursor has the same methods as the
+  cursor of `col:find` (`next`, `pairs`, `close`). `options.batch_size`
+  sets the batch size of each fetch and defaults to 100. A `pipeline` that
+  is not a table raises `bad argument`.
+
 ## Unreleased (Phase 4)
 
 ### BSON types

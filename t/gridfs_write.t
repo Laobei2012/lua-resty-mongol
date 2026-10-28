@@ -789,3 +789,709 @@ nil
 invalid offset
 --- no_error_log
 [error]
+
+
+
+=== TEST 17: write twice past end
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            local gf = assert(fs:new({chunkSize = 4, filename = "t13"}))
+            ngx.say(gf:write("abc", 0))
+            ngx.say(gf:write("d", 3))
+            ngx.say(gf:read(), " ", gf.file_size)
+            local again = fs:find_one({filename = "t13"})
+            ngx.say(again:read(), " ", again.file_size)
+        }
+    }
+--- request
+GET /t
+--- response_body
+3
+1
+abcd 4
+abcd 4
+--- no_error_log
+[error]
+
+
+
+=== TEST 18: md5 exact multiple
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "m"}, true))
+            local gf = fs:find_one({filename = "m"})
+            ngx.say(gf:update_md5())
+            local doc = db:get_col("fs13.files"):find_one({filename = "m"})
+            ngx.say(doc.md5 == ngx.md5("abcdefgh"), " ", gf.file_md5 == doc.md5)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true
+true true
+--- no_error_log
+[error]
+
+
+
+=== TEST 19: large file split
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            local old = wire.limits.max_message_size
+            wire.limits.max_message_size = 20000
+            local data = string.rep("0123456789", 10000)
+            local gf = assert(fs:new({chunkSize = 4096, filename = "big"}))
+            ngx.say(gf:write(data, 0))
+            wire.limits.max_message_size = old
+            ngx.say(gf:read() == data, " ", db:get_col("fs13.chunks"):count({files_id = gf.files_id}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+100000
+true 25
+--- no_error_log
+[error]
+
+
+
+=== TEST 20: stored types
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "ty"}, true))
+            local f = db:get_col("fs13.files"):find_one({filename = "ty"})
+            ngx.say(db:get_col("fs13.files"):count({_id = f._id, chunkSize = {["$type"] = "int"}, length = {["$type"] = "long"}}))
+            ngx.say(db:get_col("fs13.chunks"):count({files_id = f._id, n = {["$type"] = "int"}, data = {["$type"] = "binData"}}))
+            local gf = assert(fs:new({chunkSize = 4, filename = "ty2"}))
+            gf:write("abcdef", 0)
+            local f2 = db:get_col("fs13.files"):find_one({filename = "ty2"})
+            ngx.say(db:get_col("fs13.files"):count({_id = f2._id, chunkSize = {["$type"] = "int"}, length = {["$type"] = "long"}}))
+            ngx.say(db:get_col("fs13.chunks"):count({files_id = f2._id, n = {["$type"] = "int"}, data = {["$type"] = "binData"}}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+2
+1
+2
+--- no_error_log
+[error]
+
+
+
+=== TEST 21: read ranges
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            assert(fs:insert(t.string_fh("abcdefghijkl"), {chunkSize = 4, filename = "r"}, true))
+            local gf = fs:find_one({filename = "r"})
+            ngx.say(gf:read(3, 5))
+            ngx.say(gf:read(6, 2))
+            ngx.say(gf:read(100, 10))
+            ngx.say(gf:read(2, 0))
+            ngx.say(gf:read(nil, 8))
+            ngx.say(gf:read(0, 3) == "")
+            ngx.say(gf:read(4, 12))
+            ngx.say(gf:read(-1, 0))
+        }
+    }
+--- request
+GET /t
+--- response_body
+fgh
+cdefgh
+kl
+ab
+ijkl
+true
+nilinvalid offset
+nilinvalid size
+--- no_error_log
+[error]
+
+
+
+=== TEST 22: get returns true
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            assert(fs:insert(t.string_fh("abcdefghij"), {chunkSize = 4, filename = "g"}, true))
+            local out = {}
+            local fh = {write = function(self, data) out[#out + 1] = data return self end}
+            ngx.say(fs:get(fh, {filename = "g"}), " ", table.concat(out))
+            ngx.say(fs:get(fh, {filename = "nofile"}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+true abcdefghij
+nilfile not found
+--- no_error_log
+[error]
+
+
+
+=== TEST 23: overwrite keeps the bytes around it
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            db:get_col("fs13.files"):delete({}, nil, true)
+            db:get_col("fs13.chunks"):delete({}, nil, true)
+            assert(fs:insert(t.string_fh("abcdefghijkl"), {chunkSize = 4, filename = "o"}, true))
+            local gf = fs:find_one({filename = "o"})
+            ngx.say(gf:write("XYZ", 3))
+            ngx.say(gf:write("12345", 6))
+            ngx.say(gf:read(), " ", gf.file_size)
+            ngx.say(gf:write("zz", 20))
+            ngx.say(gf:write("zz", 0, 5))
+        }
+    }
+--- request
+GET /t
+--- response_body
+3
+5
+abcXYZ12345l 12
+nilinvalid offset
+nilinvalid size
+--- no_error_log
+[error]
+
+
+
+=== TEST 24: empty file and the meta table
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs13")
+            fs:remove({}, nil, true)
+            local meta = {chunkSize = 4, filename = "empty"}
+            assert(fs:insert(t.string_fh(""), meta, true))
+            ngx.say(type(meta.chunkSize), " ", meta.length, " ", meta.md5)
+            local gf = fs:find_one({filename = "empty"})
+            ngx.say(string.format("%q", gf:read()), " ", gf.file_size, " ", gf:update_md5())
+            local out = {}
+            ngx.say(fs:get({write = function(self, d) out[#out + 1] = d return self end}, {filename = "empty"}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+number nil nil
+"" 0 true
+true
+--- no_error_log
+[error]
+
+
+
+=== TEST 25: a failed query is an error, not a document
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "x"}, true))
+            local gf = fs:find_one({filename = "x"})
+            local real = wire.command
+            wire.command = function(c, d, cmd, ...)
+                if cmd[1] and cmd[1][1] == "find" then return nil, "closed" end
+                return real(c, d, cmd, ...)
+            end
+            local r, err = gf:write("zz", 0)
+            ngx.say(r, " ", err)
+            r, err = fs:remove({filename = "x"})
+            ngx.say(r, " ", err)
+            r, err = fs:find_one({filename = "x"})
+            ngx.say(r, " ", err)
+            r, err = fs:get({write = function() return true end}, {filename = "x"})
+            ngx.say(r, " ", err)
+            wire.command = real
+            -- nothing was removed or changed
+            ngx.say(db:get_col("fs14.files"):count({}), " ", fs:find_one({filename = "x"}):read())
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil closed
+nil closed
+nil closed
+nil closed
+1 abcdefgh
+--- no_error_log
+[error]
+
+
+
+=== TEST 26: the chunks index is unique
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local gf = assert(fs:new({chunkSize = 4, filename = "ix"}))
+            gf:write("abcd", 0)
+            local found
+            local cur = db:get_col("fs14.chunks"):find({})
+            local idx = db:cmd({listIndexes = "fs14.chunks"})
+            for _, i in ipairs(idx.cursor.firstBatch) do
+                if i.key.files_id == 1 and i.key.n == 1 then found = i end
+            end
+            ngx.say(found and found.unique, " ", found and found.name)
+            local chunks = db:get_col("fs14.chunks")
+            local r, err = chunks:insert({{files_id = gf.files_id, n = 0, data = bson.get_bin_data("zzzz")}}, nil, true)
+            ngx.say(r, " ", err:find("E11000", 1, true) ~= nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true files_id_1_n_1
+nil true
+--- no_error_log
+[error]
+
+
+
+=== TEST 27: length never gets shorter
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            assert(fs:insert(t.string_fh(""), {chunkSize = 4, filename = "len"}, true))
+            local a = fs:find_one({filename = "len"})
+            local b = fs:find_one({filename = "len"})
+            ngx.say(a:write("abcdefgh", 0))
+            -- b has a stale file size of 0
+            ngx.say(b:write("xy", 0))
+            local doc = db:get_col("fs14.files"):find_one({filename = "len"})
+            ngx.say(doc.length, " ", b.file_size)
+            ngx.say(fs:find_one({filename = "len"}):read())
+        }
+    }
+--- request
+GET /t
+--- response_body
+8
+2
+8 2
+xycdefgh
+--- no_error_log
+[error]
+
+
+
+=== TEST 28: an update that matches no chunk is an error
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "gone"}, true))
+            local gf = fs:find_one({filename = "gone"})
+            local real = wire.command
+            local chunks = db:get_col("fs14.chunks")
+            wire.command = function(c, d, cmd, ...)
+                if cmd[1] and cmd[1][1] == "update" and cmd[1][2] == "fs14.chunks" then
+                    wire.command = real
+                    chunks:delete({files_id = gf.files_id}, nil, true)
+                    wire.command = function(...) return real(...) end
+                end
+                return real(c, d, cmd, ...)
+            end
+            local r, err = gf:write("zz", 0)
+            wire.command = real
+            ngx.say(r, " ", type(err), " ", err and err:find("chunk", 1, true) ~= nil)
+            -- the length did not change either
+            ngx.say(db:get_col("fs14.files"):find_one({filename = "gone"}).length)
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil string true
+8
+--- no_error_log
+[error]
+
+
+
+=== TEST 29: a bad chunk is an error on read
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local function fresh(name)
+                assert(fs:insert(t.string_fh("abcdefghij"), {chunkSize = 4, filename = name}, true))
+                return fs:find_one({filename = name})
+            end
+            local chunks = db:get_col("fs14.chunks")
+            -- a short chunk in the middle
+            local gf = fresh("short")
+            chunks:update({files_id = gf.files_id, n = 1}, {["$set"] = {data = bson.get_bin_data("ef")}}, 0, 0, true)
+            local r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            -- a short last chunk
+            gf = fresh("short_last")
+            chunks:update({files_id = gf.files_id, n = 2}, {["$set"] = {data = bson.get_bin_data("i")}}, 0, 0, true)
+            r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            -- data that is not binary
+            gf = fresh("text")
+            chunks:update({files_id = gf.files_id, n = 0}, {["$set"] = {data = "abcd"}}, 0, 0, true)
+            r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            -- a missing chunk
+            gf = fresh("missing")
+            chunks:delete({files_id = gf.files_id, n = 1}, 0, true)
+            r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            ngx.say(gf:update_md5())
+            -- a good file reads
+            gf = fresh("good")
+            ngx.say(gf:read(), " ", gf:read(3, 3), " ", gf:update_md5())
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil string
+nil string
+nil string
+nil string
+falseread chunk failed
+abcdefghij def true
+--- no_error_log
+[error]
+
+
+
+=== TEST 30: chunk size and write range are checked
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            for _, bad in ipairs({0, -4, 1.5, "x", true}) do
+                local ok, err = pcall(fs.new, fs, {chunkSize = bad, filename = "bad" .. tostring(bad)})
+                ngx.say(tostring(bad), " ", ok, " ", tostring(err):find("bad argument", 1, true) ~= nil)
+            end
+            local ok, err = pcall(fs.insert, fs, t.string_fh("abc"), {chunkSize = 0, filename = "badinsert"}, true)
+            ngx.say(ok, " ", tostring(err):find("bad argument", 1, true) ~= nil)
+            ngx.say(db:get_col("fs14.files"):count({}), " ", db:get_col("fs14.chunks"):count({}))
+            local gf = assert(fs:new({chunkSize = 4, filename = "ok"}))
+            ngx.say(gf:write("x", 0, -1))
+            ngx.say(gf:write("x", -1))
+            ngx.say(gf:write("x", 0, 2))
+            for _, args in ipairs({{5, 0}, {"x", "y"}, {"x", 0.5}, {"x", 0, "z"}, {"x", 0, 0.5}}) do
+                local pok, perr = pcall(gf.write, gf, args[1], args[2], args[3])
+                ngx.say(pok, " ", tostring(perr):find("bad argument", 1, true) ~= nil)
+            end
+            ngx.say(gf:write("", 0), " ", gf.file_size)
+            -- a files document with a chunk size of 0 is not used
+            db:get_col("fs14.files"):insert({{_id = "zero", filename = "zero", length = 3, chunkSize = 0}}, nil, true)
+            local r, err = fs:find_one({filename = "zero"})
+            ngx.say(r, " ", err)
+        }
+    }
+--- request
+GET /t
+--- response_body
+0 false true
+-4 false true
+1.5 false true
+x false true
+true false true
+false true
+0 0
+nilinvalid size
+nilinvalid offset
+nilinvalid size
+false true
+false true
+false true
+false true
+false true
+0 0
+nil invalid chunkSize in the files document
+--- no_error_log
+[error]
+
+
+
+=== TEST 31: md5 is a digest or absent
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local gf = assert(fs:new({chunkSize = 4, filename = "new"}))
+            local doc = db:get_col("fs14.files"):find_one({filename = "new"})
+            ngx.say(doc.md5, " ", gf.file_md5)
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "ins"}, true))
+            doc = db:get_col("fs14.files"):find_one({filename = "ins"})
+            ngx.say(doc.md5 == ngx.md5("abcdefgh"))
+            local g2 = fs:find_one({filename = "ins"})
+            g2:write("zz", 0)
+            doc = db:get_col("fs14.files"):find_one({filename = "ins"})
+            ngx.say(doc.md5, " ", g2.file_md5)
+            ngx.say(g2:update_md5())
+            doc = db:get_col("fs14.files"):find_one({filename = "ins"})
+            ngx.say(#doc.md5, " ", doc.md5 == ngx.md5("zzcdefgh"))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil nil
+true
+nil nil
+true
+32 true
+--- no_error_log
+[error]
+
+
+
+=== TEST 32: remove deletes every file with a filter and with {}
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            for _, name in ipairs({"a", "b", "c"}) do
+                assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = name}, true))
+            end
+            ngx.say(fs:remove({filename = "a"}, nil, true))
+            ngx.say(fs:remove({}, nil, true))
+            ngx.say(db:get_col("fs14.files"):count({}), " ", db:get_col("fs14.chunks"):count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+2
+0 0
+--- no_error_log
+[error]
+
+
+
+=== TEST 33: only binary subtype 0 is chunk data
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local chunks = db:get_col("fs14.chunks")
+            local function fresh(name)
+                assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = name}, true))
+                return fs:find_one({filename = name})
+            end
+            local cases = {
+                {"document", {v = "abcd"}},
+                {"subtype 128", bson.get_bin_data("abcd", 128)},
+                {"subtype 4", bson.get_bin_data("abcd", 4)},
+                {"string", "abcd"},
+            }
+            for _, c in ipairs(cases) do
+                local gf = fresh("f_" .. c[1])
+                chunks:update({files_id = gf.files_id, n = 0}, {["$set"] = {data = c[2]}}, 0, 0, true)
+                local r, err = gf:read()
+                local ok, merr = gf:update_md5()
+                ngx.say(c[1], " ", r, " ", type(err), " ", ok, " ", type(merr))
+            end
+            local gf = fresh("good")
+            ngx.say(gf:read(), " ", gf:update_md5())
+        }
+    }
+--- request
+GET /t
+--- response_body
+document nil string false string
+subtype 128 nil string false string
+subtype 4 nil string false string
+string nil string false string
+abcdefgh true
+--- no_error_log
+[error]
+
+
+
+=== TEST 34: write checks the stored chunks
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local chunks = db:get_col("fs14.chunks")
+            local cases = {
+                {"boolean", true}, {"number", 5}, {"document", {v = "abcd"}},
+                {"subtype 128", bson.get_bin_data("abcd", 128)}, {"null", bson.null},
+            }
+            for _, c in ipairs(cases) do
+                assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "w_" .. c[1]}, true))
+                local gf = fs:find_one({filename = "w_" .. c[1]})
+                chunks:update({files_id = gf.files_id, n = 0}, {["$set"] = {data = c[2]}}, 0, 0, true)
+                local pok, r, err = pcall(gf.write, gf, "X", 0)
+                ngx.say(c[1], " ", pok, " ", r, " ", type(err))
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+boolean true nil string
+number true nil string
+document true nil string
+subtype 128 true nil string
+null true nil string
+--- no_error_log
+[error]

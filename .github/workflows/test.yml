@@ -120,3 +120,60 @@ jobs:
           sudo cpanm --notest Test::Nginx
       - name: Test TLS
         run: make test-tls
+
+  replset:
+    # Linux 6.19 and newer blocks mongo:8.0 and later; see the test job.
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mongo: ["6.0", "7.0", "8.0", "9.0"]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Start a replica set with three members
+        run: |
+          for p in 27017 27018 27019; do
+            docker run -d --name "mongo-$p" --network host mongo:${{ matrix.mongo }} \
+              --replSet rs0 --port "$p"
+          done
+          for p in 27017 27018 27019; do
+            for i in $(seq 1 60); do
+              docker exec "mongo-$p" mongosh --quiet --port "$p" --eval 'db.hello().ok' 2>/dev/null | grep -q 1 && break
+              sleep 1
+            done
+          done
+          # the members have IP addresses as names, because a cosocket cannot
+          # resolve localhost without a resolver
+          docker exec mongo-27017 mongosh --quiet --port 27017 --eval '
+            rs.initiate({_id: "rs0", members: [
+              {_id: 0, host: "127.0.0.1:27017", priority: 2},
+              {_id: 1, host: "127.0.0.1:27018"},
+              {_id: 2, host: "127.0.0.1:27019"}]})'
+          # wait until 27017 is the primary and the other two are secondaries
+          ready=""
+          for i in $(seq 1 120); do
+            ready=$(docker exec mongo-27017 mongosh --quiet --port 27017 --eval '
+              const states = {};
+              rs.status().members.forEach(m => { states[m.name] = m.stateStr; });
+              print(states["127.0.0.1:27017"] == "PRIMARY" &&
+                    states["127.0.0.1:27018"] == "SECONDARY" &&
+                    states["127.0.0.1:27019"] == "SECONDARY")' 2>/dev/null || true)
+            [ "$ready" = "true" ] && break
+            sleep 1
+          done
+          docker exec mongo-27017 mongosh --quiet --port 27017 --eval 'rs.status().members.map(m => m.name + " " + m.stateStr).join("\n")'
+          if [ "$ready" != "true" ]; then
+            echo "::error::the replica set is not ready after 120 seconds: 27017 must be PRIMARY, 27018 and 27019 SECONDARY"
+            exit 1
+          fi
+      - name: Install OpenResty and Test::Nginx
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release cpanminus
+          wget -O - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
+          sudo cpanm --notest Test::Nginx
+      - name: Test the replica set
+        run: make test-replset

@@ -1,8 +1,13 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
+local pairs = pairs
 local setmetatable = setmetatable
 local ngx = ngx
 local string = string
+local type = type
+local error = error
+local math = math
+local tostring = tostring
 
 local md5 = require "resty.md5"
 local str = require "resty.string"
@@ -15,9 +20,61 @@ local gridfs = { __index = gridfs_mt }
 local get_bin_data = bson.get_bin_data
 local get_utc_date = bson.get_utc_date
 
+-- the document for the files collection: chunkSize is int32 and length is
+-- int64, as the GridFS specification says. The table of the caller is not
+-- changed.
+local function files_doc(meta, length, md5_value)
+    local doc = {}
+    for k, v in pairs(meta) do
+        doc[k] = v
+    end
+    doc.chunkSize = bson.int32(meta.chunkSize)
+    doc.length = bson.int64(length)
+    -- a new file has no md5: 0 is not a digest
+    doc.md5 = md5_value
+    doc.uploadDate = get_utc_date(ngx.time() * 1000)
+    return doc
+end
+
+-- The GridFS specification wants the unique index {files_id: 1, n: 1} on
+-- the chunks collection. It is created once for each bucket object, and
+-- createIndexes does nothing if the index exists.
+function gridfs_mt:ensure_indexes()
+    if self.indexed then
+        return true
+    end
+    local r, err = self.chunk_col.db_obj:cmd(bson.ordered({
+        { "createIndexes", self.chunk_col.col },
+        { "indexes", {{
+            key = bson.ordered({ { "files_id", 1 }, { "n", 1 } }),
+            name = "files_id_1_n_1",
+            unique = true,
+        }} },
+    }))
+    if not r then
+        return nil, "cannot create the chunks index: " .. tostring(err)
+    end
+    self.indexed = true
+    return true
+end
+
+-- a chunk size must be a positive whole number that fits in an int32;
+-- level 3 is the caller of new or insert
+local function check_chunk_size(v, name)
+    if v ~= nil and (type(v) ~= "number" or v < 1 or v >= 2^31
+                     or v ~= math.floor(v)) then
+        error("bad argument #1 to '" .. name
+              .. "' (chunkSize must be a positive integer)", 3)
+    end
+end
+
 function gridfs_mt:find_one(fields)
-    local r = self.file_col:find_one(fields)
-    if not r then return nil end
+    local r, err = self.file_col:find_one(fields)
+    if not r then return nil, err end
+    local cs = r.chunkSize
+    if type(cs) ~= "number" or cs < 1 or cs ~= math.floor(cs) then
+        return nil, "invalid chunkSize in the files document"
+    end
 
     return setmetatable({
                     file_col = self.file_col;
@@ -27,29 +84,32 @@ function gridfs_mt:find_one(fields)
                     file_size = r.length;
                     file_md5 = r.md5;
                     file_name = r.filename;
+                    bucket = self;
                     }, gridfs_file)
 end
 
 function gridfs_mt:get(fh, fields)
-    local f = self:find_one(fields)
-    if not f then return nil, "file not found" end
-    local r = fh:write(f:read())
-    return r
+    local f, ferr = self:find_one(fields)
+    if not f then return nil, ferr or "file not found" end
+    local data, err = f:read()
+    if not data then return nil, err end
+    local ok
+    ok, err = fh:write(data)
+    if not ok then return nil, err end
+    return true
 end
 
 function gridfs_mt:remove(fields, continue_on_err, safe)
     local r, err
     local n = 0
-    if fields == {} then
-        r,err = self.chunk_col:delete({}, continue_on_err, safe)
-        if not r then return nil, "remove chunks failed: "..err end
-        r,err = self.file_col:delete({}, continue_on_err, safe)
-        if not r then return nil, "remove files failed: "..err end
-        return r
-    end
-
     local cursor = self.file_col:find(fields, {_id=1})
-    for k,v in cursor:pairs() do
+    while true do
+        local i, v = cursor:next()
+        if not i then
+            -- the end of the cursor has no second value, an error has one
+            if v then return nil, v end
+            break
+        end
         r,err = self.chunk_col:delete({files_id=v._id}, continue_on_err, safe)
         if not r then return nil, "remove chunks failed: "..err end
         r,err = self.file_col:delete({_id=v._id}, continue_on_err, safe)
@@ -60,15 +120,15 @@ function gridfs_mt:remove(fields, continue_on_err, safe)
 end
 
 function gridfs_mt:new(meta)
+    check_chunk_size(meta and meta.chunkSize, "new")
     meta = meta or {}
     meta._id = meta._id or object_id.new()
     meta.chunkSize = meta.chunkSize or 256*1024
     meta.filename = meta.filename or meta._id:tostring()
 
-    meta.md5 = 0
-    meta.uploadDate = get_utc_date(ngx.time() * 1000)
-    meta.length = 0
-    local r, err = self.file_col:insert({meta}, nil, true)
+    local r, err = self:ensure_indexes()
+    if not r then return nil, err end
+    r, err = self.file_col:insert({files_doc(meta, 0, nil)}, nil, true)
     if not r then return nil, err end
 
     return setmetatable({
@@ -77,12 +137,13 @@ function gridfs_mt:new(meta)
                     chunk_size = meta.chunkSize;
                     files_id = meta._id;
                     file_size = 0;
-                    file_md5 = 0;
                     file_name = meta.filename;
+                    bucket = self;
                     }, gridfs_file)
 end
 
 function gridfs_mt:insert(fh, meta, safe)
+    check_chunk_size(meta and meta.chunkSize, "insert")
     meta = meta or {}
     meta.chunkSize = meta.chunkSize or 256*1024
     meta._id = meta._id or object_id.new()
@@ -90,7 +151,8 @@ function gridfs_mt:insert(fh, meta, safe)
 
     local n = 0
     local length = 0
-    local r, err
+    local r, err = self:ensure_indexes()
+    if not r then return nil, err end
     local md5_obj = md5:new()
     while true do
         local bytes = fh:read(meta.chunkSize)
@@ -98,7 +160,7 @@ function gridfs_mt:insert(fh, meta, safe)
 
         md5_obj:update(bytes)
         r, err = self.chunk_col:insert({{ files_id = meta._id,
-                                n = n,
+                                n = bson.int32(n),
                                 data = get_bin_data(bytes),
                                 }}, nil, safe)
         if safe and not r then return nil, err end
@@ -108,10 +170,7 @@ function gridfs_mt:insert(fh, meta, safe)
     end
     local md5hex = str.to_hex(md5_obj:final())
 
-    meta.md5 = md5hex
-    meta.uploadDate = get_utc_date(ngx.time() * 1000)
-    meta.length = length
-    r, err = self.file_col:insert({meta}, nil, safe)
+    r, err = self.file_col:insert({files_doc(meta, length, md5hex)}, nil, safe)
     if safe and not r then return nil, err end
     return r
 end

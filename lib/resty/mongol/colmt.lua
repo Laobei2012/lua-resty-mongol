@@ -1,6 +1,8 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
 local error = error
+local setmetatable = setmetatable
+local next = next
 local ipairs , pairs = ipairs , pairs
 local type = type
 local math_abs = math.abs
@@ -19,6 +21,7 @@ local null = bson.null
 local wire = require ( mod_name .. ".wire" )
 
 local new_cursor = require ( mod_name .. ".cursor" )
+local session_mod = require ( mod_name .. ".session" )
 
 local colmethods = { }
 local colmt = { __index = colmethods }
@@ -29,6 +32,38 @@ local ZERO_ID = "\0\0\0\0\0\0\0\0"
 -- arguments must not be tested directly
 local function flag(v)
     return not (v == nil or v == false or v == 0)
+end
+
+-- the session in the last argument (opts.session), checked; level 3 is the
+-- caller of the collection method
+local function session_of(self, opts)
+    if opts ~= nil and type(opts) ~= "table" then
+        error("bad argument (options table expected)", 3)
+    end
+    local s = opts and opts.session
+    if s == nil then
+        return nil
+    end
+    if not session_mod.is_session(s) then
+        error("bad argument (session expected)", 3)
+    end
+    if s.conn ~= self.conn then
+        error("bad argument (the session belongs to another connection)", 3)
+    end
+    return s
+end
+
+-- Inside a transaction every write is acknowledged and carries no write
+-- concern. Outside a transaction a session needs an acknowledged write, as
+-- the sessions specification wants. Returns acked, err.
+local function acknowledged(session, safe)
+    if session and session:in_transaction() then
+        return true
+    end
+    if session and not flag(safe) then
+        return nil, "unacknowledged write with a session"
+    end
+    return flag(safe)
 end
 
 -- the first error message of a write reply, or nil
@@ -44,8 +79,8 @@ local function write_error(r)
 end
 
 -- sends a write command; returns the reply | nil, err
-local function write(self, cmd, seq_name, docs, safe)
-    if not flag(safe) then
+local function write(self, cmd, seq_name, docs, acked, session)
+    if not acked then
         cmd[#cmd + 1] = {"writeConcern", {w = 0}}
         local ok, err = wire.send_only(self.conn, self.db, ordered(cmd),
                                        {{seq_name, docs}})
@@ -55,7 +90,7 @@ local function write(self, cmd, seq_name, docs, safe)
         return -1
     end
     local r, err = wire.command(self.conn, self.db, ordered(cmd),
-                                {{seq_name, docs}})
+                                {{seq_name, docs}}, nil, session)
     if not r then
         return nil, err
     end
@@ -66,12 +101,17 @@ local function write(self, cmd, seq_name, docs, safe)
     return r
 end
 
-function colmethods:insert(docs, continue_on_error, safe)
+function colmethods:insert(docs, continue_on_error, safe, opts)
     if type(docs) ~= "table" then
         error("bad argument #1 to 'insert' (table expected)", 2)
     end
     if #docs < 1 then
         return nil, "docs needed"
+    end
+    local session = session_of(self, opts)
+    local acked, aerr = acknowledged(session, safe)
+    if acked == nil then
+        return nil, aerr
     end
 
     local is_ordered = not flag(continue_on_error)
@@ -91,14 +131,15 @@ function colmethods:insert(docs, continue_on_error, safe)
 
     local function command()
         local cmd = {{"insert", self.col}, {"ordered", is_ordered}}
-        if not flag(safe) then
+        if not acked then
             cmd[3] = {"writeConcern", {w = 0}}
         end
         return ordered(cmd)
     end
 
     -- the size of a message without its documents
-    local empty = wire.encode_msg(self.db, command(), {{"documents", {}}}, 0)
+    local empty = wire.encode_msg(self.db, command(), {{"documents", {}}}, 0,
+                                  session and session:fields())
     if not empty then
         return nil, "message too large"
     end
@@ -122,7 +163,7 @@ function colmethods:insert(docs, continue_on_error, safe)
     local first_err
     for _, b in ipairs(batches) do
         local cmd = {{"insert", self.col}, {"ordered", is_ordered}}
-        local r, err, reply = write(self, cmd, "documents", b, safe)
+        local r, err, reply = write(self, cmd, "documents", b, acked, session)
         if not r then
             -- a socket or command error stops an unordered insert too
             if is_ordered or not reply then
@@ -134,18 +175,23 @@ function colmethods:insert(docs, continue_on_error, safe)
     if first_err then
         return nil, first_err
     end
-    if not flag(safe) then
+    if not acked then
         return -1
     end
     return 0
 end
 
-function colmethods:update(selector, update, upsert, multiupdate, safe)
+function colmethods:update(selector, update, upsert, multiupdate, safe, opts)
     if type(selector) ~= "table" then
         error("bad argument #1 to 'update' (table expected)", 2)
     end
     if type(update) ~= "table" then
         error("bad argument #2 to 'update' (table expected)", 2)
+    end
+    local session = session_of(self, opts)
+    local acked, aerr = acknowledged(session, safe)
+    if acked == nil then
+        return nil, aerr
     end
     local stmt = {
         q = selector,
@@ -153,7 +199,8 @@ function colmethods:update(selector, update, upsert, multiupdate, safe)
         upsert = flag(upsert),
         multi = flag(multiupdate),
     }
-    local r, err = write(self, {{"update", self.col}}, "updates", {stmt}, safe)
+    local r, err = write(self, {{"update", self.col}}, "updates", {stmt}, acked,
+                         session)
     if not r then
         return nil, err
     end
@@ -163,15 +210,21 @@ function colmethods:update(selector, update, upsert, multiupdate, safe)
     return r.n
 end
 
-function colmethods:delete(selector, single_remove, safe)
+function colmethods:delete(selector, single_remove, safe, opts)
     if type(selector) ~= "table" then
         error("bad argument #1 to 'delete' (table expected)", 2)
+    end
+    local session = session_of(self, opts)
+    local acked, aerr = acknowledged(session, safe)
+    if acked == nil then
+        return nil, aerr
     end
     local stmt = {
         q = selector,
         limit = flag(single_remove) and 1 or 0,
     }
-    local r, err = write(self, {{"delete", self.col}}, "deletes", {stmt}, safe)
+    local r, err = write(self, {{"delete", self.col}}, "deletes", {stmt}, acked,
+                         session)
     if not r then
         return nil, err
     end
@@ -216,6 +269,7 @@ end
 
 function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
                           options)
+    local session = session_of(self, options)
     numberToSkip = numberToSkip or 0
     options = options or {}
 
@@ -257,8 +311,13 @@ function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
         cmd[#cmd + 1] = {"allowPartialResults", true}
     end
 
-    local conn = options.conn or self.conn
-    local r, err, doc = wire.command(conn, self.db, ordered(cmd))
+    -- A connection to a secondary (connect_uri) serves the reads. A session
+    -- always uses its own (primary) connection, because a transaction runs
+    -- on the primary only.
+    local conn = options.conn or session and session.conn
+                 or self.conn.read_conn or self.conn
+    local r, err, doc = wire.command(conn, self.db, ordered(cmd), nil, nil,
+                                     session)
     return cursor_result(conn, r, err, doc, numberToSkip, "firstBatch")
 end
 
@@ -273,8 +332,13 @@ function colmethods:getmore(cursorID, numberToReturn, offset_i, opts)
     if numberToReturn and numberToReturn > 0 then
         cmd[3] = {"batchSize", int32(numberToReturn)}
     end
-    local conn = opts and opts.conn or self.conn
-    local r, err, doc = wire.command(conn, self.db, ordered(cmd))
+    -- the same connection as query: an explicit connection, the session, the
+    -- secondary of a read preference, the primary
+    local session = session_of(self, opts)
+    local conn = opts and opts.conn or session and session.conn
+                 or self.conn.read_conn or self.conn
+    local r, err, doc = wire.command(conn, self.db, ordered(cmd), nil, nil,
+                                     session)
     return cursor_result(conn, r, err, doc, offset_i, "nextBatch")
 end
 
@@ -286,11 +350,13 @@ function colmethods:kill_cursors(cursorIDs, opts)
     if #ids == 0 then
         return true
     end
-    local conn = opts and opts.conn or self.conn
+    local session = session_of(self, opts)
+    local conn = opts and opts.conn or session and session.conn
+                 or self.conn.read_conn or self.conn
     local r, err = wire.command(conn, self.db, ordered{
         {"killCursors", self.col},
         {"cursors", ids},
-    })
+    }, nil, nil, session)
     if not r then
         return nil, err
     end
@@ -298,7 +364,7 @@ function colmethods:kill_cursors(cursorIDs, opts)
 end
 
 function colmethods:count(query)
-    local r, err = wire.command(self.conn, self.db, ordered{
+    local r, err = wire.command(self.conn.read_conn or self.conn, self.db, ordered{
         {"count", self.col},
         {"query", query or {}},
     })
@@ -316,16 +382,60 @@ function colmethods:drop()
     return 1
 end
 
-function colmethods:find(query, returnfields, num_each_query)
+function colmethods:find(query, returnfields, num_each_query, opts)
     num_each_query = num_each_query or 100
     if num_each_query == 1 then
         return nil, "num_each_query must larger than 1"
     end
-    return new_cursor(self, query, returnfields, num_each_query)
+    return new_cursor(self, query, returnfields, num_each_query,
+                      session_of(self, opts))
 end
 
-function colmethods:find_one(query, returnfields)
-    local id, results, _, err = self:query(query, returnfields, 0, 1)
+-- runs an aggregation pipeline and returns a cursor over the results;
+-- options.batch_size is the batch size of each fetch (default 100)
+function colmethods:aggregate(pipeline, options)
+    if type(pipeline) ~= "table" then
+        error("bad argument #1 to 'aggregate' (table expected)", 2)
+    end
+    if options ~= nil and type(options) ~= "table" then
+        error("bad argument #2 to 'aggregate' (table expected)", 2)
+    end
+    local batch_size = 100
+    if options and options.batch_size ~= nil then
+        batch_size = options.batch_size
+    end
+    if type(batch_size) ~= "number" or batch_size < 0
+       or batch_size ~= batch_size - batch_size % 1 then
+        error("bad argument #2 to 'aggregate' "
+              .. "(batch_size must be a non-negative integer)", 2)
+    end
+    if next(pipeline) == nil then
+        pipeline = bson.empty_array
+    end
+    local session = session_of(self, options)
+    local conn = session and session.conn or self.conn.read_conn or self.conn
+    local r, err = wire.command(conn, self.db, ordered{
+        {"aggregate", self.col},
+        {"pipeline", pipeline},
+        {"cursor", {batchSize = int32(batch_size)}},
+    }, nil, nil, session)
+    if not r then
+        return nil, err
+    end
+    -- the cursor keeps this connection for getMore and killCursors
+    local ncol = setmetatable({
+        conn = conn,
+        db_obj = self.db_obj,
+        db = self.db,
+        col = self.col,
+    }, colmt)
+    return new_cursor.from_reply(ncol, r.cursor, batch_size, session)
+end
+
+function colmethods:find_one(query, returnfields, opts)
+    local session = session_of(self, opts)
+    local id, results, _, err = self:query(query, returnfields, 0, 1,
+                                           {session = session})
     if not id then
         return nil, results
     end

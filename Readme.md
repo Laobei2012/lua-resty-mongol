@@ -102,6 +102,84 @@ it returns a connection object.
 		mongol = require "resty.mongol"
 		conn = mongol:new() -- return a conntion object
 
+Connection strings
+======
+
+`conn = mongol.connect_uri("mongodb://user:pass@host1:27017,host2/db?replicaSet=rs0&readPreference=secondaryPreferred&authSource=admin&tls=true")` connects to the primary of a replica set (or a standalone server) and returns `conn`, or `nil, err`. Write the user name and the password with percent-encoding (`@` as `%40`, `:` as `%3A`).
+
+ - Options: `authSource`, `tls`, `replicaSet` (read, not checked) and `readPreference`. If an option is repeated, the last one wins. Unknown options are ignored. `mongodb+srv://` and unix domain sockets are not supported.
+ - `require("resty.mongol.uri").parse(str)` returns `{hosts = {{host = "h1", port = 27017}, ...}, db = ..., user = ..., password = ..., options = {...}}`. Each host is a table with the keys `host` and `port`. `uri.parse_host(str)` parses one `host:port` or `[ipv6]:port`.
+ - After `conn:close()` or `conn:set_keepalive()`, `conn:connect()` with no arguments reconnects the primary and `conn.read_conn`, and logs in again if the string had a user.
+ - `readPreference` is `primary` (default), `primaryPreferred`, `secondary` or `secondaryPreferred`. It applies to reads only: `col:query`, `col:find`, `col:find_one`, `col:count` and `col:aggregate`. For `secondary` and `secondaryPreferred`, `conn.read_conn` is a second connection to a secondary. A secondary can be a little late, so a read after a write can miss the document. Writes and `db:cmd` always go to the primary.
+ - A cursor keeps the connection of its first query. Call `cursor:close()` when you stop before the end.
+ - `tls=true` verifies the certificate against the host name, and needs `lua_ssl_trusted_certificate`. Use host names in the string, not IP addresses.
+ - Use a `resolver` in `nginx.conf` for host names.
+
+Sessions and transactions
+======
+
+`session = conn:start_session()` makes a logical session. Pass `{session = session}` as the last argument of the collection methods. A transaction needs a replica set and runs on the primary only:
+
+        local session = conn:start_session()
+        session:start_transaction()
+        col:insert({{a = 1}}, nil, nil, {session = session})
+        local ok, err, reply = session:commit_transaction()
+        if not ok then
+            -- reply.errorLabels can hold "UnknownTransactionCommitResult":
+            -- commit again, after conn:connect() if the socket broke
+            session:abort_transaction()
+        end
+
+ - In a transaction every write is acknowledged, and `safe` is ignored.
+ - Do not call `conn:set_keepalive()` while a transaction is open.
+ - Outside a transaction a write with a session must be acknowledged (`safe` true).
+ - The driver does not send `endSessions`. Unused server sessions expire according to the server's logical session timeout (`logicalSessionTimeoutMinutes` in `hello`). Finish each transaction with commit or abort before returning its connection to the pool.
+
+Command monitoring
+======
+
+`mongol.set_monitor(m)` sets a monitor for the current worker. `m` is a table with the optional functions `started(ev)`, `succeeded(ev)` and `failed(ev)`, or `nil` to remove the monitor. The driver sends no metrics itself. Connect the monitor to your own metrics or logs.
+
+Every event has `command_name`, `db`, `request_id`, `host` and `port`. `started` adds `command`, a copy of the command with the document sequences merged in (for example `documents` for `insert`). `succeeded` adds `duration_ms` and `reply`. `failed` adds `duration_ms` and `error`.
+
+ - The hooks run in the request. They must not block, so they must not use cosockets for slow work.
+ - A hook that raises an error is logged and does not change the result of the command.
+ - `succeeded` means that the command succeeded, not that the write succeeded. A reply with `writeErrors` is a succeeded command. For an unsafe write (`safe` false), `succeeded` only means that the driver sent the message. To count write errors, read `ev.reply.writeErrors` and `ev.reply.writeConcernError`.
+ - Login commands (`authenticate`, `saslStart`, `saslContinue`, `getnonce`), `createUser`, `updateUser`, and a `hello` with `speculativeAuthenticate` have an empty `command` and `reply`, and `failed.error` is `"redacted"`.
+ - Without a monitor, the cost is one check for each command.
+
+An example with [nginx-lua-prometheus](https://github.com/knyar/nginx-lua-prometheus), set in `init_worker_by_lua_block`:
+
+        prometheus = require("prometheus").init("prometheus_metrics")
+        local commands = prometheus:counter("mongo_commands_total",
+                                            "MongoDB commands", {"command", "result"})
+        local write_errors = prometheus:counter("mongo_write_errors_total",
+                                                "Write errors", {"command"})
+        local latency = prometheus:histogram("mongo_command_seconds",
+                                             "MongoDB command time", {"command"})
+
+        require("resty.mongol").set_monitor({
+            succeeded = function(ev)
+                commands:inc(1, {ev.command_name, "ok"})
+                latency:observe(ev.duration_ms / 1000, {ev.command_name})
+                if ev.reply.writeErrors then
+                    write_errors:inc(#ev.reply.writeErrors, {ev.command_name})
+                end
+            end,
+            failed = function(ev)
+                commands:inc(1, {ev.command_name, "error"})
+                latency:observe(ev.duration_ms / 1000, {ev.command_name})
+            end,
+        })
+
+GridFS
+======
+
+ - Two writers on the same bytes of a file are last writer wins: the driver does not check for conflicts between them. The stored `length` only grows, and the chunks have a unique index on `{files_id, n}`. Use one writer for a file when the order matters.
+ - A new file has no `md5`; call `gridfs_file:update_md5()` to store one. A `write` removes the `md5` of the file.
+ - `read` checks the chunks and returns `nil, err` for a missing, short or non-binary chunk (binary subtype 0 only). `update_md5` performs the same checks and returns `false, err` in that case. `write` checks the binary type and subtype of existing chunks and returns `nil, err` for bad data.
+ - `chunkSize` must be a positive whole number.
+
 ###Connection objects have server wide methods.
 ------------
 

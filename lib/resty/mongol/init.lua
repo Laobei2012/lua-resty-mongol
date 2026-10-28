@@ -5,6 +5,9 @@ local _M = { _VERSION = "1.0.0" }
 local error = error
 local ipairs = ipairs
 local type = type
+local tostring = tostring
+local select = select
+local t_concat = table.concat
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
@@ -15,10 +18,35 @@ local connmt = { __index = connmethods }
 
 local dbmt = require ( mod_name .. ".dbmt" )
 local bson = require ( mod_name .. ".bson" )
+local monitor = require ( mod_name .. ".monitor" )
+local uri = require ( mod_name .. ".uri" )
+local session = require ( mod_name .. ".session" )
+
+-- sets the command monitor of this worker (nil removes it); see monitor.lua
+function _M.set_monitor(m)
+    if m ~= nil and type(m) ~= "table" then
+        error("bad argument #1 to 'set_monitor' (table or nil expected)", 2)
+    end
+    if m then
+        for _, name in ipairs({"started", "succeeded", "failed"}) do
+            if m[name] ~= nil and type(m[name]) ~= "function" then
+                error("bad argument #1 to 'set_monitor' (" .. name
+                      .. " must be a function)", 2)
+            end
+        end
+    end
+    monitor.set(m)
+    return true
+end
 
 _M.int32 = bson.int32
 _M.int64 = bson.int64
 _M.double = bson.double
+
+-- a logical session on this connection (the primary connection)
+function connmethods:start_session()
+    return session.new(self)
+end
 
 function connmethods:ismaster()
     local db = self:new_db_handle("admin")
@@ -29,10 +57,14 @@ function connmethods:ismaster()
     return r.isWritablePrimary, r.hosts
 end
 
+-- "host:port" or "[ipv6]:port" as the members of hello are named; the same
+-- parser as for the URI. Returns host, port | nil.
 local function parse_host ( str )
-    local host , port = str:match ( "([^:]+):?(%d*)" )
-    port = port or 27017
-    return host , port
+    local h = uri.parse_host ( str )
+    if not h then
+        return nil
+    end
+    return h.host , h.port
 end
 
 function connmethods:getprimary ( searched )
@@ -60,6 +92,9 @@ function connmethods:getprimary ( searched )
             if not searched[v] then
                 searched[v] = true
                 local host, port = parse_host(v)
+                if not host then
+                    return nil, "invalid member name: " .. v
+                end
                 local conn = new()
                 local ok, err = conn:connect(host, port, discovery_opts)
                 if not ok then
@@ -124,8 +159,14 @@ function connmethods:set_keepalive(...)
     if not sock then
         return nil, "not initialized"
     end
+    if self.read_conn then
+        self.read_conn:set_keepalive(...)
+    end
     if self.broken then
         return nil, "closed"
+    end
+    if self.active_sessions then
+        return nil, "transaction in progress"
     end
 
     return sock:setkeepalive(...)
@@ -140,6 +181,16 @@ function connmethods:get_reused_times()
     return sock:getreusedtimes()
 end
 
+-- parts of a pool name, each as <length>:<text>
+local function pool_key ( ... )
+    local t = { }
+    for i = 1 , select ( "#" , ... ) do
+        local v = tostring ( ( select ( i , ... ) ) )
+        t [ i ] = #v .. ":" .. v
+    end
+    return t_concat ( t )
+end
+
 -- opts: pool, pool_size, backlog (for the connection pool), and ssl,
 -- ssl_verify (default true), ssl_server_name (default host) and
 -- ssl_reused_session (for the TLS handshake). A call with no arguments
@@ -148,8 +199,21 @@ function connmethods:connect(host, port, opts)
     if opts ~= nil and type(opts) ~= "table" then
         error("bad argument #3 to 'connect' (table expected)", 2)
     end
-    if host == nil and port == nil and opts == nil then
+    -- a call with no arguments is a reconnect
+    local reconnect = host == nil and port == nil and opts == nil
+    if reconnect then
         opts = self.opts
+    else
+        -- An explicit connect replaces a connect_uri connection: all the
+        -- state of the string goes (the connection to the secondary and
+        -- how to log in). Only a reconnect with no arguments keeps it, so a
+        -- login never follows the connection to another address or pool.
+        if self.read_conn then
+            self.read_conn:close()
+            self.read_conn = nil
+        end
+        self.relogin = nil
+        self.read_preference = nil
     end
     host = host or self.host
     port = port or self.port
@@ -171,15 +235,17 @@ function connmethods:connect(host, port, opts)
     -- The prefixes "plain:", "tls:" and "user:" keep the three kinds of
     -- names apart, so that a name can never equal another kind, not even
     -- the cosocket default "host:port".
+    -- Every part of a generated name has its length in front of it, so
+    -- that two different settings never give the same name.
     local pool
     if opts and opts.pool then
         pool = "user:" .. opts.pool
     elseif opts and opts.ssl then
-        pool = "tls:" .. host .. ":" .. port .. ":"
-               .. (opts.ssl_verify == false and "noverify" or "verify") .. ":"
-               .. (opts.ssl_server_name or host)
+        pool = "tls:" .. pool_key ( host , port ,
+                                    opts.ssl_verify == false and "noverify" or "verify" ,
+                                    opts.ssl_server_name or host )
     else
-        pool = "plain:" .. host .. ":" .. port
+        pool = "plain:" .. pool_key ( host , port )
     end
 
     local ok, err = sock:connect(host, port, {
@@ -206,6 +272,25 @@ function connmethods:connect(host, port, opts)
     end
 
     self.host, self.port, self.opts = host, port, opts
+
+    if reconnect then
+        -- a new socket has no login; connect_uri stored how to log in
+        if self.relogin and sock:getreusedtimes() == 0 then
+            local lok, lerr = self.relogin(self)
+            if not lok then
+                sock:close()
+                self.broken = true
+                return nil, lerr
+            end
+        end
+        if self.read_conn then
+            -- the read connection comes back with its read preference
+            local rok, rerr = self.read_conn:connect()
+            if not rok then
+                return nil, rerr
+            end
+        end
+    end
     if session then
         return ok, session
     end
@@ -216,6 +301,9 @@ function connmethods:close()
     local sock = self.sock
     if not sock then
         return nil, "not initialized"
+    end
+    if self.read_conn then
+        self.read_conn:close()
     end
 
     return sock:close()
@@ -231,5 +319,153 @@ new = function(self)
 end
 
 _M.new = new
+
+local read_preferences = {
+    primary = true , primaryPreferred = true ,
+    secondary = true , secondaryPreferred = true ,
+}
+
+-- Connects to one host and asks hello. Returns conn, hello reply | nil, err.
+-- With a user, each user has its own pool, so that a logged in socket
+-- never goes to another user.
+local function try_host ( u , host , port )
+    local opts
+    if u.options.tls then
+        opts = { ssl = true }
+    end
+    if u.user then
+        opts = opts or { }
+        opts.pool = "uri:" .. pool_key ( u.user , u.auth_source , host , port ,
+                                         u.options.tls and "tls" or "plain" )
+    end
+    local conn = new ( )
+    local ok , err = conn:connect ( host , port , opts )
+    if not ok then
+        return nil , err
+    end
+    local r
+    r , err = conn:new_db_handle ( "admin" ):cmd ( { hello = 1 } )
+    if not r then
+        conn:close ( )
+        return nil , err
+    end
+    return conn , r
+end
+
+local function login ( u , conn )
+    if not u.user then
+        return true
+    end
+    local ok , err = conn:new_db_handle ( u.auth_source ):auth ( u.user ,
+                                                              u.password or "" )
+    if not ok then
+        return nil , err
+    end
+    return true
+end
+
+-- Connects with a mongodb:// string. The connection that it returns always
+-- talks to the primary: writes and db:cmd use it. For the read preferences
+-- secondary and secondaryPreferred, conn.read_conn is a second connection
+-- to a secondary, and the reads use it (see colmt.lua and wire.lua).
+function _M.connect_uri ( str )
+    if type ( str ) ~= "string" then
+        error ( "bad argument #1 to 'connect_uri' (string expected)" , 2 )
+    end
+    local u , err = uri.parse ( str )
+    if not u then
+        return nil , err
+    end
+    local mode = u.options.readPreference or "primary"
+    if not read_preferences [ mode ] then
+        return nil , "unsupported readPreference: " .. mode
+    end
+    u.auth_source = u.options.authSource or u.db or "admin"
+
+    -- the seeds first, then the members that hello names
+    local tried = { }
+    local primary , hello
+    local last_err
+    local function consider ( host , port )
+        local key = host .. ":" .. port
+        if tried [ key ] then
+            return
+        end
+        tried [ key ] = true
+        local conn , r = try_host ( u , host , port )
+        if not conn then
+            last_err = r
+            return
+        end
+        if r.isWritablePrimary then
+            primary , hello = conn , r
+            return
+        end
+        conn:close ( )
+        return r.hosts
+    end
+    for _ , h in ipairs ( u.hosts ) do
+        local members = consider ( h.host , h.port )
+        if primary then break end
+        for _ , m in ipairs ( members or { } ) do
+            local mhost , mport = parse_host ( m )
+            if mhost then
+                consider ( mhost , mport )
+            end
+            if primary then break end
+        end
+        if primary then break end
+    end
+    if not primary then
+        return nil , last_err or "no primary found"
+    end
+
+    local ok
+    ok , err = login ( u , primary )
+    if not ok then
+        primary:close ( )
+        return nil , err
+    end
+    if u.user then
+        -- conn:connect() with no arguments logs in again on a new socket
+        primary.relogin = function ( c ) return login ( u , c ) end
+    end
+
+    if mode == "secondary" or mode == "secondaryPreferred" then
+        local read_conn
+        for _ , m in ipairs ( hello.hosts or { } ) do
+            if m ~= hello.me then
+                local mhost , mport = parse_host ( m )
+                local conn , r
+                if mhost then
+                    conn , r = try_host ( u , mhost , mport )
+                end
+                if conn and r.secondary then
+                    read_conn = conn
+                    break
+                elseif conn then
+                    conn:close ( )
+                end
+            end
+        end
+        if read_conn then
+            ok , err = login ( u , read_conn )
+            if not ok then
+                read_conn:close ( )
+                primary:close ( )
+                return nil , err
+            end
+            read_conn.read_preference = mode
+            if u.user then
+                read_conn.relogin = primary.relogin
+            end
+            primary.read_conn = read_conn
+        elseif mode == "secondary" then
+            primary:close ( )
+            return nil , "no secondary available"
+        end
+    end
+    return primary
+end
 
 return _M

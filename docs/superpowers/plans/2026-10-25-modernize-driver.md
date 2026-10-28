@@ -505,11 +505,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 **Interfaces:**
 - Produces: `col:aggregate(pipeline, options) -> cursor | nil, err`. It sends ordered `{aggregate = col, pipeline, cursor = {batchSize = options.batch_size or 100}}` and returns `cursor.from_reply(...)` from Task 6 on the reply (issue #55).
 
-- [ ] **Step 1: Write the failing test.** `TEST: group sum`: insert `{k="a",v=1}`, `{k="a",v=2}` and `{k="b",v=5}`. Then `$group` by `k` with a sum of `v`, and `$sort` on `_id`, yield `a 3` and `b 5`.
-- [ ] **Step 2: Run** `prove t/aggregate.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(col): aggregate`.
+- [x] **Step 1: Write the failing test.** `TEST: group sum`: insert `{k="a",v=1}`, `{k="a",v=2}` and `{k="b",v=5}`. Then `$group` by `k` with a sum of `v`, and `$sort` on `_id`, yield `a 3` and `b 5`.
+- [x] **Step 2: Run** `prove t/aggregate.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(col): aggregate`.
 
 ### Task 11b: Command monitoring hook
 
@@ -536,7 +536,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - For a `wire.send_only` write, `succeeded` fires after the send, with `reply = {ok = 1}`.
   - `duration_ms` comes from `ngx.now()` after `ngx.update_time()`.
 
-- [ ] **Step 1: Write failing tests** in `t/monitor.t`:
+- [x] **Step 1: Write failing tests** in `t/monitor.t`:
   - `TEST: started and succeeded`. A monitor that appends to a list, then `find_one({})`, records `started` and `succeeded`, both with `command_name == "find"` and the same `request_id`.
   - `TEST: failed`. `db:cmd({nosuchcmd = 1})` records `failed`, and `error` contains `no such command`.
   - `TEST: hook error`. A `started` hook that raises an error does not stop `find_one`, and the error log contains the hook error.
@@ -548,17 +548,17 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - `TEST: monitor removed in flight`. A `started` hook calls `set_monitor(nil)`. The same command still records its `succeeded` event.
   - `TEST: failure on closed socket`. Use `--- tcp_listen: 12345` and an empty `--- tcp_reply:`, so that the fake server closes at once. One `started` and one `failed` event are recorded.
   - `TEST: remove monitor`. After `set_monitor(nil)`, `find_one` records nothing.
-- [ ] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
-- [ ] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example, a `nginx-lua-prometheus` counter and histogram. Add the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
-- [ ] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(wire): command monitoring hook`.
+- [x] **Step 2: Run** `prove t/monitor.t`. Expected: FAIL.
+- [x] **Step 3: Implement** the interfaces above. Add a README section with one Prometheus example, a `nginx-lua-prometheus` counter and histogram. Add the warning that hooks run in the request and must not block. The example explains that `succeeded` counts command success, not write success, and shows how to count `reply.writeErrors`.
+- [x] **Step 4: Run** `prove t/monitor.t`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(wire): command monitoring hook`.
 
 ### Task 12: Replica set CI, primary selection, URI
 
 **Files:** Create `lib/resty/mongol/uri.lua`. Modify `init.lua` and `.github/workflows/test.yml`. Test: `t/uri.t`, `t/replset/cluster.t`. Move `t/cluster.t` TEST 5 to TEST 7 to `t/replset/cluster.t` and remove their skips. TEST 2 and TEST 8 moved to `t/auth/legacy.t` in Task 4, so `t/cluster.t` is then empty and is deleted.
 
 **Interfaces:**
-- Produces: `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
+- Produces (each host is a table `{host = ..., port = ...}`): `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
 - Produces: `mongol.connect_uri(str) -> conn | nil, err`. The returned `conn` always talks to the primary, and all writes and `db:cmd` calls use it. For `secondary` and `secondaryPreferred`, `conn.read_conn` holds a second connection to the selected secondary. If `conn.read_conn` is set, `col:query`, `col:find`, `col:find_one`, `col:count` and `col:aggregate` use it. A cursor keeps the connection of its first `query` for every `getMore` and `killCursors`. The read connection follows `readPreference` (issues #10 and #22):
   - `primary`: no `read_conn`. Reads use the primary.
   - `primaryPreferred`: no `read_conn` while a primary answers. If no primary answers, `connect_uri` returns `nil, err`, because writes need a primary.
@@ -568,12 +568,12 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - If the URI has a user, it logs in.
 - Produces: a CI job `replset` with a 3-member replica set. It starts three containers with `docker run -d --network host mongo:${{ matrix.mongo }} --replSet rs0 --port <p>`, for the ports 27017, 27018 and 27019. Then it runs `rs.initiate()` through `mongosh` with the members `127.0.0.1:27017` (priority 2), `127.0.0.1:27018` and `127.0.0.1:27019`, and waits until 27017 is primary. The existing `t/cluster.t` uses port 27018 as a secondary. The member names are IP addresses, because `getprimary` and `connect_uri` connect to the names in `hello.hosts`. A cosocket cannot resolve `localhost` without a `resolver`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd(bson.ordered{{"insert", name}, {"documents", docs}, {"writeConcern", {w = 3}}})`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
-- [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
-- [ ] **Step 4b: Remove the skips.** Remove the `skip_eval` line and the `TODO(Task 12)` comment from the three blocks of `t/cluster.t` (or from `t/replset/cluster.t` after the move).
-- [ ] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
+- [x] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd(bson.ordered{{"insert", name}, {"documents", docs}, {"writeConcern", {w = 3}}})`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
+- [x] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
+- [x] **Step 4b: Remove the skips.** Remove the `skip_eval` line and the `TODO(Task 12)` comment from the three blocks of `t/cluster.t` (or from `t/replset/cluster.t` after the move).
+- [x] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
 
 ### Task 13: GridFS on the new methods
 
@@ -589,12 +589,12 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - Add `TEST: write twice past end`. On a new file handle, `write("abc", 0)` and then `write("d", 3)` both succeed, and `read()` returns `abcd`. Add `TEST: md5 exact multiple`. With `chunkSize = 4` and an 8-byte file, `update_md5()` succeeds, and the stored `md5` equals `ngx.md5` of the 8 bytes. Add `TEST: large file split`. Set `wire.limits.max_message_size = 20000` and write a 100,000-byte file with `chunkSize = 4096`. `read()` returns the same bytes.
 - Add `TEST: stored types` to `t/gridfs_write.t`. A decoded Lua number does not show its BSON type, so the test asks the server. `count({_id = id, chunkSize = {["$type"] = "int"}, length = {["$type"] = "long"}})` on the files collection gives `1`. The chunks collection gives the same count for `n` with `"int"` and `data` with `"binData"`.
 
-- [ ] **Step 1:** Add the new tests of this task to `t/gridfs_write.t`. Remove the `--- SKIP` line from the unaligned read block in `t/api.t`. Keep every existing overwrite assertion as it is.
-- [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS on all four servers.
-- [ ] **Step 4b: Remove the skips.** Remove `|| 1` and the `TODO(Task 13)` comment from `t/api.t` TEST 10 (gridfs read unaligned). Remove the `skip_eval` line and the `TODO(Task 13)` comment from `t/gridfs.t` TEST 2.
-- [ ] **Step 5: Commit** `feat(gridfs): port to command API`.
+- [x] **Step 1:** Add the new tests of this task to `t/gridfs_write.t`. Remove the `--- SKIP` line from the unaligned read block in `t/api.t`. Keep every existing overwrite assertion as it is.
+- [x] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS on all four servers.
+- [x] **Step 4b: Remove the skips.** Remove `|| 1` and the `TODO(Task 13)` comment from `t/api.t` TEST 10 (gridfs read unaligned). Remove the `skip_eval` line and the `TODO(Task 13)` comment from `t/gridfs.t` TEST 2.
+- [x] **Step 5: Commit** `feat(gridfs): port to command API`.
 
 ### Task 14: Sessions and transactions
 
@@ -623,11 +623,11 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - `session.lua` calls `wire.command(...)` through the module table, and does not cache it as a local. This is an exception to the caching rule in Global Constraints. The tests replace `wire.command` with a stub, and a cached local never sees the stub.
 - Produces: while a transaction is open, `conn:set_keepalive()` returns `nil, "transaction in progress"`, as `lua-resty-redis` does.
 
-- [ ] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`. `TEST: keepalive in txn` gets `nil` and `transaction in progress`. `TEST: two transactions` runs two committed transactions on one session. Both inserts are visible, and the second transaction sends a higher `txnNumber`. `TEST: transaction ignores read_conn` connects with `readPreference=secondaryPreferred`. In a transaction, it inserts and then runs `find_one` with the session, and gets the inserted document. A monitor records that no command of the transaction went to the port of `read_conn`. `TEST: mixed operations` starts a transaction and inserts with the session. Then it inserts without a session on the same connection, and aborts. `count == 1`, because only the insert without a session stays. `TEST: commit write concern error` replaces `wire.command` in the test with a stub that returns `{ok = 1, writeConcernError = {code = 64, errmsg = "waiting for replication timed out"}, errorLabels = {"UnknownTransactionCommitResult"}}`. `commit_transaction()` returns `nil`, the `errmsg`, and the reply with its `errorLabels`. `TEST: commit labels` uses stub replies without the label. Three replies get it: the `writeConcernError` with code 64, a `writeConcernError` with code 11602, and `{ok = 0, code = 91, errorLabels = {"RetryableWriteError"}}`. A `writeConcernError` with code 100 does not get it. `TEST: lost commit reply` uses a stub for the first `commitTransaction`. The stub calls the real `wire.command`, so the server commits. Then it closes the socket and returns `nil, "closed"`. The first commit returns `nil` and a reply with the label. After `conn:connect()` with no arguments, the second commit returns `true`, and `count == 1`. The stub records that both commits sent the same `txnNumber`, and that the second one sent `w = "majority"`. `TEST: session with unsafe write` calls `insert` with a session and `safe` set to `nil`, `false` and `0`. Each call returns `nil` and `unacknowledged write with a session`.
-- [ ] **Step 2: Run** `make test-replset` in the `replset` job. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test-replset`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(session): transactions`. Tag the Phase 5 release.
+- [x] **Step 1: Write failing tests.** `TEST: commit visible` inserts in a transaction, commits, and gets `count == 1`. `TEST: abort invisible` inserts, aborts, and gets `count == 0`. `TEST: keepalive in txn` gets `nil` and `transaction in progress`. `TEST: two transactions` runs two committed transactions on one session. Both inserts are visible, and the second transaction sends a higher `txnNumber`. `TEST: transaction ignores read_conn` connects with `readPreference=secondaryPreferred`. In a transaction, it inserts and then runs `find_one` with the session, and gets the inserted document. A monitor records that no command of the transaction went to the port of `read_conn`. `TEST: mixed operations` starts a transaction and inserts with the session. Then it inserts without a session on the same connection, and aborts. `count == 1`, because only the insert without a session stays. `TEST: commit write concern error` replaces `wire.command` in the test with a stub that returns `{ok = 1, writeConcernError = {code = 64, errmsg = "waiting for replication timed out"}, errorLabels = {"UnknownTransactionCommitResult"}}`. `commit_transaction()` returns `nil`, the `errmsg`, and the reply with its `errorLabels`. `TEST: commit labels` uses stub replies without the label. Three replies get it: the `writeConcernError` with code 64, a `writeConcernError` with code 11602, and `{ok = 0, code = 91, errorLabels = {"RetryableWriteError"}}`. A `writeConcernError` with code 100 does not get it. `TEST: lost commit reply` uses a stub for the first `commitTransaction`. The stub calls the real `wire.command`, so the server commits. Then it closes the socket and returns `nil, "closed"`. The first commit returns `nil` and a reply with the label. After `conn:connect()` with no arguments, the second commit returns `true`, and `count == 1`. The stub records that both commits sent the same `txnNumber`, and that the second one sent `w = "majority"`. `TEST: session with unsafe write` calls `insert` with a session and `safe` set to `nil`, `false` and `0`. Each call returns `nil` and `unacknowledged write with a session`.
+- [x] **Step 2: Run** `make test-replset` in the `replset` job. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `make test-replset`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(session): transactions`. Tag the Phase 5 release.
 
 ---
 
