@@ -1055,3 +1055,49 @@ number nil nil
 true
 --- no_error_log
 [error]
+
+
+
+=== TEST 25: a failed query is an error, not a document
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "x"}, true))
+            local gf = fs:find_one({filename = "x"})
+            local real = wire.command
+            wire.command = function(c, d, cmd, ...)
+                if cmd[1] and cmd[1][1] == "find" then return nil, "closed" end
+                return real(c, d, cmd, ...)
+            end
+            local r, err = gf:write("zz", 0)
+            ngx.say(r, " ", err)
+            r, err = fs:remove({filename = "x"})
+            ngx.say(r, " ", err)
+            r, err = fs:find_one({filename = "x"})
+            ngx.say(r, " ", err)
+            r, err = fs:get({write = function() return true end}, {filename = "x"})
+            ngx.say(r, " ", err)
+            wire.command = real
+            -- nothing was removed or changed
+            ngx.say(db:get_col("fs14.files"):count({}), " ", fs:find_one({filename = "x"}):read())
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil closed
+nil closed
+nil closed
+nil closed
+1 abcdefgh
+--- no_error_log
+[error]
