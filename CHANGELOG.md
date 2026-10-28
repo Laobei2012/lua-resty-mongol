@@ -32,8 +32,9 @@
   `new`, `insert` and `write` (once for each bucket object). The stored
   `length` only grows, an update that matches no chunk or file is an error,
   and two writers on the same bytes are last writer wins.
-- `read` and `update_md5` check the chunks (they exist, are binary and have
-  the right length) and return `nil, err` otherwise.
+- `read`, `update_md5` and `write` check the chunks (they exist, hold binary
+  data of subtype 0, and have the right length). `read` and `write` return
+  `nil, err` for a bad chunk, and `update_md5` returns `false, err`.
 - `new` and `insert` raise `bad argument` for a `chunkSize` that is not a
   positive whole number. `write` raises `bad argument` for arguments of the
   wrong type and returns `nil, "invalid size"` for a negative size.
