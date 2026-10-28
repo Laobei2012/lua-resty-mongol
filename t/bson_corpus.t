@@ -28,6 +28,9 @@ __DATA__
                 "array", "binary", "boolean", "datetime", "document",
                 "double", "int32", "int64", "null", "oid", "string",
                 "timestamp", "top",
+                "decimal128-1", "decimal128-2", "decimal128-3", "decimal128-4",
+                "decimal128-5", "decimal128-6", "decimal128-7",
+                "regex", "minkey", "maxkey",
             }
             -- "file: description" = task that fixes it
             local known_failures = {
@@ -39,6 +42,8 @@ __DATA__
             local wrappers = {
                 bson.binary_mt, bson.utc_date_mt, bson.timestamp_mt,
                 bson.int32_mt, bson.int64_mt, bson.double_mt,
+                bson.decimal128_mt, bson.regex_mt, bson.minkey_mt,
+                bson.maxkey_mt,
                 require("resty.mongol.object_id").metatable,
             }
             local function is_wrapper(v)
@@ -89,6 +94,27 @@ __DATA__
                         if not known_failures[key] then
                             bad[#bad + 1] = key .. " (decode: " .. tostring(doc) .. ")"
                         end
+                    elseif name:find("^decimal128") then
+                        -- the string of the value, and the bytes that the
+                        -- string makes (the canonical one and the degenerate one)
+                        local want = cjson.decode(c.canonical_extjson).d["$numberDecimal"]
+                        if tostring(doc.d) ~= want then
+                            bad[#bad + 1] = key .. " (string " .. tostring(doc.d) .. " ~= " .. want .. ")"
+                        end
+                        local strings = {}
+                        if not c.lossy then strings[#strings + 1] = want end
+                        if c.degenerate_extjson then
+                            strings[#strings + 1] = cjson.decode(c.degenerate_extjson).d["$numberDecimal"]
+                        end
+                        for _, str in ipairs(strings) do
+                            local d, err = bson.decimal128(str)
+                            if not d or d.v ~= doc.d.v then
+                                bad[#bad + 1] = key .. " (parse " .. str .. ": " .. tostring(err) .. ")"
+                            end
+                        end
+                        if bson.to_bson(doc) ~= raw then
+                            bad[#bad + 1] = key .. " (encode)"
+                        end
                     elseif not skip_encode(name, doc) then
                         local out = bson.to_bson(doc)
                         if out ~= raw and not known_failures[key] then
@@ -101,6 +127,13 @@ __DATA__
                     local ok, doc = pcall(bson.decode, t.hexbytes(c.bson))
                     if ok and doc and not known_failures[key] then
                         bad[#bad + 1] = key .. " (no decode error)"
+                    end
+                end
+                for _, c in ipairs(spec.parseErrors or {}) do
+                    local key = name .. ": " .. c.description
+                    local d = bson.decimal128(c.string)
+                    if d then
+                        bad[#bad + 1] = key .. " (parsed " .. c.string .. ")"
                     end
                 end
                 if #bad == 0 then
@@ -127,5 +160,15 @@ oid ok
 string ok
 timestamp ok
 top ok
+decimal128-1 ok
+decimal128-2 ok
+decimal128-3 ok
+decimal128-4 ok
+decimal128-5 ok
+decimal128-6 ok
+decimal128-7 ok
+regex ok
+minkey ok
+maxkey ok
 --- no_error_log
 [error]
