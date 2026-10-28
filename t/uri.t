@@ -290,3 +290,83 @@ true true
 true
 --- no_error_log
 [error]
+
+
+
+=== TEST 8: host parser for discovery
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            -- record the pool name that the driver passes to each connect
+            local pools = {}
+            local real_tcp = ngx.socket.tcp
+            ngx.socket.tcp = function()
+                local sock = real_tcp()
+                return setmetatable({}, {__index = function(_, k)
+                    if k == "connect" then
+                        return function(_, h, p, o)
+                            pools[#pools + 1] = o and o.pool or "default"
+                            return sock:connect(h, p, o)
+                        end
+                    end
+                    local v = sock[k]
+                    if type(v) == "function" then
+                        return function(_, ...) return v(sock, ...) end
+                    end
+                    return v
+                end})
+            end
+            
+            local function show(str)
+                local h, err = uri.parse_host(str)
+                if not h then ngx.say(str, " -> ", type(err)) return end
+                ngx.say(str, " -> ", h.host, " ", h.port)
+            end
+            show("h")
+            show("h:1")
+            show("[::1]:27017")
+            show("[::1]")
+            show("[fe80::1]:5")
+            show("h:")
+            show("[::1]x")
+            show("")
+            -- getprimary connects to the members that hello names
+            local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P))
+            local real = wire.command
+            local calls = 0
+            wire.command = function(...)
+                calls = calls + 1
+                if calls == 1 then return {ok = 1, isWritablePrimary = false, hosts = {"[::1]:2", "h2", "h3:4"}} end
+                return real(...)
+            end
+            pools = {}
+            local found, err = conn:getprimary({})
+            wire.command = real
+            ngx.say(found, " ", type(err))
+            local seen = {}
+            for _, p in ipairs(pools) do seen[#seen + 1] = p end
+            ngx.say(table.concat(seen, " "))
+        }
+    }
+--- request
+GET /t
+--- response_body
+h -> h 27017
+h:1 -> h 1
+[::1]:27017 -> ::1 27017
+[::1] -> ::1 27017
+[fe80::1]:5 -> fe80::1 5
+h: -> string
+[::1]x -> string
+ -> string
+nil string
+plain:3:::1:1:2 plain:2:h2:5:27017 plain:2:h3:1:4
+--- no_error_log
+[error]
