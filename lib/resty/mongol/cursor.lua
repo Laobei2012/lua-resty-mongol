@@ -77,6 +77,7 @@ local function from_reply(col, reply_cursor, num_each, session)
     local id = int64_to_le(reply_cursor.id)
     local c = new_cursor(ncol, nil, nil, num_each or 0)
     c.session = session
+    c.conn = ncol.conn
     c.started = true
     c.id = id
     c.results = batch
@@ -138,11 +139,13 @@ end
 
 local function fetch_first(self, options)
     self.started = true
+    -- the cursor keeps the connection of its first query (the connection
+    -- to a secondary, if there is one) for getMore and killCursors
+    self.conn = self.col.conn.read_conn or self.col.conn
     local limit = self.limit_n > 0 and self.limit_n or nil
-    if limit or options then
-        options = options or {}
-        options.limit = limit
-    end
+    options = options or {}
+    options.limit = limit
+    options.conn = self.conn
     local id, results, _, err = self.col:query(self.query, self.returnfields,
                                     self.skip_n, self.num_each, options)
     return take_batch(self, id, results, err)
@@ -209,7 +212,7 @@ function cursor_methods:next()
             ok, err = fetch_first(self)
         else
             local id, results, _, merr = self.col:getmore(self.id,
-                            self.num_each, self.i)
+                            self.num_each, self.i, { conn = self.conn })
             ok, err = take_batch(self, id, results, merr)
         end
         if not ok then return nil, err end
@@ -225,7 +228,7 @@ function cursor_methods:close()
     self.n_batch = 0
     if id and id ~= ZERO_ID then
         self.id = ZERO_ID
-        local ok, err = self.col:kill_cursors({ id })
+        local ok, err = self.col:kill_cursors({ id }, { conn = self.conn })
         if not ok then return nil, err end
     end
     return true

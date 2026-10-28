@@ -1,6 +1,7 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
 local error = error
+local setmetatable = setmetatable
 local next = next
 local ipairs , pairs = ipairs , pairs
 local type = type
@@ -258,7 +259,8 @@ function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
         cmd[#cmd + 1] = {"allowPartialResults", true}
     end
 
-    local conn = options.conn or self.conn
+    -- a connection to a secondary (connect_uri) serves the reads
+    local conn = options.conn or self.conn.read_conn or self.conn
     local r, err, doc = wire.command(conn, self.db, ordered(cmd))
     return cursor_result(conn, r, err, doc, numberToSkip, "firstBatch")
 end
@@ -299,7 +301,7 @@ function colmethods:kill_cursors(cursorIDs, opts)
 end
 
 function colmethods:count(query)
-    local r, err = wire.command(self.conn, self.db, ordered{
+    local r, err = wire.command(self.conn.read_conn or self.conn, self.db, ordered{
         {"count", self.col},
         {"query", query or {}},
     })
@@ -346,7 +348,8 @@ function colmethods:aggregate(pipeline, options)
     if next(pipeline) == nil then
         pipeline = bson.empty_array
     end
-    local r, err = wire.command(self.conn, self.db, ordered{
+    local conn = self.conn.read_conn or self.conn
+    local r, err = wire.command(conn, self.db, ordered{
         {"aggregate", self.col},
         {"pipeline", pipeline},
         {"cursor", {batchSize = int32(batch_size)}},
@@ -354,7 +357,14 @@ function colmethods:aggregate(pipeline, options)
     if not r then
         return nil, err
     end
-    return new_cursor.from_reply(self, r.cursor, batch_size)
+    -- the cursor keeps this connection for getMore and killCursors
+    local ncol = setmetatable({
+        conn = conn,
+        db_obj = self.db_obj,
+        db = self.db,
+        col = self.col,
+    }, colmt)
+    return new_cursor.from_reply(ncol, r.cursor, batch_size)
 end
 
 function colmethods:find_one(query, returnfields)
