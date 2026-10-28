@@ -130,7 +130,7 @@ admin
             -- an explicit connect without credentials
             conn:close()
             assert(conn:connect(H, P))
-            ngx.say(users(conn), " ", conn.relogin, " ", conn.read_conn)
+            ngx.say(users(conn), " ", conn.relogin ~= nil, " ", conn.read_conn)
             -- a reconnect with no arguments must not log in again
             conn:close()
             assert(conn:connect())
@@ -148,7 +148,7 @@ admin
 GET /t
 --- response_body
 1
-0 nil nil
+0 false nil
 0
 1
 true 0
