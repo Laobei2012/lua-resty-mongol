@@ -263,7 +263,8 @@ true
             ngx.say(col:insert(docs, nil, true, {session = s}))
             local n = 0
             for _ in col:find({}, nil, 10, {session = s}):pairs() do n = n + 1 end
-            ngx.say(n, " ", col:count({}))
+            -- outside the transaction nothing is committed yet (count would include it)
+            ngx.say(n, " ", col:find_one({}) == nil)
             assert(s:commit_transaction())
             ngx.say(col:count({}))
         }
@@ -272,7 +273,7 @@ true
 GET /t
 --- response_body
 0
-25 0
+25 true
 25
 --- no_error_log
 [error]
