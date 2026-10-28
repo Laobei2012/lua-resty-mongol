@@ -4,6 +4,9 @@
 
 ### Sessions and transactions
 
+- The README clarifies session cleanup: the driver sends no `endSessions`;
+  unused server sessions expire according to the server's logical session
+  timeout.
 - `conn:set_keepalive()` rejects pooling until every session's open
   transaction finishes. Previously only the last session was tracked, so
   finishing its transaction could pool a socket while another remained open.

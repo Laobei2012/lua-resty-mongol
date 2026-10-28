@@ -133,6 +133,7 @@ Sessions and transactions
  - In a transaction every write is acknowledged, and `safe` is ignored.
  - Do not call `conn:set_keepalive()` while a transaction is open.
  - Outside a transaction a write with a session must be acknowledged (`safe` true).
+ - The driver does not send `endSessions`. Unused server sessions expire according to the server's logical session timeout (`logicalSessionTimeoutMinutes` in `hello`). Finish each transaction with commit or abort before returning its connection to the pool.
 
 Command monitoring
 ======
