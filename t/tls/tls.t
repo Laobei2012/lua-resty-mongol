@@ -260,3 +260,34 @@ true true localhost nil
 1
 --- no_error_log
 [crit]
+
+
+
+=== TEST 9: a caller pool name cannot collide with a generated one
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local conn = mongo:new()
+            conn:set_timeout(5000)
+            assert(conn:connect(H, P, {ssl = true, ssl_verify = false}))
+            ngx.say(conn:set_keepalive(10000, 5))
+            -- the pool name that the first version generated for this socket
+            local plain = mongo:new()
+            plain:set_timeout(5000)
+            assert(plain:connect(H, P, {pool = H .. ":" .. P .. ":tls:noverify:" .. H}))
+            ngx.say(plain:get_reused_times())
+            local r, err = plain:new_db_handle("admin"):cmd({ping = 1})
+            ngx.say(r, " ", type(err))
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+0
+nil string
+--- no_error_log
+[crit]
