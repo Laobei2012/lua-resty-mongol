@@ -1216,3 +1216,61 @@ nil string true
 8
 --- no_error_log
 [error]
+
+
+
+=== TEST 29: a bad chunk is an error on read
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local function fresh(name)
+                assert(fs:insert(t.string_fh("abcdefghij"), {chunkSize = 4, filename = name}, true))
+                return fs:find_one({filename = name})
+            end
+            local chunks = db:get_col("fs14.chunks")
+            -- a short chunk in the middle
+            local gf = fresh("short")
+            chunks:update({files_id = gf.files_id, n = 1}, {["$set"] = {data = bson.get_bin_data("ef")}}, 0, 0, true)
+            local r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            -- a short last chunk
+            gf = fresh("short_last")
+            chunks:update({files_id = gf.files_id, n = 2}, {["$set"] = {data = bson.get_bin_data("i")}}, 0, 0, true)
+            r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            -- data that is not binary
+            gf = fresh("text")
+            chunks:update({files_id = gf.files_id, n = 0}, {["$set"] = {data = "abcd"}}, 0, 0, true)
+            r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            -- a missing chunk
+            gf = fresh("missing")
+            chunks:delete({files_id = gf.files_id, n = 1}, 0, true)
+            r, err = gf:read()
+            ngx.say(r, " ", type(err))
+            ngx.say(gf:update_md5())
+            -- a good file reads
+            gf = fresh("good")
+            ngx.say(gf:read(), " ", gf:read(3, 3), " ", gf:update_md5())
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil string
+nil string
+nil string
+nil string
+false read chunk failed
+abcdefghij def true
+--- no_error_log
+[error]
