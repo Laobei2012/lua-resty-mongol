@@ -2,6 +2,41 @@
 
 ## Unreleased (Phase 5)
 
+### Connection strings and replica sets
+
+- `mongol.connect_uri(str)` is new (issues #10 and #22). It parses a
+  `mongodb://` string, tries the seeds and the members that `hello` names,
+  and returns a connection to the primary, or `nil, err`. Writes and
+  `db:cmd` always use the primary. A user in the string logs in on
+  `authSource` (the option, else the database of the string, else `admin`).
+  `mongodb+srv://` is not supported. The `replicaSet` option is read but
+  not checked.
+- `readPreference` applies to reads only (`col:query`, `col:find`,
+  `col:find_one`, `col:count` and `col:aggregate`):
+  - `primary` (the default) and `primaryPreferred`: the primary serves the
+    reads. If no primary answers, `connect_uri` returns `nil, err`.
+  - `secondary`: a second connection, `conn.read_conn`, goes to a member
+    that is a secondary. If there is none, `connect_uri` returns `nil, err`.
+  - `secondaryPreferred`: the same, but the primary serves the reads if
+    there is no secondary.
+  - Any other value returns `nil, err`. Every command on `conn.read_conn`
+    carries `$readPreference`, and the commands on the primary never do.
+  - A secondary can be a little late, so a read right after a write can
+    miss the document.
+  - A cursor keeps the connection of its first query for `getMore` and
+    `killCursors`. `conn:close()` and `conn:set_keepalive()` also act on
+    `conn.read_conn`.
+- `uri.parse(str)` (module `resty.mongol.uri`) returns `{hosts, db, user,
+  password, options}` or `nil, err`. It decodes percent-encoding in the user
+  name, the password and the database. Unescaped `@` or `:` in the user
+  information, a bad port or a bad `tls` value is an error.
+- With `tls=true` the handshake verifies the certificate against the host
+  name. ngx_lua does not match a certificate name against an IP address, so
+  use host names in the string when you use `tls=true`.
+- `getprimary` and `connect_uri` now give the port of a member as a number.
+  Before, `getprimary` gave a string, or an empty string for a member
+  without a port.
+
 ### Command monitoring
 
 - `mongol.set_monitor(m)` is new. `m` has the optional functions

@@ -568,12 +568,12 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
   - If the URI has a user, it logs in.
 - Produces: a CI job `replset` with a 3-member replica set. It starts three containers with `docker run -d --network host mongo:${{ matrix.mongo }} --replSet rs0 --port <p>`, for the ports 27017, 27018 and 27019. Then it runs `rs.initiate()` through `mongosh` with the members `127.0.0.1:27017` (priority 2), `127.0.0.1:27018` and `127.0.0.1:27019`, and waits until 27017 is primary. The existing `t/cluster.t` uses port 27018 as a secondary. The member names are IP addresses, because `getprimary` and `connect_uri` connect to the names in `hello.hosts`. A cosocket cannot resolve `localhost` without a `resolver`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd(bson.ordered{{"insert", name}, {"documents", docs}, {"writeConcern", {w = 3}}})`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
-- [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
-- [ ] **Step 4b: Remove the skips.** Remove the `skip_eval` line and the `TODO(Task 12)` comment from the three blocks of `t/cluster.t` (or from `t/replset/cluster.t` after the move).
-- [ ] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
+- [x] **Step 1: Write failing tests.** `TEST: uri parse`, with `mongodb://u%40x:p@h1:1,h2/db?authSource=admin&tls=true&replicaSet=rs0`, gives the user `u@x`, two hosts, and `tls == true`. `TEST: connect_uri replset` in `t/replset/uri.t` gives `ismaster() == true`. `TEST: secondary read then write` uses `readPreference=secondaryPreferred`. `conn.read_conn:ismaster()` is `false`, `find_one({})` succeeds, and then a safe `insert` returns `0`. `TEST: getMore on same server` first writes 25 documents through `db:cmd(bson.ordered{{"insert", name}, {"documents", docs}, {"writeConcern", {w = 3}}})`, so that every member has them. Then it reads them with `find({}, nil, 10)` through `read_conn` and gets all 25. The `replset` job runs `make test-replset`.
+- [x] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
+- [x] **Step 4b: Remove the skips.** Remove the `skip_eval` line and the `TODO(Task 12)` comment from the three blocks of `t/cluster.t` (or from `t/replset/cluster.t` after the move).
+- [x] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
 
 ### Task 13: GridFS on the new methods
 
