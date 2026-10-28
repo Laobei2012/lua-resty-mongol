@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (Phase 5)
+
+### Aggregation
+
+- `col:aggregate(pipeline, options)` is new (issue #55). It returns a cursor
+  over the results, or `nil, err`. The cursor has the same methods as the
+  cursor of `col:find` (`next`, `pairs`, `close`). `options.batch_size`
+  sets the batch size of each fetch and defaults to 100. A `pipeline` that
+  is not a table raises `bad argument`.
+
 ## Unreleased (Phase 4)
 
 ### BSON types

@@ -505,11 +505,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 **Interfaces:**
 - Produces: `col:aggregate(pipeline, options) -> cursor | nil, err`. It sends ordered `{aggregate = col, pipeline, cursor = {batchSize = options.batch_size or 100}}` and returns `cursor.from_reply(...)` from Task 6 on the reply (issue #55).
 
-- [ ] **Step 1: Write the failing test.** `TEST: group sum`: insert `{k="a",v=1}`, `{k="a",v=2}` and `{k="b",v=5}`. Then `$group` by `k` with a sum of `v`, and `$sort` on `_id`, yield `a 3` and `b 5`.
-- [ ] **Step 2: Run** `prove t/aggregate.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS.
-- [ ] **Step 5: Commit** `feat(col): aggregate`.
+- [x] **Step 1: Write the failing test.** `TEST: group sum`: insert `{k="a",v=1}`, `{k="a",v=2}` and `{k="b",v=5}`. Then `$group` by `k` with a sum of `v`, and `$sort` on `_id`, yield `a 3` and `b 5`.
+- [x] **Step 2: Run** `prove t/aggregate.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS.
+- [x] **Step 5: Commit** `feat(col): aggregate`.
 
 ### Task 11b: Command monitoring hook
 
