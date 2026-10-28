@@ -178,8 +178,11 @@ GET /t
             local col = db:get_col("txn_t")
             db:cmd({drop = "txn_t"})
             db:cmd(bson.ordered{{"create", "txn_t"}})
-            local ports = {}
-            mongo.set_monitor({started = function(ev) ports[ev.port] = (ports[ev.port] or 0) + 1 end})
+            local servers = {}
+            mongo.set_monitor({started = function(ev)
+                local key = ev.host .. ":" .. ev.port
+                servers[key] = (servers[key] or 0) + 1
+            end})
             local s = conn:start_session()
             assert(s:start_transaction())
             col:insert({{a = 1}}, nil, true, {session = s})
@@ -190,7 +193,9 @@ GET /t
             for _ in col:aggregate({}, {session = s}):pairs() do seen = seen + 1 end
             assert(s:commit_transaction())
             mongo.set_monitor(nil)
-            ngx.say(seen, " ", ports[conn.read_conn.port] == nil, " ", ports[conn.port] > 0)
+            local read_key = conn.read_conn.host .. ":" .. conn.read_conn.port
+            local primary_key = conn.host .. ":" .. conn.port
+            ngx.say(seen, " ", servers[read_key] == nil, " ", servers[primary_key] > 0)
         }
     }
 --- request
