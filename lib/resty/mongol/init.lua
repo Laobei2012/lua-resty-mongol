@@ -168,9 +168,13 @@ function connmethods:connect(host, port, opts)
     -- handshake, so a later connect with other TLS rules would skip them.
     -- Without a pool name from the caller, the pool name holds the TLS
     -- settings.
-    local pool = opts and opts.pool
-    if not pool and opts and opts.ssl then
-        pool = host .. ":" .. port .. ":tls:"
+    -- The prefixes keep the two kinds of names apart, so that a pool name
+    -- from the caller can never equal a generated one.
+    local pool
+    if opts and opts.pool then
+        pool = "user:" .. opts.pool
+    elseif opts and opts.ssl then
+        pool = "tls:" .. host .. ":" .. port .. ":"
                .. (opts.ssl_verify == false and "noverify" or "verify") .. ":"
                .. (opts.ssl_server_name or host)
     end
