@@ -69,7 +69,7 @@ function methods:fields ( )
     return list
 end
 
--- called by wire.command when the message is built: the first command of
+-- called after a successful send: the first command of
 -- a transaction carries startTransaction, the others do not
 function methods:mark_sent ( )
     if self.state == "starting" then

@@ -4,6 +4,9 @@
 
 ### Sessions and transactions
 
+- A failed first send keeps the transaction's `startTransaction` field for
+  a retry after reconnect. Previously the send failure consumed it, so the
+  server rejected the retry as an operation in a transaction it never saw.
 - `conn:start_session()` is new. It returns a session with an `lsid`. Pass it
   as `opts.session` (the last argument) of `col:insert`, `col:update`,
   `col:delete`, `col:query`, `col:getmore`, `col:kill_cursors`, `col:find`,

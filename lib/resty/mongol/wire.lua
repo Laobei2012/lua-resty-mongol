@@ -257,9 +257,6 @@ function _M.command ( conn , dbname , cmd , sequences , extra , session )
     if not msg then
         return nil , err
     end
-    if session then
-        session:mark_sent ( )
-    end
     local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
                                            seqinfo , request_id , extra )
     local ok
@@ -267,6 +264,9 @@ function _M.command ( conn , dbname , cmd , sequences , extra , session )
     if not ok then
         if state then monitor.failed ( state , err ) end
         return nil , err
+    end
+    if session then
+        session:mark_sent ( )
     end
     local reply
     reply , err = receive ( conn )
@@ -300,9 +300,6 @@ function _M.send_only ( conn , dbname , cmd , sequences , extra , session )
     if not msg then
         return nil , err
     end
-    if session then
-        session:mark_sent ( )
-    end
     local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
                                            seqinfo , request_id , extra )
     local ok
@@ -310,6 +307,9 @@ function _M.send_only ( conn , dbname , cmd , sequences , extra , session )
     if not ok then
         if state then monitor.failed ( state , err ) end
         return nil , err
+    end
+    if session then
+        session:mark_sent ( )
     end
     -- the server sends no reply: succeeded means that the driver sent it
     if state then monitor.succeeded ( state , { ok = 1 } ) end
