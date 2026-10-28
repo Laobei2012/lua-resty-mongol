@@ -101,14 +101,6 @@ end
 function gridfs_mt:remove(fields, continue_on_err, safe)
     local r, err
     local n = 0
-    if fields == {} then
-        r,err = self.chunk_col:delete({}, continue_on_err, safe)
-        if not r then return nil, "remove chunks failed: "..err end
-        r,err = self.file_col:delete({}, continue_on_err, safe)
-        if not r then return nil, "remove files failed: "..err end
-        return r
-    end
-
     local cursor = self.file_col:find(fields, {_id=1})
     while true do
         local i, v = cursor:next()
