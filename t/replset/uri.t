@@ -234,3 +234,55 @@ true
 true
 --- no_error_log
 [error]
+
+
+
+=== TEST 7: reconnect keeps the read connection
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?readPreference=secondary"))
+            local db = conn:new_db_handle("test")
+            local col = db:get_col("rs_fix")
+            db:cmd({drop = "rs_fix"})
+            local docs = {}
+            for i = 1, 25 do docs[i] = {n = i} end
+            -- on every member before the test reads
+            assert(db:cmd(bson.ordered{{"insert", "rs_fix"}, {"documents", docs}, {"writeConcern", {w = 3}}}))
+            
+            local mode = conn.read_conn.read_preference
+            local function read_ok()
+                local n = 0
+                for _ in col:find({}, nil, 10):pairs() do n = n + 1 end
+                return n
+            end
+            ngx.say(read_ok(), " ", mode)
+            conn:close()
+            assert(conn:connect())
+            ngx.say(read_ok(), " ", conn.read_conn.read_preference == mode, " ", (conn.read_conn:ismaster()))
+            ngx.say(conn:set_keepalive(10000, 5))
+            assert(conn:connect())
+            ngx.say(read_ok(), " ", conn.read_conn.read_preference == mode)
+            -- a connect to another address drops the read connection
+            conn:close()
+            assert(conn:connect(H, P))
+            ngx.say(conn.read_conn)
+        }
+    }
+--- request
+GET /t
+--- response_body
+25 secondary
+25 true false
+1
+25 true
+nil
+--- no_error_log
+[error]
