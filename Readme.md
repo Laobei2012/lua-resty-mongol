@@ -152,6 +152,14 @@ An example with [nginx-lua-prometheus](https://github.com/knyar/nginx-lua-promet
             end,
         })
 
+GridFS
+======
+
+ - Two writers on the same bytes of a file are last writer wins: the driver does not check for conflicts between them. The stored `length` only grows, and the chunks have a unique index on `{files_id, n}`. Use one writer for a file when the order matters.
+ - A new file has no `md5`; call `gridfs_file:update_md5()` to store one. A `write` removes the `md5` of the file.
+ - `read` checks the chunks and returns `nil, err` for a missing, short or non-binary chunk.
+ - `chunkSize` must be a positive whole number.
+
 ###Connection objects have server wide methods.
 ------------
 

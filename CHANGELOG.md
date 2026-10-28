@@ -24,7 +24,23 @@
   subtype 0.
 - `gridfs:new(meta)` and `gridfs:insert(fh, meta, safe)` do not add `md5`,
   `uploadDate` and `length` to your `meta` table any more. They still set
-  `_id`, `filename` and `chunkSize` in it.
+  `_id`, `filename` and `chunkSize` in it. Reason: those three values belong
+  to one stored file. If you reuse a `meta` table for a second file, the old
+  `length` and `md5` of the first file would go with it. The driver builds the
+  files document from a copy of the table.
+- The chunks collection gets the unique index `{files_id: 1, n: 1}` from
+  `new`, `insert` and `write` (once for each bucket object). The stored
+  `length` only grows, an update that matches no chunk or file is an error,
+  and two writers on the same bytes are last writer wins.
+- `read` and `update_md5` check the chunks (they exist, are binary and have
+  the right length) and return `nil, err` otherwise.
+- `new` and `insert` raise `bad argument` for a `chunkSize` that is not a
+  positive whole number. `write` raises `bad argument` for arguments of the
+  wrong type and returns `nil, "invalid size"` for a negative size.
+- A new file has no `md5` field (it was `0`), and `write` removes the `md5`.
+  Call `update_md5()` to store a digest.
+- A failed query makes `write`, `remove`, `find_one` and `get` return
+  `nil, err`. `remove` returned 0 before.
 
 ### Connection strings and replica sets
 
