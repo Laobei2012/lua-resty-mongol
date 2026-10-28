@@ -397,6 +397,9 @@ GET /t
             local r, err, doc = commit_with({ok = 1, writeConcernError = {code = 64, errmsg = "waiting for replication timed out"},
                                              errorLabels = {L}})
             ngx.say(r, " ", err, " ", has(doc, L), " ", #doc.errorLabels)
+            -- the real transaction is still open on the server, and it holds
+            -- the lock of the collection until it ends
+            s:abort_transaction()
         }
     }
 --- request
