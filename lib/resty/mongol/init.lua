@@ -2,7 +2,9 @@ local mod_name = (...)
 
 local _M = { _VERSION = "1.0.0" }
 
+local error = error
 local ipairs = ipairs
+local type = type
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
@@ -126,9 +128,20 @@ function connmethods:get_reused_times()
     return sock:getreusedtimes()
 end
 
-function connmethods:connect(host, port)
-    self.host = host or self.host
-    self.port = port or self.port
+-- opts: pool, pool_size, backlog (for the connection pool), and ssl,
+-- ssl_verify (default true), ssl_server_name (default host) and
+-- ssl_reused_session (for the TLS handshake). A call with no arguments
+-- reuses the host, port and opts of the last successful connect.
+function connmethods:connect(host, port, opts)
+    if opts ~= nil and type(opts) ~= "table" then
+        error("bad argument #3 to 'connect' (table expected)", 2)
+    end
+    if host == nil and port == nil and opts == nil then
+        opts = self.opts
+    end
+    host = host or self.host
+    port = port or self.port
+
     local sock = self.sock
     if not sock or self.broken then
         sock = socket()
@@ -139,7 +152,39 @@ function connmethods:connect(host, port)
         self.sock = sock
     end
 
-    return sock:connect(self.host, self.port)
+    local ok, err
+    if opts and (opts.pool or opts.pool_size or opts.backlog) then
+        ok, err = sock:connect(host, port, {
+            pool = opts.pool,
+            pool_size = opts.pool_size,
+            backlog = opts.backlog,
+        })
+    else
+        ok, err = sock:connect(host, port)
+    end
+    if not ok then
+        return nil, err
+    end
+
+    local session
+    if opts and opts.ssl then
+        local verify = opts.ssl_verify
+        if verify == nil then
+            verify = true
+        end
+        session, err = sock:sslhandshake(opts.ssl_reused_session,
+                                         opts.ssl_server_name or host, verify)
+        if not session then
+            sock:close()
+            return nil, err
+        end
+    end
+
+    self.host, self.port, self.opts = host, port, opts
+    if session then
+        return ok, session
+    end
+    return ok
 end
 
 function connmethods:close()
