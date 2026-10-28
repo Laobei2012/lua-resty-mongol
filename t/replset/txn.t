@@ -577,3 +577,55 @@ true false
 true 1 3
 --- no_error_log
 [error]
+
+
+=== TEST 14: failed first send preserves startTransaction on retry
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            db:cmd({drop = "txn_send_retry"})
+            assert(db:cmd({create = "txn_send_retry"}))
+            local col = db:get_col("txn_send_retry")
+            for i, name in ipairs({"command", "send_only"}) do
+                local s = assert(conn:start_session())
+                assert(s:start_transaction())
+                local sock = conn.sock
+                conn.sock = {
+                    send = function() return nil, "injected send failure" end,
+                    close = function() return sock:close() end,
+                }
+                local ok, err = wire[name](conn, "test", {ping = 1}, nil, nil, s)
+                ngx.say(name, " ", ok == nil, " ", err ~= nil, " ", s.state)
+                assert(conn:connect())
+                local first
+                mongo.set_monitor({started = function(ev)
+                    if ev.command_name == "insert" then first = ev.command.startTransaction end
+                end})
+                local result, ierr = col:insert({{a = i}}, nil, true, {session = s})
+                mongo.set_monitor(nil)
+                ngx.say(result, " ", first, " ", ierr == nil)
+                local committed = s:commit_transaction()
+                ngx.say(committed == true)
+                if not committed then s:abort_transaction() end
+            end
+            ngx.say(col:count({}))
+            conn:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+command true true starting
+0 true true
+true
+send_only true true starting
+0 true true
+true
+2
+--- no_error_log
+[error]
