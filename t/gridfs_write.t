@@ -1270,7 +1270,7 @@ nil string
 nil string
 nil string
 nil string
-false read chunk failed
+falseread chunk failed
 abcdefghij def true
 --- no_error_log
 [error]
@@ -1322,9 +1322,9 @@ x false true
 true false true
 false true
 0 0
-nil invalid size
-nil invalid offset
-nil invalid size
+nilinvalid size
+nilinvalid offset
+nilinvalid size
 false true
 false true
 false true
