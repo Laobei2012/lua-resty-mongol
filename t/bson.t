@@ -649,3 +649,41 @@ MinKey MaxKey 0 true
 cdata true
 --- no_error_log
 [error]
+
+
+=== TEST 24: json dates at the boundaries
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local cases = {
+                0, -1, 1700000000123, 253402300799999, 253402300800000,
+                -62167219200000, -62167219200001, -62135596800000,
+                9007199254740993LL, -9007199254740993LL,
+                9223372036854775807LL, -9223372036854775807LL - 1,
+            }
+            for _, ms in ipairs(cases) do
+                local j = bson.to_json_safe({d = bson.get_utc_date(ms)})
+                ngx.say(tostring(ms), " ", j.d)
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+0 1970-01-01T00:00:00.000Z
+-1 1969-12-31T23:59:59.999Z
+1700000000123 2023-11-14T22:13:20.123Z
+253402300799999 9999-12-31T23:59:59.999Z
+253402300800000 +010000-01-01T00:00:00.000Z
+-62167219200000 0000-01-01T00:00:00.000Z
+-62167219200001 -000001-12-31T23:59:59.999Z
+-62135596800000 0001-01-01T00:00:00.000Z
+9007199254740993LL +287396-10-12T08:59:00.993Z
+-9007199254740993LL -283457-03-21T15:00:59.007Z
+9223372036854775807LL +292278994-08-17T07:12:55.807Z
+-9223372036854775808LL -292275055-05-16T16:47:04.192Z
+--- no_error_log
+[error]
