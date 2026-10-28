@@ -45,7 +45,29 @@ between concurrent requests.
 
 ## Installation
 
-From this checkout:
+### LuaRocks
+
+Install the [published package](https://luarocks.org/modules/laobei2012/lua-resty-mongol)
+with LuaRocks configured for OpenResty's LuaJIT (Lua 5.1):
+
+```sh
+luarocks install lua-resty-mongol 1.0.0-1
+```
+
+LuaRocks installs into its configured tree. If that tree is separate from
+OpenResty, add both Lua file and directory-module lookup patterns to
+`lua_package_path`. For example, for a tree rooted at `/usr/local`:
+
+```nginx
+lua_package_path "/usr/local/share/lua/5.1/?.lua;/usr/local/share/lua/5.1/?/init.lua;;";
+```
+
+LuaRocks manages installation only; OpenResty remains the required runtime.
+The rockspec pins the `v1.0.0` source tag.
+
+### From source
+
+From a checkout (use the `v1.0.0` tag for the released source):
 
 ```sh
 make install PREFIX=/usr/local/openresty
@@ -58,18 +80,14 @@ and directory-module lookup patterns in `nginx.conf`:
 lua_package_path "/usr/local/openresty/lualib/?.lua;/usr/local/openresty/lualib/?/init.lua;;";
 ```
 
-Alternatively, with LuaRocks configured for OpenResty's LuaJIT:
+To build this checkout locally with LuaRocks instead:
 
 ```sh
 luarocks make lua-resty-mongol-1.0.0-1.rockspec
 ```
 
-Add the LuaRocks tree's `share/lua/5.1/?.lua` and
-`share/lua/5.1/?/init.lua` patterns to `lua_package_path` if it is a separate
-tree. LuaRocks installs the modules; OpenResty remains the required runtime.
-The rockspec pins the `v1.0.0` source tag. OPM metadata supports local
-`opm build`. Registry publication is separate from the GitHub release;
-these source-installation instructions do not require registry availability.
+OPM metadata supports local `opm build`. The OPM registry upload is still
+pending server processing; use LuaRocks or source installation for now.
 
 ## Synopsis
 
