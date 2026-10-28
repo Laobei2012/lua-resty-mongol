@@ -166,7 +166,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
   1. If `KUBE_CONTEXT` or a node variable is empty, exit 2 with a usage line.
   2. Create the namespace, apply `mongo.yaml` with tag `4.4`, apply `bench.yaml`, wait for both Pods to be ready.
   3. Mode `ab`: run `interleaved order` with `RUNS=1`: `old-1`, `new-1`, `old-2`, `new-2`, `old-3`, `new-3`, each one a full pass over all APIs. That gives 3 runs per API per side. Then concatenate `old-1..3.jsonl` into `old.jsonl` and `new-1..3.jsonl` into `new.jsonl`; each line keeps its `label`. `run-k8s.sh` passes `RUN_BASE=N-1` to `load.sh`, which writes `run = RUN_BASE + i`, so the joined file has runs 1, 2 and 3 and `compare.lua` takes the median of the three lines per API. Run `bson_micro.lua` for both libs.
-  4. Mode `trend`: for each tag `6.0`, `7.0`, `8.0`, `9.0`, replace the Mongo Pod and run `new` once with `RUNS=3`, into `new-<tag>.jsonl`. The `new-1..3.jsonl` lines from `ab` are the 4.4 column. `run-k8s.sh` prints the table from `compare.lua --trend`.
+  4. Mode `trend`: for each tag `6.0`, `7.0`, `8.0`, `9.0`, replace the Mongo Pod and run `new` once with `RUNS=3`, into `new-<tag>.jsonl`. In mode `all`, the joined `new.jsonl` from `ab` is the 4.4 column. `run-k8s.sh` prints the table from `compare.lua --trend`.
   5. Copy `/src/new/bench/results/` back with `kubectl cp`. Run `compare.lua` on your machine.
   6. Delete the namespace in a `trap`, also when a step fails.
 - [ ] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
