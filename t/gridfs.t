@@ -39,7 +39,7 @@ __DATA__
             r, err = fs:remove({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
-            local f,err = io.open("Readme.md", "rb")
+            local f,err = io.open("README.markdown", "rb")
             if not f then ngx.say("fs open failed: "..err) ngx.exit(ngx.HTTP_OK) end
             r, err = fs:insert(f, nil, true)
             if not r then ngx.say("fs insert failed: "..err) end
@@ -50,7 +50,7 @@ __DATA__
             if not r then ngx.say("delete failed: "..err) end
             ngx.say(r)
 
-            local f,err = io.open("Readme.md", "rb")
+            local f,err = io.open("README.markdown", "rb")
             r, err = fs:insert(f, {filename="testfile"}, false)
             if not r then ngx.say("fs insert failed: "..err) end
             ngx.say(r)
@@ -92,7 +92,7 @@ GET /t
             r, err = fs:remove({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
-            local f,err = io.open("Readme.md", "rb")
+            local f,err = io.open("README.markdown", "rb")
             if not f then ngx.say("fs open failed: "..err) ngx.exit(ngx.HTTP_OK) end
             r, err = fs:insert(f, {chunkSize = 256, filename="testfile"}, true)
             if not r then ngx.say("fs insert failed: "..err) end
@@ -140,7 +140,7 @@ true
             r, err = fs:remove({}, nil, true)
             if not r then ngx.say("delete failed: "..err) end
 
-            local f,err = io.open("Readme.md", "rb")
+            local f,err = io.open("README.markdown", "rb")
             if not f then ngx.say("fs open failed: "..err) ngx.exit(ngx.HTTP_OK) end
 
             local current = f:seek()      -- get current position
