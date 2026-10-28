@@ -667,3 +667,57 @@ true
 true
 --- no_error_log
 [error]
+
+
+
+=== TEST 18: a handler that is not set costs nothing
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local t = require "mongol_t"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local events = {}
+            local function rec(kind)
+                return function(ev) events[#events + 1] = {kind, ev} end
+            end
+            local all = {started = rec("started"), succeeded = rec("succeeded"), failed = rec("failed")}
+            local function text() return cjson.encode(bson.to_json_safe(events)) end
+            local conn, db = t.connect(H, P, "test")
+            local col = db:get_col("monitor_t")
+            col:delete({}, nil, true)
+            local real_decode = bson.decode
+            local calls = 0
+            bson.decode = function(...) calls = calls + 1 return real_decode(...) end
+            local docs = {}
+            for i = 1, 50 do docs[i] = {n = i} end
+            local function run(handlers)
+                calls = 0
+                mongo.set_monitor(handlers)
+                col:insert(docs, nil, true)
+                mongo.set_monitor(nil)
+                return calls
+            end
+            local only_succeeded = run({succeeded = function() end})
+            local only_failed = run({failed = function() end})
+            local with_started = run({started = function(ev) events[#events + 1] = ev end})
+            bson.decode = real_decode
+            ngx.say(only_succeeded, " ", only_failed, " ", with_started >= 51, " ", #events[1].command.documents)
+            -- the duration still works with only a succeeded handler
+            local got
+            mongo.set_monitor({succeeded = function(ev) got = ev end})
+            col:find_one({})
+            mongo.set_monitor(nil)
+            ngx.say(type(got.duration_ms), " ", got.request_id ~= nil, " ", got.command_name)
+        }
+    }
+--- request
+GET /t
+--- response_body
+0 0 true 50
+number true find
+--- no_error_log
+[error]
