@@ -721,3 +721,48 @@ GET /t
 number true find
 --- no_error_log
 [error]
+
+
+
+=== TEST 19: speculativeAuthenticate in an extra field is redacted
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local cjson = require "cjson"
+            local t = require "mongol_t"
+            local conn = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local events = {}
+            local function rec(kind) return function(ev) events[#events + 1] = {kind, ev} end end
+            mongo.set_monitor({started = rec("started"), succeeded = rec("succeeded"), failed = rec("failed")})
+            -- the login payload is not in the command, only in the fields added after it
+            for _, name in ipairs({"hello", "isMaster", "ismaster"}) do
+                wire.command(conn, "admin", bson.ordered{{name, 1}},
+                             nil, {{"speculativeAuthenticate", {saslStart = 1, secretfield = "secret"}}})
+            end
+            mongo.set_monitor(nil)
+            local ok = true
+            for _, e in ipairs(events) do
+                if e[1] == "started" and next(e[2].command) ~= nil then ok = false end
+                if e[1] == "succeeded" and next(e[2].reply) ~= nil then ok = false end
+                if e[1] == "failed" and e[2].error ~= "redacted" then ok = false end
+            end
+            ngx.say(#events, " ", ok, " ", cjson.encode(bson.to_json_safe(events)):find("secret", 1, true) == nil)
+            -- a hello without it is not redacted
+            events = {}
+            mongo.set_monitor({started = rec("started")})
+            wire.command(conn, "admin", bson.ordered{{"hello", 1}}, nil, {{"comment", "visible"}})
+            mongo.set_monitor(nil)
+            ngx.say(events[1][2].command.comment)
+        }
+    }
+--- request
+GET /t
+--- response_body
+6 true true
+visible
+--- no_error_log
+[error]
