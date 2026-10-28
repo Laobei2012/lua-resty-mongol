@@ -666,7 +666,7 @@ cdata true
             }
             for _, ms in ipairs(cases) do
                 local j = bson.to_json_safe({d = bson.get_utc_date(ms)})
-                ngx.say(tostring(ms), " ", j.d)
+                ngx.say(type(ms) == "number" and string.format("%.0f", ms) or tostring(ms), " ", j.d)
             end
         }
     }
