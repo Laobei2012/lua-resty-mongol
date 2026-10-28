@@ -11,6 +11,7 @@ local huge = math.huge
 local strbyte , strchar , strfind , strsub = string.byte , string.char ,
                                             string.find , string.sub
 local t_concat = table.concat
+local t_sort = table.sort
 
 local ll = require ( mod_name .. ".ll" )
 local le_uint_to_num = ll.le_uint_to_num
@@ -43,6 +44,9 @@ local array_mt = { }
 local decimal128_mt = { __tostring = function ( self )
     return decimal128.tostring ( self.v )
 end }
+local regex_mt = { }
+local minkey_mt = { }
+local maxkey_mt = { }
 local null_mt = { __tostring = function ( ) return "null" end }
 
 local null = setmetatable ( { } , null_mt )
@@ -122,7 +126,32 @@ function _M.decimal128 ( str )
     return setmetatable ( { v = raw } , decimal128_mt )
 end
 
+-- the options are sorted, as the BSON specification wants
+function _M.regex ( pattern , options )
+    if type ( pattern ) ~= "string" or type ( options or "" ) ~= "string" then
+        error ( "bad argument #1 to 'regex' (strings expected)" , 2 )
+    end
+    local chars = { }
+    for c in ( options or "" ):gmatch ( "." ) do
+        chars [ #chars + 1 ] = c
+    end
+    t_sort ( chars )
+    return setmetatable ( { pattern = pattern , options = t_concat ( chars ) } ,
+                          regex_mt )
+end
+
+function _M.minkey ( )
+    return setmetatable ( { } , minkey_mt )
+end
+
+function _M.maxkey ( )
+    return setmetatable ( { } , maxkey_mt )
+end
+
 _M.decimal128_mt = decimal128_mt
+_M.regex_mt = regex_mt
+_M.minkey_mt = minkey_mt
+_M.maxkey_mt = maxkey_mt
 _M.int32_mt = int32_mt
 _M.int64_mt = int64_mt
 _M.double_mt = double_mt
@@ -242,10 +271,26 @@ local function read_value ( s , op , p , last )
         need ( s , p , 8 , last )
         return setmetatable ( { v = le_to_int64 ( s , p ) } , utc_date ) ,
                p + 8
+    elseif op == 0x0B then -- Regular expression
+        local z1 = strfind ( s , "\0" , p , true )
+        if not z1 or z1 > last then
+            error ( "bson: truncated regex" , 0 )
+        end
+        local z2 = strfind ( s , "\0" , z1 + 1 , true )
+        if not z2 or z2 > last then
+            error ( "bson: truncated regex" , 0 )
+        end
+        return setmetatable ( { pattern = strsub ( s , p , z1 - 1 ) ,
+                                options = strsub ( s , z1 + 1 , z2 - 1 ) } ,
+                              regex_mt ) , z2 + 1
     elseif op == 0x13 then -- Decimal128
         need ( s , p , 16 , last )
         return setmetatable ( { v = strsub ( s , p , p + 15 ) } ,
                               decimal128_mt ) , p + 16
+    elseif op == 0x7F then -- MaxKey
+        return setmetatable ( { } , maxkey_mt ) , p
+    elseif op == 0xFF then -- MinKey
+        return setmetatable ( { } , minkey_mt ) , p
     elseif op == 0x0A then -- Null
         return null , p
     elseif op == 0x10 then -- int32
@@ -390,6 +435,16 @@ local function pack ( k , v )
         return "\1" .. k .. "\0" .. to_double ( v.v )
     elseif mt == decimal128_mt then
         return "\19" .. k .. "\0" .. v.v
+    elseif mt == regex_mt then
+        if strfind ( v.pattern , "\0" , 1 , true )
+           or strfind ( v.options , "\0" , 1 , true ) then
+            error ( "invalid regex" , 0 )
+        end
+        return "\11" .. k .. "\0" .. v.pattern .. "\0" .. v.options .. "\0"
+    elseif mt == minkey_mt then
+        return "\255" .. k .. "\0"
+    elseif mt == maxkey_mt then
+        return "\127" .. k .. "\0"
     elseif mt == timestamp_mt then
         return "\17" .. k .. "\0" .. num_to_le_uint ( v.i , 4 )
                                  .. num_to_le_uint ( v.t , 4 )
