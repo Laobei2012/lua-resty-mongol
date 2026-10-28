@@ -4,6 +4,8 @@ local pairs = pairs
 local setmetatable = setmetatable
 local ngx = ngx
 local string = string
+local type = type
+local math = math
 local tostring = tostring
 
 local md5 = require "resty.md5"
@@ -54,9 +56,23 @@ function gridfs_mt:ensure_indexes()
     return true
 end
 
+-- a chunk size must be a positive whole number that fits in an int32;
+-- level 3 is the caller of new or insert
+local function check_chunk_size(v, name)
+    if v ~= nil and (type(v) ~= "number" or v < 1 or v >= 2^31
+                     or v ~= math.floor(v)) then
+        error("bad argument #1 to '" .. name
+              .. "' (chunkSize must be a positive integer)", 3)
+    end
+end
+
 function gridfs_mt:find_one(fields)
     local r, err = self.file_col:find_one(fields)
     if not r then return nil, err end
+    local cs = r.chunkSize
+    if type(cs) ~= "number" or cs < 1 or cs ~= math.floor(cs) then
+        return nil, "invalid chunkSize in the files document"
+    end
 
     return setmetatable({
                     file_col = self.file_col;
@@ -110,6 +126,7 @@ function gridfs_mt:remove(fields, continue_on_err, safe)
 end
 
 function gridfs_mt:new(meta)
+    check_chunk_size(meta and meta.chunkSize, "new")
     meta = meta or {}
     meta._id = meta._id or object_id.new()
     meta.chunkSize = meta.chunkSize or 256*1024
@@ -133,6 +150,7 @@ function gridfs_mt:new(meta)
 end
 
 function gridfs_mt:insert(fh, meta, safe)
+    check_chunk_size(meta and meta.chunkSize, "insert")
     meta = meta or {}
     meta.chunkSize = meta.chunkSize or 256*1024
     meta._id = meta._id or object_id.new()

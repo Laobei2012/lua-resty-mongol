@@ -18,9 +18,18 @@ local get_bin_data = bson.get_bin_data
 -- stay. Chunks that do not exist yet are inserted with one col:insert,
 -- which splits them into batches that fit the server limits.
 function gridfs_file_mt:write(buf, offset, size)
+    if type(buf) ~= "string" then
+        error("bad argument #1 to 'write' (string expected)", 2)
+    end
+    if type(offset) ~= "number" or offset ~= math.floor(offset) then
+        error("bad argument #2 to 'write' (whole number expected)", 2)
+    end
+    if size ~= nil and (type(size) ~= "number" or size ~= math.floor(size)) then
+        error("bad argument #3 to 'write' (whole number expected)", 2)
+    end
     size = size or string.len(buf)
     if offset < 0 or offset > self.file_size then return nil, "invalid offset" end
-    if size > #buf then return nil, "invalid size" end
+    if size < 0 or size > #buf then return nil, "invalid size" end
     if size == 0 then return 0 end
 
     local cs = self.chunk_size
