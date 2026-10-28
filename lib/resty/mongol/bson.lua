@@ -24,6 +24,7 @@ local le_to_int64 = ll.le_to_int64
 local is_int64 = ll.is_int64
 
 local opairs = require ( mod_name .. ".misc" ).opairs
+local decimal128 = require ( mod_name .. ".decimal128" )
 
 local obid = require ( mod_name .. ".object_id" )
 local new_object_id = obid.new
@@ -39,6 +40,9 @@ local double_mt = { }
 local timestamp_mt = { }
 local ordered_mt = { }
 local array_mt = { }
+local decimal128_mt = { __tostring = function ( self )
+    return decimal128.tostring ( self.v )
+end }
 local null_mt = { __tostring = function ( ) return "null" end }
 
 local null = setmetatable ( { } , null_mt )
@@ -106,6 +110,19 @@ function _M.ordered ( list )
     return setmetatable ( list , ordered_mt )
 end
 
+-- a Decimal128 from a decimal string; the value keeps its 16 bytes in v
+function _M.decimal128 ( str )
+    if type ( str ) ~= "string" then
+        error ( "bad argument #1 to 'decimal128' (string expected)" , 2 )
+    end
+    local raw , err = decimal128.parse ( str )
+    if not raw then
+        return nil , err
+    end
+    return setmetatable ( { v = raw } , decimal128_mt )
+end
+
+_M.decimal128_mt = decimal128_mt
 _M.int32_mt = int32_mt
 _M.int64_mt = int64_mt
 _M.double_mt = double_mt
@@ -225,6 +242,10 @@ local function read_value ( s , op , p , last )
         need ( s , p , 8 , last )
         return setmetatable ( { v = le_to_int64 ( s , p ) } , utc_date ) ,
                p + 8
+    elseif op == 0x13 then -- Decimal128
+        need ( s , p , 16 , last )
+        return setmetatable ( { v = strsub ( s , p , p + 15 ) } ,
+                              decimal128_mt ) , p + 16
     elseif op == 0x0A then -- Null
         return null , p
     elseif op == 0x10 then -- int32
@@ -367,6 +388,8 @@ local function pack ( k , v )
         return "\18" .. k .. "\0" .. int64_to_le ( v.v )
     elseif mt == double_mt then
         return "\1" .. k .. "\0" .. to_double ( v.v )
+    elseif mt == decimal128_mt then
+        return "\19" .. k .. "\0" .. v.v
     elseif mt == timestamp_mt then
         return "\17" .. k .. "\0" .. num_to_le_uint ( v.i , 4 )
                                  .. num_to_le_uint ( v.t , 4 )
