@@ -329,3 +329,39 @@ count read secondaryPreferred
 ping primary -
 --- no_error_log
 [error]
+
+
+=== TEST 9: explicit connect clears the secondary connection read preference
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?readPreference=secondary"))
+            local read = conn.read_conn
+            ngx.say(read.read_preference)
+            assert(read:close())
+            assert(read:connect(H, P))
+            ngx.say(read.read_preference == nil, " ", read.relogin == nil, " ", read.opts == nil)
+            local seen = {}
+            mongo.set_monitor({started = function(ev)
+                seen[#seen + 1] = ev.command["$readPreference"] == nil
+            end})
+            assert(read:new_db_handle("admin"):cmd({ping = 1}))
+            read:close()
+            assert(read:connect())
+            assert(read:new_db_handle("admin"):cmd({ping = 1}))
+            mongo.set_monitor(nil)
+            ngx.say(#seen, " ", seen[1], " ", seen[2])
+            conn:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+secondary
+true true true
+2 true true
+--- no_error_log
+[error]
