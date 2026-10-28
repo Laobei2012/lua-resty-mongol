@@ -615,3 +615,51 @@ GET /t
 1 2 ping 1
 --- no_error_log
 [error]
+
+
+=== TEST 17: null and empty arrays stay what they are in events
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local t = require "mongol_t"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local events = {}
+            local function rec(kind)
+                return function(ev) events[#events + 1] = {kind, ev} end
+            end
+            local all = {started = rec("started"), succeeded = rec("succeeded"), failed = rec("failed")}
+            local function text() return cjson.encode(bson.to_json_safe(events)) end
+            local conn, db = t.connect(H, P, "test")
+            local col = db:get_col("monitor_t")
+            col:delete({}, nil, true)
+            col:insert({{n = bson.null, list = bson.empty_array}}, nil, true)
+            mongo.set_monitor(all)
+            local doc = col:find_one({n = bson.null})
+            local cur = col:aggregate({})
+            mongo.set_monitor(nil)
+            local find_cmd = events[1][2].command
+            ngx.say(find_cmd.filter.n == bson.null, " ", doc ~= nil)
+            local reply_doc = events[2][2].reply.cursor.firstBatch[1]
+            ngx.say(reply_doc.n == bson.null, " ", getmetatable(reply_doc.list) == bson.array_mt)
+            local agg
+            for _, e in ipairs(events) do
+                if e[1] == "started" and e[2].command_name == "aggregate" then agg = e[2] end
+            end
+            local json = cjson.encode(bson.to_json_safe(agg.command))
+            ngx.say(json:find('"pipeline":[]', 1, true) ~= nil)
+            ngx.say(cjson.encode(bson.to_json_safe(reply_doc)):find('"n":null', 1, true) ~= nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true true
+true true
+true
+true
+--- no_error_log
+[error]
