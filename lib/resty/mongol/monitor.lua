@@ -9,14 +9,15 @@ local getmetatable , setmetatable = getmetatable , setmetatable
 local ipairs , pairs = ipairs , pairs
 local pcall = pcall
 local type = type
+local strfind , strsub = string.find , string.sub
 local tostring = tostring
 local ngx = ngx
 local ngx_now , ngx_update_time = ngx.now , ngx.update_time
 local ngx_log , ngx_ERR = ngx.log , ngx.ERR
 
 local bson = require ( mod_name .. ".bson" )
-local ordered_mt = bson.ordered_mt
-local opairs = require ( mod_name .. ".misc" ).opairs
+local null = bson.null
+local empty_array = bson.empty_array
 
 local _M = { }
 
@@ -36,72 +37,56 @@ function _M.set ( m )
     _M.current = m
 end
 
-local function command_name ( cmd )
-    if getmetatable ( cmd ) == ordered_mt then
-        return cmd [ 1 ] and cmd [ 1 ] [ 1 ]
-    end
-    local k = opairs ( cmd )
-    return ( k ( cmd ) )
+-- the name of the command is the first key of the encoded document, so
+-- it is the key that goes first on the wire
+local function command_name ( body )
+    local z = strfind ( body , "\0" , 6 , true )
+    return z and strsub ( body , 6 , z - 1 )
 end
 
-local function has_key ( cmd , key )
-    if getmetatable ( cmd ) == ordered_mt then
-        for _ , kv in ipairs ( cmd ) do
-            if kv [ 1 ] == key then
-                return true
-            end
-        end
-        return false
-    end
-    return cmd [ key ] ~= nil
+local function decode ( bytes )
+    local ok , doc = pcall ( bson.decode , bytes )
+    return ok and doc or { }
 end
 
-local function is_sensitive ( name , cmd )
+local function is_sensitive ( name , body )
     if sensitive_commands [ name ] then
         return true
     end
-    return hello_commands [ name ] and has_key ( cmd , "speculativeAuthenticate" )
+    return hello_commands [ name ]
+           and decode ( body ).speculativeAuthenticate ~= nil
 end
 
--- a deep copy, so that a hook cannot change the data of the driver
+-- A deep copy of a reply, so that a hook cannot change what the caller
+-- gets. bson.null and bson.empty_array are shared values and stay as they
+-- are. The metatables come from the decoder.
 local function copy ( v )
-    if type ( v ) ~= "table" then
+    if type ( v ) ~= "table" or v == null or v == empty_array then
         return v
     end
     local out = { }
     for k , x in pairs ( v ) do
         out [ k ] = copy ( x )
     end
-    return setmetatable ( out , getmetatable ( v ) )
+    local mt = getmetatable ( v )
+    if type ( mt ) == "table" then
+        setmetatable ( out , mt )
+    end
+    return out
 end
 
--- a copy of the command as a map; the kind-1 sequences are merged in
--- under their identifier
-local function command_copy ( cmd , sequences )
-    local out
-    if getmetatable ( cmd ) == ordered_mt then
-        out = { }
-        for _ , kv in ipairs ( cmd ) do
-            out [ kv [ 1 ] ] = copy ( kv [ 2 ] )
+-- The command of the event is decoded from the bytes that were sent, so
+-- it is a new table with no link to the tables of the caller, and it has
+-- the keys that went on the wire. The kind-1 sequences are merged in under
+-- their identifier.
+local function command_copy ( body , seqinfo )
+    local out = decode ( body )
+    for _ , seq in ipairs ( seqinfo or { } ) do
+        local docs = { }
+        for i , bytes in ipairs ( seq [ 2 ] ) do
+            docs [ i ] = decode ( bytes )
         end
-    else
-        out = copy ( cmd )
-    end
-    if sequences then
-        for _ , seq in ipairs ( sequences ) do
-            local docs = { }
-            for i , d in ipairs ( seq [ 2 ] ) do
-                if type ( d ) == "string" then
-                    -- a document that is already encoded
-                    local ok , doc = pcall ( bson.decode , d )
-                    d = ok and doc or { }
-                else
-                    d = copy ( d )
-                end
-                docs [ i ] = d
-            end
-            out [ seq [ 1 ] ] = docs
-        end
+        out [ seq [ 1 ] ] = docs
     end
     return out
 end
@@ -121,9 +106,9 @@ end
 -- starts the monitoring of a command: returns the state for succeeded
 -- and failed. mon is the monitor that was current when the command began;
 -- the end events go to the same monitor.
-function _M.started ( mon , conn , dbname , cmd , sequences , request_id )
-    local name = command_name ( cmd )
-    local sensitive = is_sensitive ( name , cmd )
+function _M.started ( mon , conn , dbname , body , seqinfo , request_id )
+    local name = command_name ( body )
+    local sensitive = is_sensitive ( name , body )
     local state = {
         mon = mon ,
         sensitive = sensitive ,
@@ -141,7 +126,7 @@ function _M.started ( mon , conn , dbname , cmd , sequences , request_id )
         request_id = request_id ,
         host = conn.host ,
         port = conn.port ,
-        command = sensitive and { } or command_copy ( cmd , sequences ) ,
+        command = sensitive and { } or command_copy ( body , seqinfo ) ,
     } )
     return state
 end
