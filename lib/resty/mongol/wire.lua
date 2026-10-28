@@ -215,9 +215,25 @@ local function send ( conn , msg )
     return true
 end
 
+-- A connection to a secondary has read_preference set; every command on it
+-- carries $readPreference, because a secondary refuses a read without it.
+-- The commands on the primary connection never carry it.
+local function with_read_preference ( conn , extra )
+    local list = { { "$readPreference" , { mode = conn.read_preference } } }
+    if extra then
+        for i = 1 , #extra do
+            list [ #list + 1 ] = extra [ i ]
+        end
+    end
+    return list
+end
+
 -- sends cmd to dbname and reads the reply;
 -- returns reply | nil, err, reply
 function _M.command ( conn , dbname , cmd , sequences , extra )
+    if conn.read_preference then
+        extra = with_read_preference ( conn , extra )
+    end
     -- one check when no monitor is set
     local mon = monitor.current
     local msg , err , request_id , cmd_bytes , seqinfo =
@@ -253,6 +269,9 @@ end
 
 -- sends cmd with moreToCome and reads no reply; for w = 0 writes
 function _M.send_only ( conn , dbname , cmd , sequences , extra )
+    if conn.read_preference then
+        extra = with_read_preference ( conn , extra )
+    end
     local mon = monitor.current
     local msg , err , request_id , cmd_bytes , seqinfo =
         encode_msg ( dbname , cmd , sequences , MORE_TO_COME , extra , mon ~= nil )
