@@ -5,6 +5,9 @@ local _M = { _VERSION = "1.0.0" }
 local error = error
 local ipairs = ipairs
 local type = type
+local tostring = tostring
+local select = select
+local t_concat = table.concat
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
@@ -178,6 +181,16 @@ function connmethods:get_reused_times()
     return sock:getreusedtimes()
 end
 
+-- parts of a pool name, each as <length>:<text>
+local function pool_key ( ... )
+    local t = { }
+    for i = 1 , select ( "#" , ... ) do
+        local v = tostring ( ( select ( i , ... ) ) )
+        t [ i ] = #v .. ":" .. v
+    end
+    return t_concat ( t )
+end
+
 -- opts: pool, pool_size, backlog (for the connection pool), and ssl,
 -- ssl_verify (default true), ssl_server_name (default host) and
 -- ssl_reused_session (for the TLS handshake). A call with no arguments
@@ -209,15 +222,17 @@ function connmethods:connect(host, port, opts)
     -- The prefixes "plain:", "tls:" and "user:" keep the three kinds of
     -- names apart, so that a name can never equal another kind, not even
     -- the cosocket default "host:port".
+    -- Every part of a generated name has its length in front of it, so
+    -- that two different settings never give the same name.
     local pool
     if opts and opts.pool then
         pool = "user:" .. opts.pool
     elseif opts and opts.ssl then
-        pool = "tls:" .. host .. ":" .. port .. ":"
-               .. (opts.ssl_verify == false and "noverify" or "verify") .. ":"
-               .. (opts.ssl_server_name or host)
+        pool = "tls:" .. pool_key ( host , port ,
+                                    opts.ssl_verify == false and "noverify" or "verify" ,
+                                    opts.ssl_server_name or host )
     else
-        pool = "plain:" .. host .. ":" .. port
+        pool = "plain:" .. pool_key ( host , port )
     end
 
     local ok, err = sock:connect(host, port, {
@@ -288,8 +303,8 @@ local function try_host ( u , host , port )
     end
     if u.user then
         opts = opts or { }
-        opts.pool = "uri:" .. u.user .. "@" .. u.auth_source .. "@" .. host
-                    .. ":" .. port
+        opts.pool = "uri:" .. pool_key ( u.user , u.auth_source , host , port ,
+                                         u.options.tls and "tls" or "plain" )
     end
     local conn = new ( )
     local ok , err = conn:connect ( host , port , opts )
