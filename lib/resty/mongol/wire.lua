@@ -18,6 +18,7 @@ local le_uint_to_num = ll.le_uint_to_num
 local le_int_to_num = ll.le_int_to_num
 
 local bson = require ( mod_name .. ".bson" )
+local monitor = require ( mod_name .. ".monitor" )
 local to_bson = bson.to_bson
 local bson_append = bson.append
 local bson_decode = bson.decode
@@ -208,18 +209,25 @@ end
 -- sends cmd to dbname and reads the reply;
 -- returns reply | nil, err, reply
 function _M.command ( conn , dbname , cmd , sequences , extra )
-    local msg , err = encode_msg ( dbname , cmd , sequences , 0 , extra )
+    local msg , err , request_id = encode_msg ( dbname , cmd , sequences , 0 ,
+                                                extra )
     if not msg then
         return nil , err
     end
+    -- one check when no monitor is set
+    local mon = monitor.current
+    local state = mon and monitor.started ( mon , conn , dbname , cmd ,
+                                           sequences , request_id )
     local ok
     ok , err = send ( conn , msg )
     if not ok then
+        if state then monitor.failed ( state , err ) end
         return nil , err
     end
     local reply
     reply , err = receive ( conn )
     if not reply then
+        if state then monitor.failed ( state , err ) end
         return nil , err
     end
     if reply.ok ~= 1 then
@@ -227,19 +235,32 @@ function _M.command ( conn , dbname , cmd , sequences , extra )
         if type ( errmsg ) ~= "string" then
             errmsg = "command failed"
         end
+        if state then monitor.failed ( state , errmsg ) end
         return nil , errmsg , reply
     end
+    if state then monitor.succeeded ( state , reply ) end
     return reply
 end
 
 -- sends cmd with moreToCome and reads no reply; for w = 0 writes
 function _M.send_only ( conn , dbname , cmd , sequences , extra )
-    local msg , err = encode_msg ( dbname , cmd , sequences , MORE_TO_COME ,
-                                   extra )
+    local msg , err , request_id = encode_msg ( dbname , cmd , sequences ,
+                                                MORE_TO_COME , extra )
     if not msg then
         return nil , err
     end
-    return send ( conn , msg )
+    local mon = monitor.current
+    local state = mon and monitor.started ( mon , conn , dbname , cmd ,
+                                           sequences , request_id )
+    local ok
+    ok , err = send ( conn , msg )
+    if not ok then
+        if state then monitor.failed ( state , err ) end
+        return nil , err
+    end
+    -- the server sends no reply: succeeded means that the driver sent it
+    if state then monitor.succeeded ( state , { ok = 1 } ) end
+    return true
 end
 
 _M.fail = fail

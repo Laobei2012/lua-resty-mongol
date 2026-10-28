@@ -15,6 +15,24 @@ local connmt = { __index = connmethods }
 
 local dbmt = require ( mod_name .. ".dbmt" )
 local bson = require ( mod_name .. ".bson" )
+local monitor = require ( mod_name .. ".monitor" )
+
+-- sets the command monitor of this worker (nil removes it); see monitor.lua
+function _M.set_monitor(m)
+    if m ~= nil and type(m) ~= "table" then
+        error("bad argument #1 to 'set_monitor' (table or nil expected)", 2)
+    end
+    if m then
+        for _, name in ipairs({"started", "succeeded", "failed"}) do
+            if m[name] ~= nil and type(m[name]) ~= "function" then
+                error("bad argument #1 to 'set_monitor' (" .. name
+                      .. " must be a function)", 2)
+            end
+        end
+    end
+    monitor.set(m)
+    return true
+end
 
 _M.int32 = bson.int32
 _M.int64 = bson.int64
