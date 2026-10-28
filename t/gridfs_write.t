@@ -1274,3 +1274,63 @@ false read chunk failed
 abcdefghij def true
 --- no_error_log
 [error]
+
+
+
+=== TEST 30: chunk size and write range are checked
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            for _, bad in ipairs({0, -4, 1.5, "x", true}) do
+                local ok, err = pcall(fs.new, fs, {chunkSize = bad, filename = "bad" .. tostring(bad)})
+                ngx.say(tostring(bad), " ", ok, " ", tostring(err):find("bad argument", 1, true) ~= nil)
+            end
+            local ok, err = pcall(fs.insert, fs, t.string_fh("abc"), {chunkSize = 0, filename = "badinsert"}, true)
+            ngx.say(ok, " ", tostring(err):find("bad argument", 1, true) ~= nil)
+            ngx.say(db:get_col("fs14.files"):count({}), " ", db:get_col("fs14.chunks"):count({}))
+            local gf = assert(fs:new({chunkSize = 4, filename = "ok"}))
+            ngx.say(gf:write("x", 0, -1))
+            ngx.say(gf:write("x", -1))
+            ngx.say(gf:write("x", 0, 2))
+            for _, args in ipairs({{5, 0}, {"x", "y"}, {"x", 0.5}, {"x", 0, "z"}, {"x", 0, 0.5}}) do
+                local pok, perr = pcall(gf.write, gf, args[1], args[2], args[3])
+                ngx.say(pok, " ", tostring(perr):find("bad argument", 1, true) ~= nil)
+            end
+            ngx.say(gf:write("", 0), " ", gf.file_size)
+            -- a files document with a chunk size of 0 is not used
+            db:get_col("fs14.files"):insert({{_id = "zero", filename = "zero", length = 3, chunkSize = 0}}, nil, true)
+            local r, err = fs:find_one({filename = "zero"})
+            ngx.say(r, " ", err)
+        }
+    }
+--- request
+GET /t
+--- response_body
+0 false true
+-4 false true
+1.5 false true
+x false true
+true false true
+false true
+0 0
+nil invalid size
+nil invalid offset
+nil invalid size
+false true
+false true
+false true
+false true
+false true
+0 0
+nil invalid chunkSize in the files document
+--- no_error_log
+[error]
