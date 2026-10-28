@@ -37,6 +37,9 @@ end
 -- the session in the last argument (opts.session), checked; level 3 is the
 -- caller of the collection method
 local function session_of(self, opts)
+    if opts ~= nil and type(opts) ~= "table" then
+        error("bad argument (options table expected)", 3)
+    end
     local s = opts and opts.session
     if s == nil then
         return nil
@@ -266,6 +269,7 @@ end
 
 function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
                           options)
+    local session = session_of(self, options)
     numberToSkip = numberToSkip or 0
     options = options or {}
 
@@ -310,7 +314,6 @@ function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
     -- A connection to a secondary (connect_uri) serves the reads. A session
     -- always uses its own (primary) connection, because a transaction runs
     -- on the primary only.
-    local session = session_of(self, options)
     local conn = options.conn or session and session.conn
                  or self.conn.read_conn or self.conn
     local r, err, doc = wire.command(conn, self.db, ordered(cmd), nil, nil,

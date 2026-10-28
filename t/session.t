@@ -186,7 +186,7 @@ true true
                 update = function(o) return col:update({}, {a = 1}, false, false, true, o) end,
                 delete = function(o) return col:delete({}, false, true, o) end,
                 query = function(o) return col:query({}, nil, 0, 1, o) end,
-                find = function(o) return col:find({}, nil, 1, o) end,
+                find = function(o) return col:find({}, nil, 2, o) end,
                 find_one = function(o) return col:find_one({}, nil, o) end,
                 aggregate = function(o) return col:aggregate({}, o) end,
                 getmore = function(o) return col:getmore(string.rep("\0", 8), 1, 0, o) end,

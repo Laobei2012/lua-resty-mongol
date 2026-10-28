@@ -4,6 +4,9 @@
 
 ### Sessions and transactions
 
+- Non-table collection options raise `bad argument` before I/O. Previously
+  some values caused an indexing error or were silently accepted, hiding
+  caller mistakes in the optional session argument.
 - A failed first send keeps the transaction's `startTransaction` field for
   a retry after reconnect. Previously the send failure consumed it, so the
   server rejected the retry as an operation in a transaction it never saw.
