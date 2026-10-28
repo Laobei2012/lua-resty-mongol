@@ -157,3 +157,35 @@ nil string nilclosed
 nil string nilclosed
 --- no_error_log
 [error]
+
+
+
+=== TEST 5: a batch_size of false is not the default
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("agg_t")
+            local real = wire.command
+            local sent = 0
+            wire.command = function(...) sent = sent + 1 return real(...) end
+            for _, bad in ipairs({false, "x", true}) do
+                local ok, e = pcall(col.aggregate, col, {}, {batch_size = bad})
+                ngx.say(tostring(bad), " ", ok, " ", tostring(e):find("bad argument", 1, true) ~= nil)
+            end
+            wire.command = real
+            ngx.say(sent)
+        }
+    }
+--- request
+GET /t
+--- response_body
+false false true
+x false true
+true false true
+0
+--- no_error_log
+[error]
