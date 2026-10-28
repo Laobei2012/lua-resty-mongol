@@ -199,8 +199,14 @@ function connmethods:connect(host, port, opts)
     if opts ~= nil and type(opts) ~= "table" then
         error("bad argument #3 to 'connect' (table expected)", 2)
     end
-    if host == nil and port == nil and opts == nil then
+    -- a call with no arguments is a reconnect
+    local reconnect = host == nil and port == nil and opts == nil
+    if reconnect then
         opts = self.opts
+    elseif self.read_conn then
+        -- another address: the connection to the secondary is not valid
+        self.read_conn:close()
+        self.read_conn = nil
     end
     host = host or self.host
     port = port or self.port
@@ -259,6 +265,23 @@ function connmethods:connect(host, port, opts)
     end
 
     self.host, self.port, self.opts = host, port, opts
+
+    if reconnect then
+        -- a new socket has no login; connect_uri stored how to log in
+        if self.relogin and sock:getreusedtimes() == 0 then
+            local lok, lerr = self.relogin(self)
+            if not lok then
+                return nil, lerr
+            end
+        end
+        if self.read_conn then
+            -- the read connection comes back with its read preference
+            local rok, rerr = self.read_conn:connect()
+            if not rok then
+                return nil, rerr
+            end
+        end
+    end
     if session then
         return ok, session
     end
@@ -394,6 +417,10 @@ function _M.connect_uri ( str )
         primary:close ( )
         return nil , err
     end
+    if u.user then
+        -- conn:connect() with no arguments logs in again on a new socket
+        primary.relogin = function ( c ) return login ( u , c ) end
+    end
 
     if mode == "secondary" or mode == "secondaryPreferred" then
         local read_conn
@@ -420,6 +447,9 @@ function _M.connect_uri ( str )
                 return nil , err
             end
             read_conn.read_preference = mode
+            if u.user then
+                read_conn.relogin = primary.relogin
+            end
             primary.read_conn = read_conn
         elseif mode == "secondary" then
             primary:close ( )
