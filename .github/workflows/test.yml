@@ -84,17 +84,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
           sudo cpanm --notest Test::Nginx
-      - name: Wait for MongoDB
-        # The image restarts mongod after it creates the root user. Ping the
-        # container address, which the temporary init server does not bind.
-        run: |
-          for i in $(seq 60); do
-            docker exec ${{ job.services.mongo.id }} sh -c \
-              'mongosh --quiet --host "$(hostname -i)" -u admin -p admin --eval "db.adminCommand({ping: 1}).ok"' \
-              && exit 0
-            sleep 2
-          done
-          exit 1
       - name: Test with authentication
         run: make test-auth
 
