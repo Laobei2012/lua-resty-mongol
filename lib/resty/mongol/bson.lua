@@ -7,6 +7,7 @@ local pcall = pcall
 local type = type
 local tonumber , tostring = tonumber , tostring
 local floor = math.floor
+local ffi = require "ffi"
 local strformat = string.format
 local ngx = ngx
 local require = require
@@ -561,9 +562,18 @@ end
 
 -- ISO 8601 UTC string for milliseconds since 1970 (also before 1970)
 local function iso_date ( ms )
-    ms = tonumber ( ms )
-    local days = floor ( ms / 86400000 )
-    local rem = ms - days * 86400000
+    -- split in int64 arithmetic, so that a date above 2^53 keeps its
+    -- milliseconds
+    local ms64 = type ( ms ) == "number" and ffi.cast ( "int64_t" , floor ( ms ) )
+                 or ms
+    local q = ms64 / 86400000LL
+    local r = ms64 % 86400000LL
+    if r < 0 then
+        r = r + 86400000LL
+        q = q - 1
+    end
+    local days = tonumber ( q )
+    local rem = tonumber ( r )
     -- civil date from days since 1970-01-01 (H. Hinnant)
     local z = days + 719468
     local era = floor ( z / 146097 )
@@ -578,7 +588,14 @@ local function iso_date ( ms )
     if m <= 2 then
         y = y + 1
     end
-    return strformat ( "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ" , y , m , d ,
+    -- years outside 0000 to 9999 have a sign and six digits (ISO 8601)
+    local ys
+    if y >= 0 and y <= 9999 then
+        ys = strformat ( "%04d" , y )
+    else
+        ys = strformat ( y < 0 and "-%06d" or "+%06d" , y < 0 and -y or y )
+    end
+    return strformat ( "%s-%02d-%02dT%02d:%02d:%02d.%03dZ" , ys , m , d ,
                        floor ( rem / 3600000 ) , floor ( rem / 60000 ) % 60 ,
                        floor ( rem / 1000 ) % 60 , rem % 1000 )
 end
