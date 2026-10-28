@@ -350,23 +350,51 @@ nil non-ASCII password not supported
             local t = require "mongol_t"
             local HOST, PORT = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
             local mongo = require "resty.mongol"
-            local conn, db = t.connect(HOST, PORT, "admin")
-            ngx.say(db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS"))
-            ngx.say(conn:set_keepalive(10000, 10))
-            local conn2 = mongo:new()
-            conn2:set_timeout(10000)
-            conn2:connect(HOST, PORT)
-            ngx.say(conn2:get_reused_times() > 0)
-            local doc = conn2:new_db_handle("test"):get_col("auth_t"):find_one({})
-            ngx.say(doc ~= nil)
+            local function open(pool)
+                local conn = mongo:new()
+                conn:set_timeout(10000)
+                assert(conn:connect(HOST, PORT, {pool = pool}))
+                return conn, conn:new_db_handle("admin")
+            end
+            local function who(db)
+                local info = db:cmd({connectionStatus = 1}).authInfo.authenticatedUsers[1]
+                return info and info.user or "nobody"
+            end
+            
+            -- request 1: one pool for each user; each socket logs in once
+            local a, adb = open("user_admin")
+            assert(adb:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS"))
+            adb:cmd({dropUser = "u_pool"})
+            assert(adb:cmd(bson.ordered{{"createUser", "u_pool"}, {"pwd", "p"}, {"roles", bson.empty_array}}))
+            local u, udb = open("user_u_pool")
+            assert(udb:auth("u_pool", "p"))
+            ngx.say(a:set_keepalive(10000, 5), " ", u:set_keepalive(10000, 5))
+            
+            -- request 2: the caller skips the login when the socket is reused
+            for _, pool in ipairs({"user_admin", "user_u_pool"}) do
+                local conn, db = open(pool)
+                local reused = conn:get_reused_times()
+                if reused == 0 then
+                    ngx.say("not reused")
+                else
+                    ngx.say(pool, " ", reused, " ", who(db))
+                end
+                conn:set_keepalive(10000, 5)
+            end
+            
+            -- a new pool name gives a new, logged out socket
+            local c, cdb = open("user_new")
+            ngx.say(c:get_reused_times(), " ", who(cdb))
+            local c2, c2db = open("user_admin")
+            c2db:cmd({dropUser = "u_pool"})
         }
     }
 --- request
 GET /t
 --- response_body
-1
-1
-true
-true
+1 1
+user_admin 1 admin
+user_u_pool 1 u_pool
+0 nobody
 --- no_error_log
 [error]
