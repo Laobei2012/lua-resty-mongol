@@ -334,7 +334,10 @@ function colmethods:aggregate(pipeline, options)
     if options ~= nil and type(options) ~= "table" then
         error("bad argument #2 to 'aggregate' (table expected)", 2)
     end
-    local batch_size = options and options.batch_size or 100
+    local batch_size = 100
+    if options and options.batch_size ~= nil then
+        batch_size = options.batch_size
+    end
     if type(batch_size) ~= "number" or batch_size < 0
        or batch_size ~= batch_size - batch_size % 1 then
         error("bad argument #2 to 'aggregate' "
