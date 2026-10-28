@@ -103,31 +103,44 @@ local function call ( mon , name , ev )
     end
 end
 
+local function sensitive ( state )
+    if state.sensitive == nil then
+        state.sensitive = is_sensitive ( state.command_name , state.body ) and true
+                          or false
+    end
+    return state.sensitive
+end
+
 -- starts the monitoring of a command: returns the state for succeeded
 -- and failed. mon is the monitor that was current when the command began;
--- the end events go to the same monitor.
+-- the end events go to the same monitor. An event is built only for a
+-- handler that exists, so that a monitor with one handler pays only for
+-- that handler.
 function _M.started ( mon , conn , dbname , body , seqinfo , request_id )
-    local name = command_name ( body )
-    local sensitive = is_sensitive ( name , body )
     local state = {
         mon = mon ,
-        sensitive = sensitive ,
-        command_name = name ,
+        body = body ,
+        command_name = command_name ( body ) ,
         db = dbname ,
         request_id = request_id ,
         host = conn.host ,
         port = conn.port ,
     }
-    ngx_update_time ( )
-    state.start = ngx_now ( )
-    call ( mon , "started" , {
-        command_name = name ,
-        db = dbname ,
-        request_id = request_id ,
-        host = conn.host ,
-        port = conn.port ,
-        command = sensitive and { } or command_copy ( body , seqinfo ) ,
-    } )
+    if mon.succeeded or mon.failed then
+        -- the duration needs the start time
+        ngx_update_time ( )
+        state.start = ngx_now ( )
+    end
+    if mon.started then
+        call ( mon , "started" , {
+            command_name = state.command_name ,
+            db = dbname ,
+            request_id = request_id ,
+            host = state.host ,
+            port = state.port ,
+            command = sensitive ( state ) and { } or command_copy ( body , seqinfo ) ,
+        } )
+    end
     return state
 end
 
@@ -137,6 +150,9 @@ local function duration_ms ( state )
 end
 
 function _M.succeeded ( state , reply )
+    if not state.mon.succeeded then
+        return
+    end
     call ( state.mon , "succeeded" , {
         command_name = state.command_name ,
         db = state.db ,
@@ -144,11 +160,14 @@ function _M.succeeded ( state , reply )
         host = state.host ,
         port = state.port ,
         duration_ms = duration_ms ( state ) ,
-        reply = state.sensitive and { } or copy ( reply ) ,
+        reply = sensitive ( state ) and { } or copy ( reply ) ,
     } )
 end
 
 function _M.failed ( state , err )
+    if not state.mon.failed then
+        return
+    end
     call ( state.mon , "failed" , {
         command_name = state.command_name ,
         db = state.db ,
@@ -156,7 +175,7 @@ function _M.failed ( state , err )
         host = state.host ,
         port = state.port ,
         duration_ms = duration_ms ( state ) ,
-        error = state.sensitive and "redacted" or tostring ( err ) ,
+        error = sensitive ( state ) and "redacted" or tostring ( err ) ,
     } )
 end
 
