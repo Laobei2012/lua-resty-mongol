@@ -5,6 +5,7 @@ local _M = { _VERSION = "1.0.0" }
 local error = error
 local ipairs = ipairs
 local type = type
+local tonumber = tonumber
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
@@ -16,6 +17,7 @@ local connmt = { __index = connmethods }
 local dbmt = require ( mod_name .. ".dbmt" )
 local bson = require ( mod_name .. ".bson" )
 local monitor = require ( mod_name .. ".monitor" )
+local uri = require ( mod_name .. ".uri" )
 
 -- sets the command monitor of this worker (nil removes it); see monitor.lua
 function _M.set_monitor(m)
@@ -49,8 +51,7 @@ end
 
 local function parse_host ( str )
     local host , port = str:match ( "([^:]+):?(%d*)" )
-    port = port or 27017
-    return host , port
+    return host , tonumber ( port ) or 27017
 end
 
 function connmethods:getprimary ( searched )
@@ -141,6 +142,9 @@ function connmethods:set_keepalive(...)
     local sock = self.sock
     if not sock then
         return nil, "not initialized"
+    end
+    if self.read_conn then
+        self.read_conn:set_keepalive(...)
     end
     if self.broken then
         return nil, "closed"
@@ -235,6 +239,9 @@ function connmethods:close()
     if not sock then
         return nil, "not initialized"
     end
+    if self.read_conn then
+        self.read_conn:close()
+    end
 
     return sock:close()
 end
@@ -249,5 +256,139 @@ new = function(self)
 end
 
 _M.new = new
+
+local read_preferences = {
+    primary = true , primaryPreferred = true ,
+    secondary = true , secondaryPreferred = true ,
+}
+
+-- Connects to one host and asks hello. Returns conn, hello reply | nil, err.
+-- With a user, each user has its own pool, so that a logged in socket
+-- never goes to another user.
+local function try_host ( u , host , port )
+    local opts
+    if u.options.tls then
+        opts = { ssl = true }
+    end
+    if u.user then
+        opts = opts or { }
+        opts.pool = "uri:" .. u.user .. "@" .. u.auth_source .. "@" .. host
+                    .. ":" .. port
+    end
+    local conn = new ( )
+    local ok , err = conn:connect ( host , port , opts )
+    if not ok then
+        return nil , err
+    end
+    local r
+    r , err = conn:new_db_handle ( "admin" ):cmd ( { hello = 1 } )
+    if not r then
+        conn:close ( )
+        return nil , err
+    end
+    return conn , r
+end
+
+local function login ( u , conn )
+    if not u.user then
+        return true
+    end
+    local ok , err = conn:new_db_handle ( u.auth_source ):auth ( u.user ,
+                                                              u.password or "" )
+    if not ok then
+        return nil , err
+    end
+    return true
+end
+
+-- Connects with a mongodb:// string. The connection that it returns always
+-- talks to the primary: writes and db:cmd use it. For the read preferences
+-- secondary and secondaryPreferred, conn.read_conn is a second connection
+-- to a secondary, and the reads use it (see colmt.lua and wire.lua).
+function _M.connect_uri ( str )
+    if type ( str ) ~= "string" then
+        error ( "bad argument #1 to 'connect_uri' (string expected)" , 2 )
+    end
+    local u , err = uri.parse ( str )
+    if not u then
+        return nil , err
+    end
+    local mode = u.options.readPreference or "primary"
+    if not read_preferences [ mode ] then
+        return nil , "unsupported readPreference: " .. mode
+    end
+    u.auth_source = u.options.authSource or u.db or "admin"
+
+    -- the seeds first, then the members that hello names
+    local tried = { }
+    local primary , hello
+    local last_err
+    local function consider ( host , port )
+        local key = host .. ":" .. port
+        if tried [ key ] then
+            return
+        end
+        tried [ key ] = true
+        local conn , r = try_host ( u , host , port )
+        if not conn then
+            last_err = r
+            return
+        end
+        if r.isWritablePrimary then
+            primary , hello = conn , r
+            return
+        end
+        conn:close ( )
+        return r.hosts
+    end
+    for _ , h in ipairs ( u.hosts ) do
+        local members = consider ( h.host , h.port )
+        if primary then break end
+        for _ , m in ipairs ( members or { } ) do
+            consider ( parse_host ( m ) )
+            if primary then break end
+        end
+        if primary then break end
+    end
+    if not primary then
+        return nil , last_err or "no primary found"
+    end
+
+    local ok
+    ok , err = login ( u , primary )
+    if not ok then
+        primary:close ( )
+        return nil , err
+    end
+
+    if mode == "secondary" or mode == "secondaryPreferred" then
+        local read_conn
+        for _ , m in ipairs ( hello.hosts or { } ) do
+            if m ~= hello.me then
+                local conn , r = try_host ( u , parse_host ( m ) )
+                if conn and r.secondary then
+                    read_conn = conn
+                    break
+                elseif conn then
+                    conn:close ( )
+                end
+            end
+        end
+        if read_conn then
+            ok , err = login ( u , read_conn )
+            if not ok then
+                read_conn:close ( )
+                primary:close ( )
+                return nil , err
+            end
+            read_conn.read_preference = mode
+            primary.read_conn = read_conn
+        elseif mode == "secondary" then
+            primary:close ( )
+            return nil , "no secondary available"
+        end
+    end
+    return primary
+end
 
 return _M
