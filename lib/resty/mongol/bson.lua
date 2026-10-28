@@ -557,8 +557,8 @@ end
 
 -- JSON for lua-cjson. cjson does not call metamethods and raises on
 -- cdata, so to_json_safe returns a copy of the document with plain
--- values. NaN and Infinity doubles stay numbers; cjson needs
--- cjson.encode_invalid_numbers for them.
+-- values. NaN and Infinity doubles become the strings "NaN", "Infinity"
+-- and "-Infinity".
 
 -- ISO 8601 UTC string for milliseconds since 1970 (also before 1970)
 local function iso_date ( ms )
@@ -621,6 +621,16 @@ function to_json ( cjson , v )
             return ( tostring ( v ):gsub ( "LL$" , "" ) )
         end
         return tostring ( v )
+    elseif tv == "number" then
+        -- cjson raises on these unless encode_invalid_numbers is set
+        if v ~= v then
+            return "NaN"
+        elseif v == huge then
+            return "Infinity"
+        elseif v == -huge then
+            return "-Infinity"
+        end
+        return v
     elseif tv ~= "table" then
         return v
     end

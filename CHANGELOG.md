@@ -29,8 +29,11 @@
     and MaxKey are the strings `"MinKey"` and `"MaxKey"`.
   - An empty array stays an array. The `int32`, `int64` and `double`
     wrappers become numbers.
-- NaN and Infinity doubles stay numbers. `cjson` raises on them unless you
-  set `cjson.encode_invalid_numbers`.
+- NaN and Infinity doubles become the strings `"NaN"`, `"Infinity"` and
+  `"-Infinity"`, so that `cjson.encode` always works on the copy.
+- A date above 2^53 keeps its milliseconds. A year outside 0000 to 9999
+  has a sign and six digits (`+010000`, `-000001`), as in ISO 8601.
+- A table that BSON stores as a document gets string keys in the copy.
 
 ## Unreleased (Phase 3)
 
