@@ -27,8 +27,20 @@
   support it.
 - Login state belongs to the socket, as before. After `set_keepalive`, a
   reused socket stays logged in as the same user. Use
-  `get_reused_times()` to skip a second login, and do not share a socket
-  between users.
+  `get_reused_times()` to skip a second login. Give each user a separate
+  pool name with the `pool` option of `connect`.
+
+### Connection
+
+- `conn:connect(host, port, opts)` takes an optional table `opts`:
+  `pool`, `pool_size` and `backlog` go to the connection pool. `ssl`,
+  `ssl_verify` (default `true`), `ssl_server_name` (default `host`) and
+  `ssl_reused_session` control TLS. With `ssl`, `connect` returns the TLS
+  session as a second value. The two-argument call does not change.
+- `ssl_verify` needs `lua_ssl_trusted_certificate` in `nginx.conf`.
+- A failed TLS handshake closes the socket and returns `nil, err`.
+- `connect` remembers the host, port and options of the last successful
+  call. `conn:connect()` with no arguments uses them again.
 
 ## 1.0.0 (unreleased)
 
