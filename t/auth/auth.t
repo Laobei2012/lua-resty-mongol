@@ -291,7 +291,7 @@ iterations zero true nil bad server reply nilclosed
                 scram.force_pure = pure
                 local proof, sig = scram._proof("SCRAM-SHA-256", "pencil", "W22ZaJ0SNY7soEsUEjb6gQ==", 4096,
                                                 fb .. "," .. sf .. "," .. cf)
-                ngx.say(pure, " ", proof, " ", sig)
+                ngx.say(scram._backend(), " ", proof, " ", sig)
             end
             -- RFC 5802 section 5, SCRAM-SHA-1
             fb = "n=user,r=fyko+d2lbbFgONRv9qkxdawL"
@@ -301,17 +301,17 @@ iterations zero true nil bad server reply nilclosed
                 scram.force_pure = pure
                 local proof, sig = scram._proof("SCRAM-SHA-1", "pencil", "QSXCR+Q6sek8bf92", 4096,
                                                 fb .. "," .. sf .. "," .. cf)
-                ngx.say(pure, " ", proof, " ", sig)
+                ngx.say(scram._backend(), " ", proof, " ", sig)
             end
         }
     }
 --- request
 GET /t
 --- response_body
-false dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ= 6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=
-true dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ= 6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=
-false v0X8v3Bz2T0CJGbJQyF0X+HI4Ts= rmF9pqV8S7suAoZWja4dJRkFsKQ=
-true v0X8v3Bz2T0CJGbJQyF0X+HI4Ts= rmF9pqV8S7suAoZWja4dJRkFsKQ=
+ffi dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ= 6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=
+pure dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ= 6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=
+ffi v0X8v3Bz2T0CJGbJQyF0X+HI4Ts= rmF9pqV8S7suAoZWja4dJRkFsKQ=
+pure v0X8v3Bz2T0CJGbJQyF0X+HI4Ts= rmF9pqV8S7suAoZWja4dJRkFsKQ=
 --- no_error_log
 [error]
 
