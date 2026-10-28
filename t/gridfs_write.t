@@ -1407,3 +1407,51 @@ GET /t
 0 0
 --- no_error_log
 [error]
+
+
+
+=== TEST 33: only binary subtype 0 is chunk data
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local chunks = db:get_col("fs14.chunks")
+            local function fresh(name)
+                assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = name}, true))
+                return fs:find_one({filename = name})
+            end
+            local cases = {
+                {"document", {v = "abcd"}},
+                {"subtype 128", bson.get_bin_data("abcd", 128)},
+                {"subtype 4", bson.get_bin_data("abcd", 4)},
+                {"string", "abcd"},
+            }
+            for _, c in ipairs(cases) do
+                local gf = fresh("f_" .. c[1])
+                chunks:update({files_id = gf.files_id, n = 0}, {["$set"] = {data = c[2]}}, 0, 0, true)
+                local r, err = gf:read()
+                local ok, merr = gf:update_md5()
+                ngx.say(c[1], " ", r, " ", type(err), " ", ok, " ", type(merr))
+            end
+            local gf = fresh("good")
+            ngx.say(gf:read(), " ", gf:update_md5())
+        }
+    }
+--- request
+GET /t
+--- response_body
+document nil string false string
+subtype 128 nil string false string
+subtype 4 nil string false string
+string nil string false string
+abcdefgh true
+--- no_error_log
+[error]
