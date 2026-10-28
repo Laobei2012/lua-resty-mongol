@@ -15,7 +15,7 @@ run_tests();
 
 __DATA__
 
-=== TEST 1: connect_uri with tls
+=== TEST 1: connect_uri with tls does a verified handshake
 --- http_config eval
 "$::HttpConfig" . qq{
     lua_ssl_trusted_certificate $ENV{TEST_NGINX_MONGO_CA};
@@ -23,21 +23,47 @@ __DATA__
 --- config
     location /t {
         content_by_lua_block {
+            -- record the arguments of sslhandshake
+            local seen
+            local real_tcp = ngx.socket.tcp
+            ngx.socket.tcp = function()
+                local sock = real_tcp()
+                return setmetatable({}, {__index = function(_, k)
+                    if k == "sslhandshake" then
+                        return function(_, reused, name, verify)
+                            seen = {name = name, verify = verify}
+                            return sock:sslhandshake(reused, name, verify)
+                        end
+                    end
+                    local v = sock[k]
+                    if type(v) == "function" then
+                        return function(_, ...) return v(sock, ...) end
+                    end
+                    return v
+                end})
+            end
             local mongo = require "resty.mongol"
-            local uri = require "resty.mongol.uri"
-            local bson = require "resty.mongol.bson"
             local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
-            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
-            local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?tls=true"))
-            ngx.say(conn:new_db_handle("admin"):cmd({ping = 1}).ok)
+            -- ngx_lua checks the name of the certificate against a host
+            -- name, not against an IP address, so with an IP address the
+            -- handshake fails; the handshake itself is what this test shows
+            local c, err = mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?tls=true")
+            ngx.say(seen and seen.name == H, " ", seen and seen.verify)
+            ngx.say(c, " ", type(err))
+            -- without tls the socket does no handshake
+            seen = nil
+            local plain = mongo.connect_uri("mongodb://" .. H .. ":1/?tls=false")
+            ngx.say(seen)
         }
     }
 --- request
 GET /t
 --- response_body
-1
---- no_error_log
-[error]
+true true
+nil string
+nil
+--- error_log
+certificate does not match host
 
 
 
@@ -59,5 +85,5 @@ GET /t
 GET /t
 --- response_body
 nil string
---- no_error_log
-[error]
+--- error_log
+certificate verify error
