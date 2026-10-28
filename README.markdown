@@ -350,7 +350,7 @@ within the server's document, message and batch limits.
 | Call | Result and options |
 | --- | --- |
 | `col:insert(docs, continue_on_error, safe, opts)` | `0` for acknowledged success, `-1` for unacknowledged, or `nil, err`. `docs` is an array; continue-on-error sends unordered inserts. |
-| `col:update(selector, update, upsert, multiupdate, safe, opts)` | Matched count for acknowledged success, `-1` for unacknowledged, or `nil, err`. Multi-update requires update operators. |
+| `col:update(selector, update, upsert, multiupdate, safe, opts)` | For acknowledged success, matched count or `1` for an inserted upsert; `-1` for unacknowledged, or `nil, err`. Multi-update requires update operators. |
 | `col:delete(selector, single_remove, safe, opts)` | Deleted count for acknowledged success, `-1` for unacknowledged, or `nil, err`. A true `single_remove` deletes at most one. |
 | `col:count(query)` | Count or `nil, err`. Uses the count command; it is not session-aware and is not a transactional read. |
 | `col:drop()` | `1` or `nil, err`. |
