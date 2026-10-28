@@ -107,3 +107,50 @@ true
 admin
 --- no_error_log
 [error]
+
+
+
+=== TEST 4: an explicit connect clears the stored uri login
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            local function users(c)
+                local info = c:new_db_handle("admin"):cmd({connectionStatus = 1}).authInfo.authenticatedUsers
+                return #info
+            end
+            local conn = assert(mongo.connect_uri("mongodb://admin:admin@" .. H .. ":" .. P .. "/?authSource=admin"))
+            ngx.say(users(conn))
+            -- an explicit connect without credentials
+            conn:close()
+            assert(conn:connect(H, P))
+            ngx.say(users(conn), " ", conn.relogin, " ", conn.read_conn)
+            -- a reconnect with no arguments must not log in again
+            conn:close()
+            assert(conn:connect())
+            ngx.say(users(conn))
+            ngx.say(conn:set_keepalive(10000, 5))
+            -- an ordinary plain connection that borrows the socket is not logged in
+            local plain = mongo:new()
+            plain:set_timeout(5000)
+            assert(plain:connect(H, P))
+            ngx.say(plain:get_reused_times() > 0, " ", users(plain))
+            plain:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+0 nil nil
+0
+1
+true 0
+--- no_error_log
+[error]
