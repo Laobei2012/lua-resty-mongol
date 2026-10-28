@@ -687,3 +687,26 @@ GET /t
 -9223372036854775808LL -292275055-05-16T16:47:04.192Z
 --- no_error_log
 [error]
+
+
+=== TEST 25: json document keys are strings
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local doc = {v = {[1] = "a", [100] = "b"}, w = {[0] = "x", "y"}, u = {[2] = "q"}}
+            local json = cjson.encode(bson.to_json_safe(doc))
+            local back = cjson.decode(json)
+            ngx.say(back.v["1"], " ", back.v["100"], " ", back.w["0"], " ", back.w["1"], " ", back.u["2"])
+            ngx.say(type(back.v), " ", #back.v)
+        }
+    }
+--- request
+GET /t
+--- response_body
+a b x y q
+table 0
+--- no_error_log
+[error]
