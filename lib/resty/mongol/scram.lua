@@ -157,13 +157,18 @@ local function pbkdf2 ( mech , password , salt , iter )
     return pure_pbkdf2 ( mech , password , salt , iter )
 end
 
+-- the backend that runs HMAC and PBKDF2: "ffi" or "pure"
+function _M._backend ( )
+    return use_ffi ( ) and "ffi" or "pure"
+end
+
 -- salted passwords, so that pooled connections skip PBKDF2
 local cache = { }
 local cache_size = 0
 local CACHE_MAX = 1000
 
 local function salted_password ( mech , user , password , salt_b64 , iter )
-    local key = t_concat ( { mech , user ,
+    local key = t_concat ( { _M._backend ( ) , mech , user ,
                              resty_string.to_hex ( hash ( "SCRAM-SHA-256" , password ) ) ,
                              salt_b64 , iter } , "\0" )
     local salted = cache [ key ]
