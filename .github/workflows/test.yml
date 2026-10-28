@@ -86,3 +86,33 @@ jobs:
           sudo cpanm --notest Test::Nginx
       - name: Test with authentication
         run: make test-auth
+
+  tls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Make the test certificates
+        run: sh t/tls/gen-certs.sh
+      - name: Start MongoDB with TLS
+        run: |
+          docker run -d --name mongo-tls -p 27017:27017 \
+            -v "$PWD/t/tls/certs:/certs:ro" mongo:9.0 \
+            --tlsMode requireTLS \
+            --tlsCertificateKeyFile /certs/server.pem \
+            --tlsCAFile /certs/ca.pem \
+            --tlsAllowConnectionsWithoutCertificates
+          for i in $(seq 1 30); do
+            nc -z 127.0.0.1 27017 && break
+            sleep 1
+          done
+      - name: Install OpenResty and Test::Nginx
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wget gnupg ca-certificates lsb-release cpanminus
+          wget -O - https://openresty.org/package/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/openresty.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/openresty.gpg] http://openresty.org/package/ubuntu $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/openresty.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "openresty=${OPENRESTY_VERSION}-*"
+          sudo cpanm --notest Test::Nginx
+      - name: Test TLS
+        run: make test-tls
