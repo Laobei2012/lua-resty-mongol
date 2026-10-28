@@ -558,7 +558,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 **Files:** Create `lib/resty/mongol/uri.lua`. Modify `init.lua` and `.github/workflows/test.yml`. Test: `t/uri.t`, `t/replset/cluster.t`. Move `t/cluster.t` TEST 5 to TEST 7 to `t/replset/cluster.t` and remove their skips. TEST 2 and TEST 8 moved to `t/auth/legacy.t` in Task 4, so `t/cluster.t` is then empty and is deleted.
 
 **Interfaces:**
-- Produces: `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
+- Produces (each host is a table `{host = ..., port = ...}`): `uri.parse(str) -> {hosts = {{host, port}}, db, user, password, options = {authSource, tls, replicaSet, readPreference}} | nil, err`. It decodes percent-encoding in the user name and the password.
 - Produces: `mongol.connect_uri(str) -> conn | nil, err`. The returned `conn` always talks to the primary, and all writes and `db:cmd` calls use it. For `secondary` and `secondaryPreferred`, `conn.read_conn` holds a second connection to the selected secondary. If `conn.read_conn` is set, `col:query`, `col:find`, `col:find_one`, `col:count` and `col:aggregate` use it. A cursor keeps the connection of its first `query` for every `getMore` and `killCursors`. The read connection follows `readPreference` (issues #10 and #22):
   - `primary`: no `read_conn`. Reads use the primary.
   - `primaryPreferred`: no `read_conn` while a primary answers. If no primary answers, `connect_uri` returns `nil, err`, because writes need a primary.

@@ -57,6 +57,19 @@
 - With `tls=true` the handshake verifies the certificate against the host
   name. ngx_lua does not match a certificate name against an IP address, so
   use host names in the string when you use `tls=true`.
+- `conn:connect()` with no arguments reconnects `conn.read_conn` too, keeps
+  its read preference, and logs in again for a `connect_uri` connection with
+  a user. `connect(host, port)` with an address closes and drops `read_conn`.
+- A raw `col:getmore` and `col:kill_cursors` use the same connection as
+  `col:query` (the secondary of a read preference).
+- A repeated option in the string: the last one wins. A unix domain socket,
+  an IPv6 literal that is not one, and a bad host are errors.
+- The pool names that the driver makes (`plain:`, `tls:` and for a user in a
+  string) have the length of each part in front of it, so two different
+  settings never share a pool. `uri.parse_host` is the one parser for the
+  string and for the members that `hello` names (`[::1]:27017` works).
+- The `started` event of the monitor holds the fields that the driver adds
+  after `$db`, such as `$readPreference`.
 - `getprimary` and `connect_uri` now give the port of a member as a number.
   Before, `getprimary` gave a string, or an empty string for a member
   without a port.

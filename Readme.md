@@ -107,7 +107,9 @@ Connection strings
 
 `conn = mongol.connect_uri("mongodb://user:pass@host1:27017,host2/db?replicaSet=rs0&readPreference=secondaryPreferred&authSource=admin&tls=true")` connects to the primary of a replica set (or a standalone server) and returns `conn`, or `nil, err`. Write the user name and the password with percent-encoding (`@` as `%40`, `:` as `%3A`).
 
- - Options: `authSource`, `tls`, `replicaSet` (read, not checked) and `readPreference`. `mongodb+srv://` is not supported.
+ - Options: `authSource`, `tls`, `replicaSet` (read, not checked) and `readPreference`. If an option is repeated, the last one wins. Unknown options are ignored. `mongodb+srv://` and unix domain sockets are not supported.
+ - `require("resty.mongol.uri").parse(str)` returns `{hosts = {{host = "h1", port = 27017}, ...}, db = ..., user = ..., password = ..., options = {...}}`. Each host is a table with the keys `host` and `port`. `uri.parse_host(str)` parses one `host:port` or `[ipv6]:port`.
+ - After `conn:close()` or `conn:set_keepalive()`, `conn:connect()` with no arguments reconnects the primary and `conn.read_conn`, and logs in again if the string had a user.
  - `readPreference` is `primary` (default), `primaryPreferred`, `secondary` or `secondaryPreferred`. It applies to reads only: `col:query`, `col:find`, `col:find_one`, `col:count` and `col:aggregate`. For `secondary` and `secondaryPreferred`, `conn.read_conn` is a second connection to a secondary. A secondary can be a little late, so a read after a write can miss the document. Writes and `db:cmd` always go to the primary.
  - A cursor keeps the connection of its first query. Call `cursor:close()` when you stop before the end.
  - `tls=true` verifies the certificate against the host name, and needs `lua_ssl_trusted_certificate`. Use host names in the string, not IP addresses.
