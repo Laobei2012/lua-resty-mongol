@@ -647,7 +647,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 Task 15 notes: no tags or GitHub releases exist, so all phases are grouped
 under the unreleased `1.0.0` candidate; there are no post-1.0.0 releases to
 invent sections for. MONGODB-CR removal remains in the Phase 3 section.
-The rockspec pins source/docs commit `7c87307` by immutable archive URL;
+The rockspec pins source/docs commit `c089d00` by immutable archive URL;
 the actual remote-source LuaRocks build passes after the branch push.
 The driver version and behavior are unchanged. `Changes.md` is a regular,
 byte-identical distribution copy of the changelog for OPM; keep both files
