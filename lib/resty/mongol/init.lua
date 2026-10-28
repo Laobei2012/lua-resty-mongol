@@ -213,6 +213,7 @@ function connmethods:connect(host, port, opts)
             self.read_conn = nil
         end
         self.relogin = nil
+        self.read_preference = nil
     end
     host = host or self.host
     port = port or self.port
