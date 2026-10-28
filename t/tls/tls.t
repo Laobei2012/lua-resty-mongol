@@ -291,3 +291,50 @@ GET /t
 nil string
 --- no_error_log
 [crit]
+
+
+
+=== TEST 10: plain, tls and caller pool names are always apart
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            -- record the pool name that the driver gives to each connect
+            local seen = {}
+            local real_tcp = ngx.socket.tcp
+            ngx.socket.tcp = function()
+                local sock = real_tcp()
+                return setmetatable({}, {__index = function(_, k)
+                    if k == "connect" then
+                        return function(_, h, p, o)
+                            seen[#seen + 1] = o and o.pool or "default"
+                            return sock:connect(h, p, o)
+                        end
+                    end
+                    local v = sock[k]
+                    if type(v) == "function" then
+                        return function(_, ...) return v(sock, ...) end
+                    end
+                    return v
+                end})
+            end
+            local mongo = require "resty.mongol"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+
+            local tls = mongo:new()
+            tls:set_timeout(5000)
+            assert(tls:connect(H, P, {ssl = true, ssl_verify = false, pool = tostring(P)}))
+            local plain = mongo:new()
+            plain:set_timeout(5000)
+            assert(plain:connect(H, P))
+            ngx.say(seen[1])
+            ngx.say(seen[2])
+            ngx.say(seen[1] ~= seen[2])
+        }
+    }
+--- request
+GET /t
+--- response_body eval
+"user:$ENV{TEST_NGINX_MONGO_PORT}\nplain:$ENV{TEST_NGINX_MONGO_HOST}:$ENV{TEST_NGINX_MONGO_PORT}\ntrue\n"
+--- no_error_log
+[crit]
