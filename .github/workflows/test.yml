@@ -35,7 +35,9 @@ jobs:
           for f in lib/resty/mongol/*.lua; do /tmp/devel-utils/lj-releng "$f"; done
 
   test:
-    runs-on: ubuntu-latest
+    # mongo:8.0 refuses to start on Linux 6.19 and newer (SERVER-121912).
+    # The ubuntu-24.04 image moved to such a kernel; ubuntu-22.04 ships 6.8.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
