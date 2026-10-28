@@ -1101,3 +1101,118 @@ nil closed
 1 abcdefgh
 --- no_error_log
 [error]
+
+
+
+=== TEST 26: the chunks index is unique
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local gf = assert(fs:new({chunkSize = 4, filename = "ix"}))
+            gf:write("abcd", 0)
+            local found
+            local cur = db:get_col("fs14.chunks"):find({})
+            local idx = db:cmd({listIndexes = "fs14.chunks"})
+            for _, i in ipairs(idx.cursor.firstBatch) do
+                if i.key.files_id == 1 and i.key.n == 1 then found = i end
+            end
+            ngx.say(found and found.unique, " ", found and found.name)
+            local chunks = db:get_col("fs14.chunks")
+            local r, err = chunks:insert({{files_id = gf.files_id, n = 0, data = bson.get_bin_data("zzzz")}}, nil, true)
+            ngx.say(r, " ", err:find("E11000", 1, true) ~= nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true files_id_1_n_1
+nil true
+--- no_error_log
+[error]
+
+
+
+=== TEST 27: length never gets shorter
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            assert(fs:insert(t.string_fh(""), {chunkSize = 4, filename = "len"}, true))
+            local a = fs:find_one({filename = "len"})
+            local b = fs:find_one({filename = "len"})
+            ngx.say(a:write("abcdefgh", 0))
+            -- b has a stale file size of 0
+            ngx.say(b:write("xy", 0))
+            local doc = db:get_col("fs14.files"):find_one({filename = "len"})
+            ngx.say(doc.length, " ", b.file_size)
+            ngx.say(fs:find_one({filename = "len"}):read())
+        }
+    }
+--- request
+GET /t
+--- response_body
+8
+2
+8 2
+xycdefgh
+--- no_error_log
+[error]
+
+
+
+=== TEST 28: an update that matches no chunk is an error
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "gone"}, true))
+            local gf = fs:find_one({filename = "gone"})
+            local real = wire.command
+            local chunks = db:get_col("fs14.chunks")
+            wire.command = function(c, d, cmd, ...)
+                if cmd[1] and cmd[1][1] == "update" and cmd[1][2] == "fs14.chunks" then
+                    wire.command = real
+                    chunks:delete({files_id = gf.files_id}, nil, true)
+                    wire.command = function(...) return real(...) end
+                end
+                return real(c, d, cmd, ...)
+            end
+            local r, err = gf:write("zz", 0)
+            wire.command = real
+            ngx.say(r, " ", type(err), " ", err and err:find("chunk", 1, true) ~= nil)
+            -- the length did not change either
+            ngx.say(db:get_col("fs14.files"):find_one({filename = "gone"}).length)
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil string true
+8
+--- no_error_log
+[error]
