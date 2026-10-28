@@ -1,6 +1,7 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
 local string = string
+local type = type
 local math = math
 local table = table
 
@@ -91,6 +92,26 @@ function gridfs_file_mt:write(buf, offset, size)
     return size
 end
 
+-- Loads the data of chunk n and checks it as the GridFS specification
+-- wants: the chunk exists, its data is binary, and its length is the chunk
+-- size (the rest of the file for the last chunk).
+local function load_chunk(self, n)
+    local r, err = self.chunk_col:find_one({files_id = self.files_id, n = n})
+    if not r then return nil, err or "read chunk failed" end
+    local data = r.data
+    if type(data) ~= "table" or type(data.v) ~= "string" then
+        return nil, "chunk " .. n .. " is not binary data"
+    end
+    local cs = self.chunk_size
+    local last = math.ceil(self.file_size / cs) - 1
+    local expected = (n == last) and (self.file_size - n * cs) or cs
+    if #data.v ~= expected then
+        return nil, "chunk " .. n .. " has the wrong length: " .. #data.v
+                    .. " instead of " .. expected
+    end
+    return data.v
+end
+
 -- read size bytes from mongo by the offset; size defaults to the rest of
 -- the file and is cut at the end of the file
 function gridfs_file_mt:read(size, offset)
@@ -117,13 +138,12 @@ function gridfs_file_mt:read(size, offset)
     local last = math.floor((offset + size - 1) / cs)
     local parts = {}
     for n = first, last do
-        local r, err = self.chunk_col:find_one({files_id = self.files_id,
-                                                n = n})
-        if not r then return nil, err or "read chunk failed" end
+        local data, err = load_chunk(self, n)
+        if not data then return nil, err end
         -- the part of this chunk inside the range
         local from = (n == first) and (offset - n * cs) or 0
         local to = (n == last) and (offset + size - n * cs) or cs
-        parts[#parts + 1] = string.sub(r.data.v, from + 1, to)
+        parts[#parts + 1] = string.sub(data, from + 1, to)
     end
     return table.concat(parts)
 end
@@ -135,10 +155,11 @@ function gridfs_file_mt:update_md5()
     local r, err
 
     for i = 0, n - 1 do
-        r, err = self.chunk_col:find_one({files_id = self.files_id, n = i})
-        if not r then return false, err or "read chunk failed" end
+        local data
+        data, err = load_chunk(self, i)
+        if not data then return false, err end
 
-        md5_obj:update(r.data.v)
+        md5_obj:update(data)
     end
     local md5hex = str.to_hex(md5_obj:final())
 
