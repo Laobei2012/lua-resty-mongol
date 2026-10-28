@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased (Phase 4)
+
+### BSON types
+
+- `bson.decimal128(str)` makes a Decimal128 value from a decimal string. It
+  returns `nil, err` for a bad, inexact or out-of-range string. `tostring`
+  of a value gives the decimal string, and `value.v` holds the 16 bytes.
+  A read of type 0x13 returns the same wrapper. Before, it raised an error.
+- `bson.regex(pattern, options)` makes `{pattern, options}`. It sorts the
+  options. A read of type 0x0B returns the same wrapper. A `\0` in the
+  pattern or the options makes `bson.to_bson` return `nil, "invalid regex"`.
+- `bson.minkey()` and `bson.maxkey()` make the MinKey and MaxKey values,
+  and reads of types 0xFF and 0x7F return them.
+- No caller breaks: reads of these types raised an error before.
+
+### JSON
+
+- `bson.to_json_safe(doc)` returns a copy of a document that `cjson` can
+  encode (issues #53, #66 and #67). `lua-cjson` does not call metamethods
+  and raises on cdata. The copy has these values:
+  - An ObjectId is a hex string. A date is an ISO 8601 string with
+    milliseconds. `bson.null` is `cjson.null`.
+  - An `int64_t` value (an integer above 2^53) is a decimal string, so that
+    no digits are lost.
+  - Binary data is a base64 string, and Decimal128 is its decimal string.
+  - A Timestamp is `{t, i}`, and a regex is `{pattern, options}`. MinKey
+    and MaxKey are the strings `"MinKey"` and `"MaxKey"`.
+  - An empty array stays an array. The `int32`, `int64` and `double`
+    wrappers become numbers.
+- NaN and Infinity doubles become the strings `"NaN"`, `"Infinity"` and
+  `"-Infinity"`, so that `cjson.encode` always works on the copy.
+- A date above 2^53 keeps its milliseconds. A year outside 0000 to 9999
+  has a sign and six digits (`+010000`, `-000001`), as in ISO 8601.
+- A table that BSON stores as a document gets string keys in the copy.
+
 ## Unreleased (Phase 3)
 
 ### Authentication

@@ -7,10 +7,15 @@ local pcall = pcall
 local type = type
 local tonumber , tostring = tonumber , tostring
 local floor = math.floor
+local ffi = require "ffi"
+local strformat = string.format
+local ngx = ngx
+local require = require
 local huge = math.huge
 local strbyte , strchar , strfind , strsub = string.byte , string.char ,
                                             string.find , string.sub
 local t_concat = table.concat
+local t_sort = table.sort
 
 local ll = require ( mod_name .. ".ll" )
 local le_uint_to_num = ll.le_uint_to_num
@@ -24,6 +29,7 @@ local le_to_int64 = ll.le_to_int64
 local is_int64 = ll.is_int64
 
 local opairs = require ( mod_name .. ".misc" ).opairs
+local decimal128 = require ( mod_name .. ".decimal128" )
 
 local obid = require ( mod_name .. ".object_id" )
 local new_object_id = obid.new
@@ -39,6 +45,12 @@ local double_mt = { }
 local timestamp_mt = { }
 local ordered_mt = { }
 local array_mt = { }
+local decimal128_mt = { __tostring = function ( self )
+    return decimal128.tostring ( self.v )
+end }
+local regex_mt = { }
+local minkey_mt = { }
+local maxkey_mt = { }
 local null_mt = { __tostring = function ( ) return "null" end }
 
 local null = setmetatable ( { } , null_mt )
@@ -106,6 +118,44 @@ function _M.ordered ( list )
     return setmetatable ( list , ordered_mt )
 end
 
+-- a Decimal128 from a decimal string; the value keeps its 16 bytes in v
+function _M.decimal128 ( str )
+    if type ( str ) ~= "string" then
+        error ( "bad argument #1 to 'decimal128' (string expected)" , 2 )
+    end
+    local raw , err = decimal128.parse ( str )
+    if not raw then
+        return nil , err
+    end
+    return setmetatable ( { v = raw } , decimal128_mt )
+end
+
+-- the options are sorted, as the BSON specification wants
+function _M.regex ( pattern , options )
+    if type ( pattern ) ~= "string" or type ( options or "" ) ~= "string" then
+        error ( "bad argument #1 to 'regex' (strings expected)" , 2 )
+    end
+    local chars = { }
+    for c in ( options or "" ):gmatch ( "." ) do
+        chars [ #chars + 1 ] = c
+    end
+    t_sort ( chars )
+    return setmetatable ( { pattern = pattern , options = t_concat ( chars ) } ,
+                          regex_mt )
+end
+
+function _M.minkey ( )
+    return setmetatable ( { } , minkey_mt )
+end
+
+function _M.maxkey ( )
+    return setmetatable ( { } , maxkey_mt )
+end
+
+_M.decimal128_mt = decimal128_mt
+_M.regex_mt = regex_mt
+_M.minkey_mt = minkey_mt
+_M.maxkey_mt = maxkey_mt
 _M.int32_mt = int32_mt
 _M.int64_mt = int64_mt
 _M.double_mt = double_mt
@@ -225,6 +275,26 @@ local function read_value ( s , op , p , last )
         need ( s , p , 8 , last )
         return setmetatable ( { v = le_to_int64 ( s , p ) } , utc_date ) ,
                p + 8
+    elseif op == 0x0B then -- Regular expression
+        local z1 = strfind ( s , "\0" , p , true )
+        if not z1 or z1 > last then
+            error ( "bson: truncated regex" , 0 )
+        end
+        local z2 = strfind ( s , "\0" , z1 + 1 , true )
+        if not z2 or z2 > last then
+            error ( "bson: truncated regex" , 0 )
+        end
+        return setmetatable ( { pattern = strsub ( s , p , z1 - 1 ) ,
+                                options = strsub ( s , z1 + 1 , z2 - 1 ) } ,
+                              regex_mt ) , z2 + 1
+    elseif op == 0x13 then -- Decimal128
+        need ( s , p , 16 , last )
+        return setmetatable ( { v = strsub ( s , p , p + 15 ) } ,
+                              decimal128_mt ) , p + 16
+    elseif op == 0x7F then -- MaxKey
+        return setmetatable ( { } , maxkey_mt ) , p
+    elseif op == 0xFF then -- MinKey
+        return setmetatable ( { } , minkey_mt ) , p
     elseif op == 0x0A then -- Null
         return null , p
     elseif op == 0x10 then -- int32
@@ -367,6 +437,18 @@ local function pack ( k , v )
         return "\18" .. k .. "\0" .. int64_to_le ( v.v )
     elseif mt == double_mt then
         return "\1" .. k .. "\0" .. to_double ( v.v )
+    elseif mt == decimal128_mt then
+        return "\19" .. k .. "\0" .. v.v
+    elseif mt == regex_mt then
+        if strfind ( v.pattern , "\0" , 1 , true )
+           or strfind ( v.options , "\0" , 1 , true ) then
+            error ( "invalid regex" , 0 )
+        end
+        return "\11" .. k .. "\0" .. v.pattern .. "\0" .. v.options .. "\0"
+    elseif mt == minkey_mt then
+        return "\255" .. k .. "\0"
+    elseif mt == maxkey_mt then
+        return "\127" .. k .. "\0"
     elseif mt == timestamp_mt then
         return "\17" .. k .. "\0" .. num_to_le_uint ( v.i , 4 )
                                  .. num_to_le_uint ( v.t , 4 )
@@ -471,6 +553,144 @@ function _M.to_bson ( ob )
         return nil , s
     end
     return s
+end
+
+-- JSON for lua-cjson. cjson does not call metamethods and raises on
+-- cdata, so to_json_safe returns a copy of the document with plain
+-- values. NaN and Infinity doubles become the strings "NaN", "Infinity"
+-- and "-Infinity".
+
+-- ISO 8601 UTC string for milliseconds since 1970 (also before 1970)
+local function iso_date ( ms )
+    -- split in int64 arithmetic, so that a date above 2^53 keeps its
+    -- milliseconds
+    local ms64 = type ( ms ) == "number" and ffi.cast ( "int64_t" , floor ( ms ) )
+                 or ms
+    local q = ms64 / 86400000LL
+    local r = ms64 % 86400000LL
+    if r < 0 then
+        r = r + 86400000LL
+        q = q - 1
+    end
+    local days = tonumber ( q )
+    local rem = tonumber ( r )
+    -- civil date from days since 1970-01-01 (H. Hinnant)
+    local z = days + 719468
+    local era = floor ( z / 146097 )
+    local doe = z - era * 146097
+    local yoe = floor ( ( doe - floor ( doe / 1460 ) + floor ( doe / 36524 )
+                          - floor ( doe / 146096 ) ) / 365 )
+    local y = yoe + era * 400
+    local doy = doe - ( 365 * yoe + floor ( yoe / 4 ) - floor ( yoe / 100 ) )
+    local mp = floor ( ( 5 * doy + 2 ) / 153 )
+    local d = doy - floor ( ( 153 * mp + 2 ) / 5 ) + 1
+    local m = mp < 10 and mp + 3 or mp - 9
+    if m <= 2 then
+        y = y + 1
+    end
+    -- years outside 0000 to 9999 have a sign and six digits (ISO 8601)
+    local ys
+    if y >= 0 and y <= 9999 then
+        ys = strformat ( "%04d" , y )
+    else
+        ys = strformat ( y < 0 and "-%06d" or "+%06d" , y < 0 and -y or y )
+    end
+    return strformat ( "%s-%02d-%02dT%02d:%02d:%02d.%03dZ" , ys , m , d ,
+                       floor ( rem / 3600000 ) , floor ( rem / 60000 ) % 60 ,
+                       floor ( rem / 1000 ) % 60 , rem % 1000 )
+end
+
+local to_json
+
+local function json_array ( cjson , t , n )
+    if n == 0 then
+        return setmetatable ( { } , cjson.empty_array_mt )
+    end
+    local out = { }
+    for i = 1 , n do
+        out [ i ] = to_json ( cjson , t [ i ] )
+    end
+    return out
+end
+
+function to_json ( cjson , v )
+    local tv = type ( v )
+    if tv == "cdata" then
+        if is_int64 ( v ) then
+            -- a string, so that no digits are lost
+            return ( tostring ( v ):gsub ( "LL$" , "" ) )
+        end
+        return tostring ( v )
+    elseif tv == "number" then
+        -- cjson raises on these unless encode_invalid_numbers is set
+        if v ~= v then
+            return "NaN"
+        elseif v == huge then
+            return "Infinity"
+        elseif v == -huge then
+            return "-Infinity"
+        end
+        return v
+    elseif tv ~= "table" then
+        return v
+    end
+
+    local mt = getmetatable ( v )
+    if v == null then
+        return cjson.null
+    elseif v == empty_array then
+        return setmetatable ( { } , cjson.empty_array_mt )
+    elseif mt == object_id_mt then
+        return v:tostring ( )
+    elseif mt == utc_date then
+        return iso_date ( v.v )
+    elseif mt == binary_mt then
+        return ngx.encode_base64 ( v.v )
+    elseif mt == decimal128_mt then
+        return tostring ( v )
+    elseif mt == timestamp_mt then
+        return { t = v.t , i = v.i }
+    elseif mt == regex_mt then
+        return { pattern = v.pattern , options = v.options }
+    elseif mt == minkey_mt then
+        return "MinKey"
+    elseif mt == maxkey_mt then
+        return "MaxKey"
+    elseif mt == int32_mt or mt == int64_mt or mt == double_mt then
+        return to_json ( cjson , v.v )
+    elseif mt == array_mt then
+        return json_array ( cjson , v , #v )
+    end
+
+    -- a table with the keys 1 to n is an array
+    local n , only_index = 0 , true
+    for k in opairs ( v ) do
+        n = n + 1
+        if type ( k ) ~= "number" or k < 1 or k ~= floor ( k ) then
+            only_index = false
+        end
+    end
+    if only_index and n > 0 and v [ n ] ~= nil then
+        return json_array ( cjson , v , n )
+    end
+    -- a document: the keys are strings, as in the BSON encoding. A sparse
+    -- table with number keys would make cjson raise "excessively sparse
+    -- array".
+    local out = { }
+    for k , x in opairs ( v ) do
+        if type ( k ) == "number" then
+            k = tostring ( k )
+        end
+        out [ k ] = to_json ( cjson , x )
+    end
+    return out
+end
+
+function _M.to_json_safe ( doc )
+    if type ( doc ) ~= "table" then
+        error ( "bad argument #1 to 'to_json_safe' (table expected)" , 2 )
+    end
+    return to_json ( require "cjson" , doc )
 end
 
 return _M

@@ -488,11 +488,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - A binary value becomes a base64 string, and a Decimal128 value becomes its decimal string.
   - A Timestamp becomes `{t = t, i = i}`, a Regex becomes `{pattern = p, options = o}`, and MinKey and MaxKey become the strings `"MinKey"` and `"MaxKey"`.
 
-- [ ] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`. The document holds every type from the rules above, plus `9007199254740993LL` and `-9007199254740993LL` inside a nested document and inside an array. The call raises no error. The JSON contains the ObjectId hex and the strings `"9007199254740993"` and `"-9007199254740993"`.
-- [ ] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Add `decimal128-1` to `decimal128-7`, `regex`, `minkey` and `maxkey` to the allowlist in `t/bson_corpus.t`. Empty its `known_failures` table. Run `prove t/bson_corpus.t`. Expected: PASS.
-- [ ] **Step 4: Run** `make test`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, JSON helpers`. Tag the Phase 4 release.
+- [x] **Step 1: Write failing tests.** `TEST: type round trip` for each row above, through a real insert and `find_one`. Also add `TEST: empty array stays array` for issue #66, and `TEST: cjson safe` with `cjson.encode(bson.to_json_safe(doc))`. The document holds every type from the rules above, plus `9007199254740993LL` and `-9007199254740993LL` inside a nested document and inside an array. The call raises no error. The JSON contains the ObjectId hex and the strings `"9007199254740993"` and `"-9007199254740993"`.
+- [x] **Step 2: Run** `prove t/bson.t`. Expected: FAIL.
+- [x] **Step 3: Implement.** Decimal128 string conversion follows the BSON Decimal128 spec. Add `decimal128-1` to `decimal128-7`, `regex`, `minkey` and `maxkey` to the allowlist in `t/bson_corpus.t`. Empty its `known_failures` table. Run `prove t/bson_corpus.t`. Expected: PASS.
+- [x] **Step 4: Run** `make test`. Expected: PASS.
+- [x] **Step 5: Commit** `feat(bson): decimal128, regex, min/max key, JSON helpers`. Tag the Phase 4 release.
 
 ---
 

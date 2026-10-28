@@ -432,3 +432,312 @@ GET /t
 falsebad argument #1 to 'int32' (number expected)
 --- no_error_log
 [error]
+
+
+
+=== TEST 18: decimal128 strings
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            for _, str in ipairs({"1.5", "-1.5", "0", "-0.0", "1E+3", "0.000001", "1.000E-7", "Infinity", "-Infinity", "NaN",
+                                  "9.999999999999999999999999999999999E+6144", "1E-6176"}) do
+                local s = bson.to_bson({d = bson.decimal128(str)})
+                local e = t.elements(s)
+                local d = bson.decode(s).d
+                ngx.say(str, " ", string.format("0x%02x", e[1].type), " ", tostring(d), " ", getmetatable(d) == bson.decimal128_mt)
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+1.5 0x13 1.5 true
+-1.5 0x13 -1.5 true
+0 0x13 0 true
+-0.0 0x13 -0.0 true
+1E+3 0x13 1E+3 true
+0.000001 0x13 0.000001 true
+1.000E-7 0x13 1.000E-7 true
+Infinity 0x13 Infinity true
+-Infinity 0x13 -Infinity true
+NaN 0x13 NaN true
+9.999999999999999999999999999999999E+6144 0x13 9.999999999999999999999999999999999E+6144 true
+1E-6176 0x13 1E-6176 true
+--- no_error_log
+[error]
+
+
+
+=== TEST 19: decimal128 bad strings
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            for _, str in ipairs({"", "1e", ".", "E01", "Infi", "1.1111111111111111111111111111112345", "1e10000", "1e-7000", "--1"}) do
+                local d, err = bson.decimal128(str)
+                ngx.say(string.format("%q", str), " ", d, " ", type(err))
+            end
+            ngx.say(pcall(bson.decimal128, 5))
+        }
+    }
+--- request
+GET /t
+--- response_body
+"" nil string
+"1e" nil string
+"." nil string
+"E01" nil string
+"Infi" nil string
+"1.1111111111111111111111111111112345" nil string
+"1e10000" nil string
+"1e-7000" nil string
+"--1" nil string
+falsebad argument #1 to 'decimal128' (string expected)
+--- no_error_log
+[error]
+
+
+
+=== TEST 20: regex, minkey and maxkey
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local s = bson.to_bson({r = bson.regex("^a/b", "xim"), lo = bson.minkey(), hi = bson.maxkey()})
+            local types = {}
+            for _, e in ipairs(t.elements(s)) do types[e.name] = string.format("0x%02x", e.type) end
+            ngx.say(types.r, " ", types.lo, " ", types.hi)
+            local d = bson.decode(s)
+            ngx.say(d.r.pattern, " ", d.r.options, " ", getmetatable(d.r) == bson.regex_mt)
+            ngx.say(getmetatable(d.lo) == bson.minkey_mt, " ", getmetatable(d.hi) == bson.maxkey_mt)
+            -- the order of the fields in a Lua table is not fixed, so decode again
+            local d2 = bson.decode(bson.to_bson(d))
+            ngx.say(d2.r.pattern == d.r.pattern, " ", d2.r.options == d.r.options, " ",
+                    getmetatable(d2.lo) == bson.minkey_mt, " ", getmetatable(d2.hi) == bson.maxkey_mt)
+            ngx.say(bson.to_bson({r = bson.regex("a\0b", "")}))
+            ngx.say(bson.to_bson({r = bson.regex("a", "i\0")}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+0x0b 0xff 0x7f
+^a/b imx true
+true true
+true true true true
+nilinvalid regex
+nilinvalid regex
+--- no_error_log
+[error]
+
+
+
+=== TEST 21: type round trip through the server
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("bson_types")
+            col:delete({}, nil, true)
+            col:insert({{_id = 1, d = bson.decimal128("12.50"), r = bson.regex("^a", "i"), lo = bson.minkey(), hi = bson.maxkey()}}, nil, true)
+            local doc = col:find_one({_id = 1})
+            ngx.say(tostring(doc.d), " ", getmetatable(doc.d) == bson.decimal128_mt)
+            ngx.say(doc.r.pattern, " ", doc.r.options, " ", getmetatable(doc.r) == bson.regex_mt)
+            ngx.say(getmetatable(doc.lo) == bson.minkey_mt, " ", getmetatable(doc.hi) == bson.maxkey_mt)
+            ngx.say(col:count({d = {["$type"] = "decimal"}, r = {["$type"] = "regex"}, lo = {["$type"] = "minKey"}, hi = {["$type"] = "maxKey"}}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+12.50 true
+^a i true
+true true
+1
+--- no_error_log
+[error]
+
+
+
+=== TEST 22: empty array stays array
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("bson_types")
+            col:delete({}, nil, true)
+            col:insert({{_id = 1, a = bson.empty_array, b = {}}}, nil, true)
+            local doc = col:find_one({_id = 1})
+            ngx.say(getmetatable(doc.a) == bson.array_mt, " ", #doc.a, " ", getmetatable(doc.b) == bson.array_mt)
+            col:insert({{_id = 2, a = doc.a}}, nil, true)
+            ngx.say(col:count({a = {["$type"] = "array"}}), " ", col:count({b = {["$type"] = "object"}}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+true 0 false
+2 1
+--- no_error_log
+[error]
+
+
+
+=== TEST 23: cjson safe
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local cjson = require "cjson.safe"
+            local obid = require "resty.mongol.object_id"
+            local doc = {
+                id = obid.new_from_hex("0123456789abcdef01234567"),
+                date = bson.get_utc_date(0),
+                before = bson.get_utc_date(-1),
+                null = bson.null,
+                big = 9007199254740993LL,
+                neg = -9007199254740993LL,
+                nested = {big = 9007199254740993LL, arr = {9007199254740993LL, -9007199254740993LL, {deep = 9007199254740993LL}}},
+                bin = bson.get_bin_data("abc", 0),
+                dec = bson.decimal128("1.50"),
+                ts = bson.timestamp(100, 7),
+                re = bson.regex("^a", "i"),
+                lo = bson.minkey(),
+                hi = bson.maxkey(),
+                empty = bson.empty_array,
+                list = {1, 2, 3},
+                wrapped = bson.int64(5),
+                n = 1.5,
+            }
+            local json, err = cjson.encode(bson.to_json_safe(doc))
+            ngx.say(json ~= nil, " ", err)
+            local back = cjson.decode(json)
+            ngx.say(back.id, " ", back.date, " ", back.before)
+            ngx.say(back.null == cjson.null, " ", back.big, " ", back.neg)
+            ngx.say(back.nested.big, " ", back.nested.arr[1], " ", back.nested.arr[2], " ", back.nested.arr[3].deep)
+            ngx.say(back.bin, " ", back.dec, " ", back.ts.t, " ", back.ts.i, " ", back.re.pattern, " ", back.re.options)
+            ngx.say(back.lo, " ", back.hi, " ", #back.empty, " ", json:find('"empty":[]', 1, true) ~= nil)
+            ngx.say(#back.list, " ", back.wrapped, " ", back.n)
+            ngx.say(type(doc.big), " ", getmetatable(doc.date) == bson.utc_date_mt)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true nil
+0123456789abcdef01234567 1970-01-01T00:00:00.000Z 1969-12-31T23:59:59.999Z
+true 9007199254740993 -9007199254740993
+9007199254740993 9007199254740993 -9007199254740993 9007199254740993
+YWJj 1.50 100 7 ^a i
+MinKey MaxKey 0 true
+3 5 1.5
+cdata true
+--- no_error_log
+[error]
+
+
+=== TEST 24: json dates at the boundaries
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local cases = {
+                0, -1, 1700000000123, 253402300799999, 253402300800000,
+                -62167219200000, -62167219200001, -62135596800000,
+                9007199254740993LL, -9007199254740993LL,
+                9223372036854775807LL, -9223372036854775807LL - 1,
+            }
+            for _, ms in ipairs(cases) do
+                local j = bson.to_json_safe({d = bson.get_utc_date(ms)})
+                ngx.say(type(ms) == "number" and string.format("%.0f", ms) or tostring(ms), " ", j.d)
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+0 1970-01-01T00:00:00.000Z
+-1 1969-12-31T23:59:59.999Z
+1700000000123 2023-11-14T22:13:20.123Z
+253402300799999 9999-12-31T23:59:59.999Z
+253402300800000 +010000-01-01T00:00:00.000Z
+-62167219200000 0000-01-01T00:00:00.000Z
+-62167219200001 -000001-12-31T23:59:59.999Z
+-62135596800000 0001-01-01T00:00:00.000Z
+9007199254740993LL +287396-10-12T08:59:00.993Z
+-9007199254740993LL -283457-03-21T15:00:59.007Z
+9223372036854775807LL +292278994-08-17T07:12:55.807Z
+-9223372036854775808LL -292275055-05-16T16:47:04.192Z
+--- no_error_log
+[error]
+
+
+=== TEST 25: json document keys are strings
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local doc = {v = {[1] = "a", [100] = "b"}, w = {[0] = "x", "y"}, u = {[2] = "q"}}
+            local json = cjson.encode(bson.to_json_safe(doc))
+            local back = cjson.decode(json)
+            ngx.say(back.v["1"], " ", back.v["100"], " ", back.w["0"], " ", back.w["1"], " ", back.u["2"])
+            ngx.say(type(back.v), " ", #back.v)
+        }
+    }
+--- request
+GET /t
+--- response_body
+a b x y q
+table 0
+--- no_error_log
+[error]
+
+
+=== TEST 26: json NaN and Infinity
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local doc = {
+                a = 0/0, b = 1/0, c = -1/0, d = bson.double(0/0), e = bson.double(-1/0),
+                nested = {x = 1/0, list = {1, 0/0, {deep = -1/0}}},
+                f = 1.5, g = bson.double(2.5), h = bson.int32(7),
+            }
+            local json, err = cjson.encode(bson.to_json_safe(doc))
+            ngx.say(json ~= nil, " ", err)
+            local back = cjson.decode(json)
+            ngx.say(back.a, " ", back.b, " ", back.c, " ", back.d, " ", back.e)
+            ngx.say(back.nested.x, " ", back.nested.list[1], " ", back.nested.list[2], " ", back.nested.list[3].deep)
+            ngx.say(back.f, " ", back.g, " ", back.h)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true nil
+NaN Infinity -Infinity NaN -Infinity
+Infinity 1 NaN -Infinity
+1.5 2.5 7
+--- no_error_log
+[error]
