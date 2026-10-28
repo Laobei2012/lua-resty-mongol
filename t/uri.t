@@ -370,3 +370,65 @@ nil string
 plain:3:::1:1:2 plain:2:h2:5:27017 plain:2:h3:1:4
 --- no_error_log
 [error]
+
+
+
+=== TEST 9: uri parse: hosts that are not supported
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            for _, str in ipairs({"mongodb://[garbage]:27017", "mongodb://[::1]:abc", "mongodb://[]:27017", "mongodb://h%/db",
+                    "mongodb://h%2/db", "mongodb://%2Ftmp%2Fmongodb-27017.sock", "mongodb://%2Ftmp%2Fmongodb-27017.sock/db",
+                    "mongodb:///tmp/mongodb-27017.sock", "mongodb://h1,/tmp/x.sock", "mongodb://bad host", "mongodb://h!x"}) do
+                local r, err = uri.parse(str)
+                ngx.say(string.format("%q", str), " ", tostring(r), " ", err)
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+"mongodb://[garbage]:27017" nil invalid host
+"mongodb://[::1]:abc" nil invalid host
+"mongodb://[]:27017" nil invalid host
+"mongodb://h%/db" nil invalid host
+"mongodb://h%2/db" nil invalid host
+"mongodb://%2Ftmp%2Fmongodb-27017.sock" nil unix domain sockets are not supported
+"mongodb://%2Ftmp%2Fmongodb-27017.sock/db" nil unix domain sockets are not supported
+"mongodb:///tmp/mongodb-27017.sock" nil no host
+"mongodb://h1,/tmp/x.sock" nil unix domain sockets are not supported
+"mongodb://bad host" nil invalid host
+"mongodb://h!x" nil invalid host
+--- no_error_log
+[error]
+
+
+
+=== TEST 10: uri parse: repeated options
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            local r = uri.parse("mongodb://h/?readPreference=primary&readPreference=secondary&authSource=a&authSource=b&tls=true&tls=false")
+            ngx.say(r.options.readPreference, " ", r.options.authSource, " ", tostring(r.options.tls))
+        }
+    }
+--- request
+GET /t
+--- response_body
+secondary b false
+--- no_error_log
+[error]
