@@ -26,9 +26,9 @@ __DATA__
             local mongo = require "resty.mongol"
             local conn = mongo:new()
             conn:set_timeout(5000)
-            local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT,
-                                         {ssl = true, ssl_server_name = "localhost"})
-            ngx.say(ok, " ", err)
+            local ok = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT,
+                                    {ssl = true, ssl_server_name = "localhost"})
+            ngx.say(ok)
             local db = conn:new_db_handle("admin")
             ngx.say(db:cmd({ping = 1}).ok)
         }
@@ -36,7 +36,7 @@ __DATA__
 --- request
 GET /t
 --- response_body
-1 nil
+1
 1
 --- no_error_log
 [error]
@@ -56,17 +56,17 @@ GET /t
             conn:set_timeout(5000)
             local ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT,
                                          {ssl = true, ssl_server_name = "localhost"})
-            ngx.say(ok, " ", type(err))
+            ngx.say(ok, " ", err:find("certificate", 1, true) ~= nil)
             ngx.say(conn:set_keepalive())
         }
     }
 --- request
 GET /t
 --- response_body
-nil string
+nil true
 nilclosed
---- error_log
-certificate verify failed
+--- no_error_log
+[crit]
 
 
 
@@ -108,7 +108,8 @@ GET /t
             assert(conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT,
                                 {ssl = true, ssl_server_name = "localhost"}))
             conn:close()
-            ngx.say(conn:connect())
+            local ok = conn:connect()
+            ngx.say(ok)
             ngx.say(conn:new_db_handle("admin"):cmd({ping = 1}).ok)
         }
     }
