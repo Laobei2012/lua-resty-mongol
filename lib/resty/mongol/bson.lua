@@ -663,8 +663,14 @@ function to_json ( cjson , v )
     if only_index and n > 0 and v [ n ] ~= nil then
         return json_array ( cjson , v , n )
     end
+    -- a document: the keys are strings, as in the BSON encoding. A sparse
+    -- table with number keys would make cjson raise "excessively sparse
+    -- array".
     local out = { }
     for k , x in opairs ( v ) do
+        if type ( k ) == "number" then
+            k = tostring ( k )
+        end
         out [ k ] = to_json ( cjson , x )
     end
     return out
