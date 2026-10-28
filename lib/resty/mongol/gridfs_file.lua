@@ -1,6 +1,7 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
 local string = string
+local getmetatable = getmetatable
 local type = type
 local error = error
 local math = math
@@ -13,6 +14,16 @@ local bson = require ( mod_name .. ".bson" )
 local gridfs_file_mt = { }
 local gridfs_file = { __index = gridfs_file_mt }
 local get_bin_data = bson.get_bin_data
+
+-- The bytes of the data field of chunk n, or nil, err: it must be binary
+-- data of subtype 0 (a document, a string or another subtype is not).
+local function chunk_bytes(data, n)
+    if getmetatable(data) ~= bson.binary_mt or data.st ~= "\0"
+       or type(data.v) ~= "string" then
+        return nil, "chunk " .. n .. " is not binary data of subtype 0"
+    end
+    return data.v
+end
 
 -- write size bytes from the buf string into mongo, by the offset.
 -- Chunks that exist are updated, so the bytes around the written range
@@ -51,7 +62,9 @@ function gridfs_file_mt:write(buf, offset, size)
             if doc then return nil, doc end
             break
         end
-        old[doc.n] = doc.data.v
+        local bytes, berr = chunk_bytes(doc.data, doc.n)
+        if not bytes then return nil, "write failed: " .. berr end
+        old[doc.n] = bytes
     end
 
     local inserts = {}
@@ -108,18 +121,16 @@ end
 local function load_chunk(self, n)
     local r, err = self.chunk_col:find_one({files_id = self.files_id, n = n})
     if not r then return nil, err or "read chunk failed" end
-    local data = r.data
-    if type(data) ~= "table" or type(data.v) ~= "string" then
-        return nil, "chunk " .. n .. " is not binary data"
-    end
+    local data, derr = chunk_bytes(r.data, n)
+    if not data then return nil, derr end
     local cs = self.chunk_size
     local last = math.ceil(self.file_size / cs) - 1
     local expected = (n == last) and (self.file_size - n * cs) or cs
-    if #data.v ~= expected then
-        return nil, "chunk " .. n .. " has the wrong length: " .. #data.v
+    if #data ~= expected then
+        return nil, "chunk " .. n .. " has the wrong length: " .. #data
                     .. " instead of " .. expected
     end
-    return data.v
+    return data
 end
 
 -- read size bytes from mongo by the offset; size defaults to the rest of
