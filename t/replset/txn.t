@@ -33,7 +33,9 @@ __DATA__
             local s = conn:start_session()
             assert(s:start_transaction())
             ngx.say(col:insert({{a = 1}}, nil, nil, {session = s}))
-            ngx.say(col:count({}))
+            -- count reads the metadata of the collection and can include an open
+            -- transaction; a find outside the transaction shows what is committed
+            ngx.say(col:find_one({}) == nil)
             ngx.say(s:commit_transaction())
             ngx.say(col:count({}))
         }
@@ -42,7 +44,7 @@ __DATA__
 GET /t
 --- response_body
 0
-0
+true
 true
 1
 --- no_error_log
