@@ -277,6 +277,8 @@ function connmethods:connect(host, port, opts)
         if self.relogin and sock:getreusedtimes() == 0 then
             local lok, lerr = self.relogin(self)
             if not lok then
+                sock:close()
+                self.broken = true
                 return nil, lerr
             end
         end
