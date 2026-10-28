@@ -12,8 +12,8 @@
 
 ## Global Constraints
 
-- Old driver: the `master` branch, commit `3eb6349`. It speaks `OP_QUERY`, so it runs only against `mongo:4.4`.
-- New driver: the tip of the latest phase branch at run time. Record its commit SHA in every result line.
+- Old driver: commit `3eb6349`, the last commit before the modernization. It speaks `OP_QUERY`, so it runs only against `mongo:4.4`.
+- New driver: `master` at 1.0.0 (`173b314`) or a later ref. Record its commit SHA in every result line.
 - A/B rule: the old and new driver run on `mongo:4.4`, on the same machine, in the same job, one after the other. Only this pair decides pass or fail.
 - Trend rule: the new driver also runs on `mongo:6.0`, `mongo:7.0`, `mongo:8.0` and `mongo:9.0`. These numbers are for information. They do not gate.
 - Handlers use only the API forms that both drivers accept: no arrays in documents, whole numbers below 2^31, no BSON types that Phase 4 adds.
