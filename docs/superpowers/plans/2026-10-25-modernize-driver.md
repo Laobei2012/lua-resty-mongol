@@ -644,7 +644,8 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - [x] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Use the table in "Issue and PR disposition". Then close it. Close each open PR with a thank-you and a link to the commit that supersedes it.
 - [x] **Step 6: Commit** `docs: README, CHANGELOG, packaging`.
 
-Task 15 notes: no tags or GitHub releases exist, so all phases are grouped
+Task 15 verification notes (before the Phase 6 merge and release):
+no tags or GitHub releases existed, so all phases were grouped
 under the unreleased `1.0.0` candidate; there are no post-1.0.0 releases to
 invent sections for. MONGODB-CR removal remains in the Phase 3 section.
 The rockspec pins source/docs commit `c089d00` by immutable archive URL;

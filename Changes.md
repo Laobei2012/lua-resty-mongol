@@ -1,10 +1,9 @@
 # Changelog
 
-## 1.0.0 (unreleased)
+## 1.0.0 (2026-10-28)
 
-All modernization phases below belong to the same proposed major release.
-No 1.0.0 tag or package has been published; there are no subsequent releases
-to list yet. Phase labels describe implementation work, not release dates.
+All modernization phases below belong to this major release. Phase labels
+describe implementation work, not separate releases.
 
 ### Phase 6: Documentation and packaging
 
@@ -15,8 +14,7 @@ to list yet. Phase labels describe implementation work, not release dates.
   unsupported-runtime instructions. These describe the implemented API,
   not additional driver behavior changes.
 - Provide a builtin LuaRocks rockspec covering all 17 modules and OPM
-  metadata. Keep the existing `1.0.0` module version as an unreleased
-  candidate; no phase release numbers or publication dates are invented.
+  metadata. All modernization phases ship together as `1.0.0`.
 - `Changes.md` is a regular distribution copy of this changelog for OPM's
   filename convention; keep the two files synchronized. A symlink was
   omitted by LuaRocks when building from the source archive, breaking the
@@ -266,7 +264,7 @@ to list yet. Phase labels describe implementation work, not release dates.
 This is the major release that contains every breaking change of the
 move to the `OP_MSG` wire protocol. The old version sends legacy opcodes
 that MongoDB 5.1 and later reject. This section lists every change that a
-caller can see, with the reason. All later-phase entries above are also included in this candidate.
+caller can see, with the reason. All later-phase entries above are also included in this release.
 
 #### Command transport
 

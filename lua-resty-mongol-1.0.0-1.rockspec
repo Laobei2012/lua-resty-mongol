@@ -2,15 +2,14 @@ package = "lua-resty-mongol"
 version = "1.0.0-1"
 
 source = {
-    -- Existing implementation/docs snapshot; 1.0.0 is not tagged or published.
-    url = "https://github.com/Laobei2012/lua-resty-mongol/archive/c089d009c9e726f48d3788c2ee50c78a80efcf96.tar.gz",
-    dir = "lua-resty-mongol-c089d009c9e726f48d3788c2ee50c78a80efcf96",
+    url = "https://github.com/Laobei2012/lua-resty-mongol/archive/refs/tags/v1.0.0.tar.gz",
+    dir = "lua-resty-mongol-1.0.0",
 }
 
 description = {
     summary = "MongoDB driver for OpenResty using nonblocking cosockets",
     detailed = [[
-        Unreleased 1.0.0 candidate for MongoDB 6.0 through 9.0, with OP_MSG,
+        MongoDB 6.0 through 9.0 support with OP_MSG,
         SCRAM, TLS, aggregation, replica-set reads, GridFS and transactions.
         Requires OpenResty with LuaJIT and its bundled resty libraries;
         a standalone Lua interpreter is not a supported runtime.
