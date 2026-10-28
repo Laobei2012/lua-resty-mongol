@@ -32,8 +32,8 @@ local function files_doc(meta, length, md5_value)
 end
 
 function gridfs_mt:find_one(fields)
-    local r = self.file_col:find_one(fields)
-    if not r then return nil end
+    local r, err = self.file_col:find_one(fields)
+    if not r then return nil, err end
 
     return setmetatable({
                     file_col = self.file_col;
@@ -47,8 +47,8 @@ function gridfs_mt:find_one(fields)
 end
 
 function gridfs_mt:get(fh, fields)
-    local f = self:find_one(fields)
-    if not f then return nil, "file not found" end
+    local f, ferr = self:find_one(fields)
+    if not f then return nil, ferr or "file not found" end
     local data, err = f:read()
     if not data then return nil, err end
     local ok
@@ -69,7 +69,13 @@ function gridfs_mt:remove(fields, continue_on_err, safe)
     end
 
     local cursor = self.file_col:find(fields, {_id=1})
-    for k,v in cursor:pairs() do
+    while true do
+        local i, v = cursor:next()
+        if not i then
+            -- the end of the cursor has no second value, an error has one
+            if v then return nil, v end
+            break
+        end
         r,err = self.chunk_col:delete({files_id=v._id}, continue_on_err, safe)
         if not r then return nil, "remove chunks failed: "..err end
         r,err = self.file_col:delete({_id=v._id}, continue_on_err, safe)

@@ -31,8 +31,12 @@ function gridfs_file_mt:write(buf, offset, size)
     local cursor = self.chunk_col:find({files_id = self.files_id,
                                         n = {["$gte"] = first, ["$lte"] = last}})
     while true do
-        local _, doc = cursor:next()
-        if not doc then break end
+        local i, doc = cursor:next()
+        if not i then
+            -- the end of the cursor has no second value, an error has one
+            if doc then return nil, doc end
+            break
+        end
         old[doc.n] = doc.data.v
     end
 
