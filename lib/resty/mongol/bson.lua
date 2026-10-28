@@ -7,6 +7,9 @@ local pcall = pcall
 local type = type
 local tonumber , tostring = tonumber , tostring
 local floor = math.floor
+local strformat = string.format
+local ngx = ngx
+local require = require
 local huge = math.huge
 local strbyte , strchar , strfind , strsub = string.byte , string.char ,
                                             string.find , string.sub
@@ -549,6 +552,112 @@ function _M.to_bson ( ob )
         return nil , s
     end
     return s
+end
+
+-- JSON for lua-cjson. cjson does not call metamethods and raises on
+-- cdata, so to_json_safe returns a copy of the document with plain
+-- values. NaN and Infinity doubles stay numbers; cjson needs
+-- cjson.encode_invalid_numbers for them.
+
+-- ISO 8601 UTC string for milliseconds since 1970 (also before 1970)
+local function iso_date ( ms )
+    ms = tonumber ( ms )
+    local days = floor ( ms / 86400000 )
+    local rem = ms - days * 86400000
+    -- civil date from days since 1970-01-01 (H. Hinnant)
+    local z = days + 719468
+    local era = floor ( z / 146097 )
+    local doe = z - era * 146097
+    local yoe = floor ( ( doe - floor ( doe / 1460 ) + floor ( doe / 36524 )
+                          - floor ( doe / 146096 ) ) / 365 )
+    local y = yoe + era * 400
+    local doy = doe - ( 365 * yoe + floor ( yoe / 4 ) - floor ( yoe / 100 ) )
+    local mp = floor ( ( 5 * doy + 2 ) / 153 )
+    local d = doy - floor ( ( 153 * mp + 2 ) / 5 ) + 1
+    local m = mp < 10 and mp + 3 or mp - 9
+    if m <= 2 then
+        y = y + 1
+    end
+    return strformat ( "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ" , y , m , d ,
+                       floor ( rem / 3600000 ) , floor ( rem / 60000 ) % 60 ,
+                       floor ( rem / 1000 ) % 60 , rem % 1000 )
+end
+
+local to_json
+
+local function json_array ( cjson , t , n )
+    if n == 0 then
+        return setmetatable ( { } , cjson.empty_array_mt )
+    end
+    local out = { }
+    for i = 1 , n do
+        out [ i ] = to_json ( cjson , t [ i ] )
+    end
+    return out
+end
+
+function to_json ( cjson , v )
+    local tv = type ( v )
+    if tv == "cdata" then
+        if is_int64 ( v ) then
+            -- a string, so that no digits are lost
+            return ( tostring ( v ):gsub ( "LL$" , "" ) )
+        end
+        return tostring ( v )
+    elseif tv ~= "table" then
+        return v
+    end
+
+    local mt = getmetatable ( v )
+    if v == null then
+        return cjson.null
+    elseif v == empty_array then
+        return setmetatable ( { } , cjson.empty_array_mt )
+    elseif mt == object_id_mt then
+        return v:tostring ( )
+    elseif mt == utc_date then
+        return iso_date ( v.v )
+    elseif mt == binary_mt then
+        return ngx.encode_base64 ( v.v )
+    elseif mt == decimal128_mt then
+        return tostring ( v )
+    elseif mt == timestamp_mt then
+        return { t = v.t , i = v.i }
+    elseif mt == regex_mt then
+        return { pattern = v.pattern , options = v.options }
+    elseif mt == minkey_mt then
+        return "MinKey"
+    elseif mt == maxkey_mt then
+        return "MaxKey"
+    elseif mt == int32_mt or mt == int64_mt or mt == double_mt then
+        return to_json ( cjson , v.v )
+    elseif mt == array_mt then
+        return json_array ( cjson , v , #v )
+    end
+
+    -- a table with the keys 1 to n is an array
+    local n , only_index = 0 , true
+    for k in opairs ( v ) do
+        n = n + 1
+        if type ( k ) ~= "number" or k < 1 or k ~= floor ( k ) then
+            only_index = false
+        end
+    end
+    if only_index and n > 0 and v [ n ] ~= nil then
+        return json_array ( cjson , v , n )
+    end
+    local out = { }
+    for k , x in opairs ( v ) do
+        out [ k ] = to_json ( cjson , x )
+    end
+    return out
+end
+
+function _M.to_json_safe ( doc )
+    if type ( doc ) ~= "table" then
+        error ( "bad argument #1 to 'to_json_safe' (table expected)" , 2 )
+    end
+    return to_json ( require "cjson" , doc )
 end
 
 return _M
