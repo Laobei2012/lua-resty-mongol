@@ -242,8 +242,7 @@ abcdefghijkl
 
 === TEST 10: gridfs read unaligned
 # gridfs_file:read ignores the offset inside the first chunk
-# TODO(Task 13): also skipped until gridfs_file:read honors the offset inside a chunk.
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || 1
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
