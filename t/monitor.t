@@ -534,3 +534,47 @@ GET /t
 nil 4 succeeded true
 --- no_error_log
 [error]
+
+
+=== TEST 15: redaction follows the iterator of the encoder
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local t = require "mongol_t"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local events = {}
+            local function rec(kind)
+                return function(ev) events[#events + 1] = {kind, ev} end
+            end
+            local all = {started = rec("started"), succeeded = rec("succeeded"), failed = rec("failed")}
+            local function text() return cjson.encode(bson.to_json_safe(events)) end
+            local conn, db = t.connect(H, P, "test")
+            local col = db:get_col("monitor_t")
+            col:delete({}, nil, true)
+            db:cmd({dropUser = "u4"})
+            local cmd = setmetatable({}, {__pairs = function(t)
+                -- an iterator with its own state and start value
+                return function(s, i)
+                    i = i + 1
+                    if s[i] then return s[i][1], s[i][2], i end
+                end, {{"createUser", "u4"}, {"pwd", "secret"}, {"roles", bson.empty_array}}, 0
+            end})
+            mongo.set_monitor(all)
+            local r = db:cmd(cmd)
+            mongo.set_monitor(nil)
+            db:cmd({dropUser = "u4"})
+            ngx.say(r ~= nil, " ", #events, " ", events[1][2].command_name, " ", next(events[1][2].command) == nil, " ", next(events[2][2].reply) == nil)
+            ngx.say(text():find("secret", 1, true) == nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true 2 createUser true true
+true
+--- no_error_log
+[error]
