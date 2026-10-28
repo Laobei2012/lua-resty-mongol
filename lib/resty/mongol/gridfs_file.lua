@@ -85,11 +85,11 @@ function gridfs_file_mt:write(buf, offset, size)
     end
 
     -- The stored length only grows ($max), even if this handle has an old
-    -- file size. The md5 is not valid any more.
+    -- file size. The md5 is not valid any more, so it is removed.
     local new_size = offset + size
     r, err = self.file_col:update({_id = self.files_id},
                 {["$max"] = {length = bson.int64(new_size)},
-                 ["$set"] = {md5 = 0}}, 0, 0, true)
+                 ["$unset"] = {md5 = ""}}, 0, 0, true)
     if not r then return nil, "write failed: " .. err end
     if r == 0 then
         return nil, "write failed: the files document is gone"
@@ -97,7 +97,7 @@ function gridfs_file_mt:write(buf, offset, size)
     if new_size > self.file_size then
         self.file_size = new_size
     end
-    self.file_md5 = 0
+    self.file_md5 = nil
     return size
 end
 

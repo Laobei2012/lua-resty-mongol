@@ -29,6 +29,7 @@ local function files_doc(meta, length, md5_value)
     end
     doc.chunkSize = bson.int32(meta.chunkSize)
     doc.length = bson.int64(length)
+    -- a new file has no md5: 0 is not a digest
     doc.md5 = md5_value
     doc.uploadDate = get_utc_date(ngx.time() * 1000)
     return doc
@@ -134,7 +135,7 @@ function gridfs_mt:new(meta)
 
     local r, err = self:ensure_indexes()
     if not r then return nil, err end
-    r, err = self.file_col:insert({files_doc(meta, 0, 0)}, nil, true)
+    r, err = self.file_col:insert({files_doc(meta, 0, nil)}, nil, true)
     if not r then return nil, err end
 
     return setmetatable({
@@ -143,7 +144,6 @@ function gridfs_mt:new(meta)
                     chunk_size = meta.chunkSize;
                     files_id = meta._id;
                     file_size = 0;
-                    file_md5 = 0;
                     file_name = meta.filename;
                     bucket = self;
                     }, gridfs_file)
