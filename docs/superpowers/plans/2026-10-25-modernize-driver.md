@@ -589,12 +589,12 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - Add `TEST: write twice past end`. On a new file handle, `write("abc", 0)` and then `write("d", 3)` both succeed, and `read()` returns `abcd`. Add `TEST: md5 exact multiple`. With `chunkSize = 4` and an 8-byte file, `update_md5()` succeeds, and the stored `md5` equals `ngx.md5` of the 8 bytes. Add `TEST: large file split`. Set `wire.limits.max_message_size = 20000` and write a 100,000-byte file with `chunkSize = 4096`. `read()` returns the same bytes.
 - Add `TEST: stored types` to `t/gridfs_write.t`. A decoded Lua number does not show its BSON type, so the test asks the server. `count({_id = id, chunkSize = {["$type"] = "int"}, length = {["$type"] = "long"}})` on the files collection gives `1`. The chunks collection gives the same count for `n` with `"int"` and `data` with `"binData"`.
 
-- [ ] **Step 1:** Add the new tests of this task to `t/gridfs_write.t`. Remove the `--- SKIP` line from the unaligned read block in `t/api.t`. Keep every existing overwrite assertion as it is.
-- [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run.** Expected: PASS on all four servers.
-- [ ] **Step 4b: Remove the skips.** Remove `|| 1` and the `TODO(Task 13)` comment from `t/api.t` TEST 10 (gridfs read unaligned). Remove the `skip_eval` line and the `TODO(Task 13)` comment from `t/gridfs.t` TEST 2.
-- [ ] **Step 5: Commit** `feat(gridfs): port to command API`.
+- [x] **Step 1:** Add the new tests of this task to `t/gridfs_write.t`. Remove the `--- SKIP` line from the unaligned read block in `t/api.t`. Keep every existing overwrite assertion as it is.
+- [x] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run.** Expected: PASS on all four servers.
+- [x] **Step 4b: Remove the skips.** Remove `|| 1` and the `TODO(Task 13)` comment from `t/api.t` TEST 10 (gridfs read unaligned). Remove the `skip_eval` line and the `TODO(Task 13)` comment from `t/gridfs.t` TEST 2.
+- [x] **Step 5: Commit** `feat(gridfs): port to command API`.
 
 ### Task 14: Sessions and transactions
 

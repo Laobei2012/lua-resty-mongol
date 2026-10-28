@@ -2,6 +2,30 @@
 
 ## Unreleased (Phase 5)
 
+### GridFS
+
+- `gridfs_file:read(size, offset)` honors the offset inside a chunk. Before,
+  it started at the right chunk but took the bytes from the start of it.
+  `size` defaults to the rest of the file and is cut at the end of the
+  file. Reading an empty file returns `""`.
+- `gridfs:get(fh, fields)` returns `true` (it returned the file handle), or
+  `nil, err`.
+- `gridfs_file:write(buf, offset, size)` sets `file_size` and `length` when
+  the file gets longer, so a second write at the new end works. It returns
+  the number of bytes written. Existing chunks are updated and the bytes
+  around the written range stay. New chunks are inserted in batches that fit
+  the server limits (issues #35 and #36).
+- `gridfs_file:update_md5()` reads the chunks 0 to ceil(length / chunk size)
+  - 1. It read one chunk too many when the length is a multiple of the
+  chunk size. `write` still does not call it; the `md5` field is
+  deprecated in the GridFS specification (issue #37 is out of scope).
+- The files document stores `chunkSize` as int32 and `length` as int64
+  (issue #35). The chunk documents store `n` as int32 and `data` as binary
+  subtype 0.
+- `gridfs:new(meta)` and `gridfs:insert(fh, meta, safe)` do not add `md5`,
+  `uploadDate` and `length` to your `meta` table any more. They still set
+  `_id`, `filename` and `chunkSize` in it.
+
 ### Connection strings and replica sets
 
 - `mongol.connect_uri(str)` is new (issues #10 and #22). It parses a
