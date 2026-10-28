@@ -49,12 +49,21 @@ local function decode ( bytes )
     return ok and doc or { }
 end
 
-local function is_sensitive ( name , body )
+-- Decided from all the fields that are sent: the command and the fields
+-- that the driver adds after it (extra).
+local function is_sensitive ( name , body , extra )
     if sensitive_commands [ name ] then
         return true
     end
-    return hello_commands [ name ]
-           and decode ( body ).speculativeAuthenticate ~= nil
+    if not hello_commands [ name ] then
+        return false
+    end
+    for _ , kv in ipairs ( extra or { } ) do
+        if kv [ 1 ] == "speculativeAuthenticate" then
+            return true
+        end
+    end
+    return decode ( body ).speculativeAuthenticate ~= nil
 end
 
 -- A deep copy of a reply, so that a hook cannot change what the caller
@@ -109,8 +118,8 @@ end
 
 local function sensitive ( state )
     if state.sensitive == nil then
-        state.sensitive = is_sensitive ( state.command_name , state.body ) and true
-                          or false
+        state.sensitive = is_sensitive ( state.command_name , state.body ,
+                                         state.extra ) and true or false
     end
     return state.sensitive
 end
@@ -124,6 +133,7 @@ function _M.started ( mon , conn , dbname , body , seqinfo , request_id , extra 
     local state = {
         mon = mon ,
         body = body ,
+        extra = extra ,
         command_name = command_name ( body ) ,
         db = dbname ,
         request_id = request_id ,
