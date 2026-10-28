@@ -1,8 +1,31 @@
 # Changelog
 
-## Unreleased (Phase 5)
+## 1.0.0 (unreleased)
 
-### Sessions and transactions
+All modernization phases below belong to the same proposed major release.
+No 1.0.0 tag or package has been published; there are no subsequent releases
+to list yet. Phase labels describe implementation work, not release dates.
+
+### Phase 6: Documentation and packaging
+
+- Rename `Readme.md` to `README.markdown` with a table of contents,
+  migration guide, current method signatures and query examples. Correct
+  the descriptions of `find_one` (one document), GridFS `read` (bytes),
+  `shutdown` and acknowledged writes; remove obsolete `getlasterror` and
+  unsupported-runtime instructions. These describe the implemented API,
+  not additional driver behavior changes.
+- Provide a builtin LuaRocks rockspec covering all 17 modules and OPM
+  metadata. Keep the existing `1.0.0` module version as an unreleased
+  candidate; no phase release numbers or publication dates are invented.
+- `Changes.md` is a regular distribution copy of this changelog for OPM's
+  filename convention; keep the two files synchronized. A symlink was
+  omitted by LuaRocks when building from the source archive, breaking the
+  README's changelog link. The README includes the license notice because
+  OPM does not collect `LICENSE`.
+
+### Phase 5 additions and fixes
+
+#### Sessions and transactions
 
 - The README clarifies session cleanup: the driver sends no `endSessions`;
   unused server sessions expire according to the server's logical session
@@ -45,7 +68,7 @@
 - `col:count` is not part of a transaction. It reads collection metadata and
   can count the documents of an open transaction; use an aggregation.
 
-### GridFS
+#### GridFS
 
 - `gridfs_file:read(size, offset)` honors the offset inside a chunk. Before,
   it started at the right chunk but took the bytes from the start of it.
@@ -87,7 +110,7 @@
 - A failed query makes `write`, `remove`, `find_one` and `get` return
   `nil, err`. `remove` returned 0 before.
 
-### Connection strings and replica sets
+#### Connection strings and replica sets
 
 - `mongol.connect_uri(str)` is new (issues #10 and #22). It parses a
   `mongodb://` string, tries the seeds and the members that `hello` names,
@@ -135,12 +158,12 @@
   Before, `getprimary` gave a string, or an empty string for a member
   without a port.
 
-### Command monitoring
+#### Command monitoring
 
 - `mongol.set_monitor(m)` is new. `m` has the optional functions
   `started(ev)`, `succeeded(ev)` and `failed(ev)`, as in the MongoDB
   Command Logging and Monitoring specification. The driver sends no
-  metrics itself. The `Readme.md` has a Prometheus example.
+  metrics itself. The `README.markdown` has a Prometheus example.
 - Login commands, `createUser`, `updateUser` and a `hello` with
   `speculativeAuthenticate` are redacted: `command` and `reply` are empty
   and `failed.error` is `"redacted"`.
@@ -152,7 +175,7 @@
   it has the keys that went on the wire. `bson.null` and empty arrays keep
   their meaning in events, and a hook cannot change the tables of the caller.
 
-### Aggregation
+#### Aggregation
 
 - `col:aggregate(pipeline, options)` is new (issue #55). It returns a cursor
   over the results, or `nil, err`. The cursor has the same methods as the
@@ -160,9 +183,9 @@
   sets the batch size of each fetch and defaults to 100. A `pipeline` that
   is not a table raises `bad argument`.
 
-## Unreleased (Phase 4)
+### Phase 4: BSON and JSON
 
-### BSON types
+#### BSON types
 
 - `bson.decimal128(str)` makes a Decimal128 value from a decimal string. It
   returns `nil, err` for a bad, inexact or out-of-range string. `tostring`
@@ -175,7 +198,7 @@
   and reads of types 0xFF and 0x7F return them.
 - No caller breaks: reads of these types raised an error before.
 
-### JSON
+#### JSON
 
 - `bson.to_json_safe(doc)` returns a copy of a document that `cjson` can
   encode (issues #53, #66 and #67). `lua-cjson` does not call metamethods
@@ -195,9 +218,9 @@
   has a sign and six digits (`+010000`, `-000001`), as in ISO 8601.
 - A table that BSON stores as a document gets string keys in the copy.
 
-## Unreleased (Phase 3)
+### Phase 3: Authentication and TLS
 
-### Authentication
+#### Authentication
 
 - `db:auth(user, password)` asks the server for the mechanism of the user
   (`hello` with `saslSupportedMechs`). It uses SCRAM-SHA-256 if the server
@@ -225,7 +248,7 @@
   `get_reused_times()` to skip a second login. Give each user a separate
   pool name with the `pool` option of `connect`.
 
-### Connection
+#### Connection
 
 - `conn:connect(host, port, opts)` takes an optional table `opts`:
   `pool`, `pool_size` and `backlog` go to the connection pool. `ssl`,
@@ -238,21 +261,21 @@
 - `connect` remembers the host, port and options of the last successful
   call. `conn:connect()` with no arguments uses them again.
 
-## 1.0.0 (unreleased)
+### Phases 0 to 2: Protocol and API migration
 
 This is the major release that contains every breaking change of the
 move to the `OP_MSG` wire protocol. The old version sends legacy opcodes
 that MongoDB 5.1 and later reject. This section lists every change that a
-caller can see, with the reason. Phase 3 and later add their own entries.
+caller can see, with the reason. All later-phase entries above are also included in this candidate.
 
-### Command transport
+#### Command transport
 
 - `db:cmd` and the connection commands (`hello`, `listDatabases`,
   `dropDatabase`, `shutdown`) send `OP_MSG`.
 - `conn:ismaster()` keeps its name and its return values, but sends
   `hello` and reads `isWritablePrimary`. Reason: `ismaster` is deprecated.
 
-### Collection operations
+#### Collection operations
 
 - `col:insert`, `col:update`, `col:delete`, `col:query`, `col:getmore`,
   `col:kill_cursors`, `col:count`, `col:find_one` and `col:find_and_modify`
@@ -290,7 +313,7 @@ caller can see, with the reason. Phase 3 and later add their own entries.
 - `col:kill_cursors` and `conn:shutdown()` work. Before, they sent
   malformed messages or raised.
 
-### Cursors
+#### Cursors
 
 - `col:find` yields every matching document across batches (issues #12
   and #74). Before, a cursor stopped after the first batch.
@@ -312,7 +335,7 @@ caller can see, with the reason. Phase 3 and later add their own entries.
   (error code 43 or 175) no longer runs the query again, which could
   return a document twice.
 
-### Numbers
+#### Numbers
 
 - A whole number that fits in int32 is stored as int32. A larger whole
   number that fits in int64 is stored as int64. Any other number, and
@@ -326,7 +349,7 @@ caller can see, with the reason. Phase 3 and later add their own entries.
 - Stored data: numbers that you stored as doubles keep their type. New
   writes of whole numbers use an integer type. Queries match both.
 
-### Arrays
+#### Arrays
 
 - Arrays use 1-based Lua indexes on write and read. Before, `{a, b}` was
   stored as `[null, a, b]`, and a stored `[a, b]` read as `{[0] = a, b}`.
@@ -342,7 +365,7 @@ caller can see, with the reason. Phase 3 and later add their own entries.
 - Every array that is read has the metatable `bson.array_mt`, so an empty
   array stays an array when you write it back.
 
-### Null, dates, binary and timestamps
+#### Null, dates, binary and timestamps
 
 - A BSON null reads as `bson.null`, not `nil`. The key or array position
   stays. `if doc.x then` is now true for a null field. Write
@@ -355,7 +378,7 @@ caller can see, with the reason. Phase 3 and later add their own entries.
 - A Timestamp reads as a wrapper `{t = seconds, i = increment}`. Before,
   it read as one int64 number. `bson.timestamp(t, i)` writes one.
 
-### Errors
+#### Errors
 
 - `bson.to_bson` returns `nil, err` for a bad key (a `\0` in the key, or a
   key that is not a string or a number). It does not raise.
@@ -376,7 +399,7 @@ caller can see, with the reason. Phase 3 and later add their own entries.
 - `db:dropDatabase()` sends `dropDatabase = 1`, which current servers
   need.
 
-### Connection and ObjectId
+#### Connection and ObjectId
 
 - `require "resty.mongol"` no longer writes Lua globals (issues #70, #71,
   #15). The library no longer overrides `pairs`.
@@ -393,17 +416,9 @@ caller can see, with the reason. Phase 3 and later add their own entries.
   bytes. Before, both raised.
 - `object_id.new_from_hex(hex)` is new (issue #33).
 
-### Packaging and tests
+#### Packaging and tests
 
 - Add a `LICENSE` file (MIT/X11).
 - Tests use Test::Nginx and read the server from `TEST_NGINX_MONGO_HOST`,
   `TEST_NGINX_MONGO_PORT`, `TEST_NGINX_MONGO_USER` and
   `TEST_NGINX_MONGO_PASS`.
-
-### Not in this release yet
-
-- `db:auth` still uses the old login. SCRAM login comes in Phase 3, so run
-  the test server without authentication until then.
-- GridFS `gridfs_file:read` with an offset inside a chunk, and
-  `gridfs:get`, are fixed in a later phase.
-- Replica set features (read preference, sessions) come in a later phase.

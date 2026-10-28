@@ -637,12 +637,31 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 
 **Files:** Modify `Readme.md`. Create `CHANGELOG.md`, `lua-resty-mongol-<version>-1.rockspec` and `dist.ini`.
 
-- [ ] **Step 1:** Rename `Readme.md` to `README.markdown` with a table of contents, the OpenResty convention. Remove the "deprecated" line. Fix the `find_one` return description (issue #44). Add examples for `$or`, dot notation and pagination with `skip`, `limit` and `sort` (issues #13, #14, #26, #41, #48). Add the supported server versions and the `db:cmd` key-order rule. Add the login and pool pattern and `cursor:close()`. Add the number rule, its helpers and the new methods.
-- [ ] **Step 2:** Add a `CHANGELOG.md` section for each release after `1.0.0`. Task 6 already wrote the `1.0.0` section. Add the removal of MONGODB-CR to the Phase 3 section.
-- [ ] **Step 3:** Add the rockspec with `build.type = "builtin"` and every module under `lib/resty/mongol`. Add `dist.ini` for OPM with `name`, `abstract`, `author`, `is_original = no`, `license = mit`, `lib_dir = lib`, `doc_dir = lib`, `main_module = lib/resty/mongol/init.lua` and `repo_link`. OPM reads the version from `_VERSION` in the main module.
-- [ ] **Step 4: Run** `luarocks lint lua-resty-mongol-*.rockspec` and `opm build`. Expected: no errors.
-- [ ] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Use the table in "Issue and PR disposition". Then close it. Close each open PR with a thank-you and a link to the commit that supersedes it.
-- [ ] **Step 6: Commit** `docs: README, CHANGELOG, packaging`.
+- [x] **Step 1:** Rename `Readme.md` to `README.markdown` with a table of contents, the OpenResty convention. Remove the "deprecated" line. Fix the `find_one` return description (issue #44). Add examples for `$or`, dot notation and pagination with `skip`, `limit` and `sort` (issues #13, #14, #26, #41, #48). Add the supported server versions and the `db:cmd` key-order rule. Add the login and pool pattern and `cursor:close()`. Add the number rule, its helpers and the new methods.
+- [x] **Step 2:** Add a `CHANGELOG.md` section for each release after `1.0.0`. Task 6 already wrote the `1.0.0` section. Add the removal of MONGODB-CR to the Phase 3 section.
+- [x] **Step 3:** Add the rockspec with `build.type = "builtin"` and every module under `lib/resty/mongol`. Add `dist.ini` for OPM with `name`, `abstract`, `author`, `is_original = no`, `license = mit`, `lib_dir = lib`, `doc_dir = lib`, `main_module = lib/resty/mongol/init.lua` and `repo_link`. OPM reads the version from `_VERSION` in the main module.
+- [x] **Step 4: Run** `luarocks lint lua-resty-mongol-*.rockspec` and `opm build`. Expected: no errors.
+- [x] **Step 5:** Reply to every open GitHub issue with the fixing release, or with the reason that it is out of scope. Use the table in "Issue and PR disposition". Then close it. Close each open PR with a thank-you and a link to the commit that supersedes it.
+- [x] **Step 6: Commit** `docs: README, CHANGELOG, packaging`.
+
+Task 15 notes: no tags or GitHub releases exist, so all phases are grouped
+under the unreleased `1.0.0` candidate; there are no post-1.0.0 releases to
+invent sections for. MONGODB-CR removal remains in the Phase 3 section.
+The rockspec pins source/docs commit `c089d00` by immutable archive URL;
+the actual remote-source LuaRocks build passes after the branch push.
+The driver version and behavior are unchanged. `Changes.md` is a regular,
+byte-identical distribution copy of the changelog for OPM; keep both files
+synchronized. The README carries the full license notice.
+Both artifacts contain all 17 modules, verified byte-for-byte and loaded
+with `require`; LuaRocks lint/build and OPM build pass. The renamed GridFS
+fixture passes (12 tests), and `make test` on MongoDB 8 passes (624 tests).
+Step 5 is complete: the coordinator posted responses and fixing references
+for all 41 issues and six superseded PRs, then closed them. Responses
+distinguish merged fixes from the unpublished `1.0.0` candidate.
+Phase 6 PR #80 is pushed and ready for review at `b5e2cd0`, with independent
+re-review accepted without findings and all 28 CI checks passing.
+No Phase 6 merge, release tag or package publication was performed;
+release approval remains with the owner.
 
 ---
 
