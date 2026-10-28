@@ -1652,3 +1652,85 @@ nil
 nil
 --- no_error_log
 [error]
+
+
+
+=== TEST 59: query with a bad success reply
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local wire = require "resty.mongol.wire"
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            local replies = {
+                {"no cursor", {ok = 1}},
+                {"cursor not a table", {ok = 1, cursor = 5}},
+                {"id is a string", {ok = 1, cursor = {id = "x", firstBatch = {}, nextBatch = {}}}},
+                {"batch is a number", {ok = 1, cursor = {id = 0, firstBatch = 5, nextBatch = 5}}},
+                {"no batch", {ok = 1, cursor = {id = 0}}},
+            }
+            local real = wire.command
+            for _, r in ipairs(replies) do
+                local reply = r[2]
+                wire.command = function() return reply end
+                local ok, a, b, c, d = pcall(function() return col:query({}) end)
+                wire.command = real
+                ngx.say(r[1], " ", ok, " ", a, " ", type(b) == "string", " ", conn:set_keepalive())
+                conn:connect()
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+no cursor true nil true nilclosed
+cursor not a table true nil true nilclosed
+id is a string true nil true nilclosed
+batch is a number true nil true nilclosed
+no batch true nil true nilclosed
+--- no_error_log
+[error]
+
+
+
+=== TEST 60: getmore with a bad success reply
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local wire = require "resty.mongol.wire"
+            local bson = require "resty.mongol.bson"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sanity_new")
+            local replies = {
+                {"no cursor", {ok = 1}},
+                {"cursor not a table", {ok = 1, cursor = 5}},
+                {"id is a string", {ok = 1, cursor = {id = "x", firstBatch = {}, nextBatch = {}}}},
+                {"batch is a number", {ok = 1, cursor = {id = 0, firstBatch = 5, nextBatch = 5}}},
+                {"no batch", {ok = 1, cursor = {id = 0}}},
+            }
+            local real = wire.command
+            for _, r in ipairs(replies) do
+                local reply = r[2]
+                wire.command = function() return reply end
+                local ok, a, b, c, d = pcall(function() return col:getmore("\1\0\0\0\0\0\0\0") end)
+                wire.command = real
+                ngx.say(r[1], " ", ok, " ", a, " ", type(b) == "string", " ", conn:set_keepalive())
+                conn:connect()
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+no cursor true nil true nilclosed
+cursor not a table true nil true nilclosed
+id is a string true nil true nilclosed
+batch is a number true nil true nilclosed
+no batch true nil true nilclosed
+--- no_error_log
+[error]
