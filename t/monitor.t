@@ -556,14 +556,18 @@ nil 4 succeeded true
             local col = db:get_col("monitor_t")
             col:delete({}, nil, true)
             db:cmd({dropUser = "u4"})
-            local cmd = setmetatable({}, {__pairs = function(t)
-                -- an iterator with its own state and start value
-                return function(s, i)
-                    i = i + 1
-                    if s[i] then return s[i][1], s[i][2], i end
-                end, {{"createUser", "u4"}, {"pwd", "secret"}, {"roles", bson.empty_array}}, 0
-            end})
-            mongo.set_monitor(all)
+            local state = {
+    order = {"createUser", "pwd", "roles"}, pos = {createUser = 1, pwd = 2, roles = 3},
+    vals = {createUser = "u4", pwd = "secret", roles = bson.empty_array},
+}
+-- an iterator that works on its own state, not on the table
+local cmd = setmetatable({}, {__pairs = function(t)
+    return function(s, k)
+        local name = s.order[k == nil and 1 or s.pos[k] + 1]
+        if name then return name, s.vals[name] end
+    end, state, nil
+end})
+mongo.set_monitor(all)
             local r = db:cmd(cmd)
             mongo.set_monitor(nil)
             db:cmd({dropUser = "u4"})
