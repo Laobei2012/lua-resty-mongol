@@ -152,10 +152,21 @@ function connmethods:connect(host, port, opts)
         self.sock = sock
     end
 
+    -- A TLS socket that goes back to the pool is already past its
+    -- handshake, so a later connect with other TLS rules would skip them.
+    -- Without a pool name from the caller, the pool name holds the TLS
+    -- settings.
+    local pool = opts and opts.pool
+    if not pool and opts and opts.ssl then
+        pool = host .. ":" .. port .. ":tls:"
+               .. (opts.ssl_verify == false and "noverify" or "verify") .. ":"
+               .. (opts.ssl_server_name or host)
+    end
+
     local ok, err
-    if opts and (opts.pool or opts.pool_size or opts.backlog) then
+    if pool or (opts and (opts.pool_size or opts.backlog)) then
         ok, err = sock:connect(host, port, {
-            pool = opts.pool,
+            pool = pool,
             pool_size = opts.pool_size,
             backlog = opts.backlog,
         })

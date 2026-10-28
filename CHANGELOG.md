@@ -39,6 +39,7 @@
   session as a second value. The two-argument call does not change.
 - `ssl_verify` needs `lua_ssl_trusted_certificate` in `nginx.conf`.
 - A failed TLS handshake closes the socket and returns `nil, err`.
+- With `ssl` and no `pool`, the default pool name holds the host, port, `ssl_verify` and `ssl_server_name`. A TLS socket is never reused by a plain or by a differently verified connection. A `pool` name that you give is used as is. Use one pool name for one TLS setting.
 - `connect` remembers the host, port and options of the last successful
   call. `conn:connect()` with no arguments uses them again.
 

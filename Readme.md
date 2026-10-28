@@ -108,7 +108,7 @@ it returns a connection object.
 ####ok,err = conn:connect(host, port, opts)
 Default host and port is: `localhost` and `27017`. `opts` is an optional table:
 
- - `pool`, `pool_size`, `backlog`: passed to the cosocket connection pool. Use a separate `pool` name for each database user.
+ - `pool`, `pool_size`, `backlog`: passed to the cosocket connection pool. Use a separate `pool` name for each database user. If you give no `pool` with `ssl`, the pool name holds the host, port, `ssl_verify` and `ssl_server_name`, so a TLS socket is only reused with the same TLS settings. If you give a `pool` name, you own it: use one pool name for one TLS setting only. A pooled TLS socket skips the handshake, so it never checks new TLS rules.
  - `ssl`: set to `true` to use TLS. `ssl_verify` defaults to `true` and needs `lua_ssl_trusted_certificate` in `nginx.conf`. `ssl_server_name` defaults to `host`. `ssl_reused_session` is a session from an earlier call; with `ssl`, `connect` returns the new session as a second value.
 
 `conn:connect()` with no arguments uses the host, port and `opts` of the last successful call.
