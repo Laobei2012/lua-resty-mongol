@@ -120,8 +120,8 @@ GET /t
 --- response_body
 nil string
 nilclosed
---- no_error_log
-[error]
+--- error_log
+peer closed connection in SSL handshake
 
 
 
