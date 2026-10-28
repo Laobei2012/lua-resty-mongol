@@ -26,7 +26,18 @@ local function decode ( s )
     end ) )
 end
 
-local function parse_host ( str )
+local function is_unix_socket ( s )
+    return strsub ( s , 1 , 1 ) == "/" or s:match ( "%.sock$" ) ~= nil
+end
+
+local UNIX = "unix domain sockets are not supported"
+
+-- "host", "host:port", "[ipv6]" or "[ipv6]:port" -> {host =, port =} | nil, err
+-- The URI parser and the discovery of replica set members use this one.
+function _M.parse_host ( str )
+    if type ( str ) ~= "string" or str == "" then
+        return nil , "invalid host"
+    end
     local host , port
     if strsub ( str , 1 , 1 ) == "[" then
         local close = strfind ( str , "]" , 1 , true )
@@ -34,6 +45,10 @@ local function parse_host ( str )
             return nil , "invalid host"
         end
         host = strsub ( str , 2 , close - 1 )
+        -- an IPv6 literal: hex digits, colons and dots, with at least a colon
+        if not host:match ( "^[%x:.]+$" ) or not strfind ( host , ":" , 1 , true ) then
+            return nil , "invalid host"
+        end
         local rest = strsub ( str , close + 1 )
         if rest ~= "" then
             port = rest:match ( "^:(%d+)$" )
@@ -42,8 +57,19 @@ local function parse_host ( str )
             end
         end
     else
+        if strfind ( str , "%" , 1 , true ) then
+            -- a percent-encoded unix socket path, or a bad host
+            local decoded = decode ( str )
+            if decoded and is_unix_socket ( decoded ) then
+                return nil , UNIX
+            end
+            return nil , "invalid host"
+        end
+        if is_unix_socket ( str ) then
+            return nil , UNIX
+        end
         host , port = str:match ( "^([^:]+):?(%d*)$" )
-        if not host then
+        if not host or not host:match ( "^[%w%.%-_]+$" ) then
             return nil , "invalid host"
         end
         if port == "" then
@@ -53,9 +79,6 @@ local function parse_host ( str )
             port = nil
         end
     end
-    if host == "" then
-        return nil , "invalid host"
-    end
     if port then
         port = tonumber ( port )
         if port < 1 or port > 65535 then
@@ -64,6 +87,8 @@ local function parse_host ( str )
     end
     return { host = host , port = port or 27017 }
 end
+
+local parse_host = _M.parse_host
 
 -- str -> {hosts = {{host =, port =}}, db =, user =, password =,
 --         options = {authSource =, tls =, replicaSet =, readPreference =}}
