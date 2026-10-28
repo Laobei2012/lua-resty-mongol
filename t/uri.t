@@ -216,3 +216,77 @@ falsebad argument #1 to 'connect_uri' (string expected)
 true
 --- error_log
 connect() failed
+
+
+
+=== TEST 7: uri pool names do not collide
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            -- record the pool name that the driver passes to each connect
+            local pools = {}
+            local real_tcp = ngx.socket.tcp
+            ngx.socket.tcp = function()
+                local sock = real_tcp()
+                return setmetatable({}, {__index = function(_, k)
+                    if k == "connect" then
+                        return function(_, h, p, o)
+                            pools[#pools + 1] = o and o.pool or "default"
+                            return sock:connect(h, p, o)
+                        end
+                    end
+                    local v = sock[k]
+                    if type(v) == "function" then
+                        return function(_, ...) return v(sock, ...) end
+                    end
+                    return v
+                end})
+            end
+            
+            local function pool_of(u)
+                pools = {}
+                mongo.connect_uri(u)
+                return pools[1]
+            end
+            local base = "@" .. H .. ":" .. P
+            local names = {
+                pool_of("mongodb://a%40b:x" .. base .. "/?authSource=c"),
+                pool_of("mongodb://a:x" .. base .. "/?authSource=b%40c"),
+                pool_of("mongodb://a:x" .. base .. "/?authSource=c"),
+                pool_of("mongodb://a:y" .. base .. "/?authSource=c&tls=true"),
+                pool_of("mongodb://" .. H .. ":" .. P),
+                pool_of("mongodb://" .. H .. ":" .. P .. "/?tls=true"),
+            }
+            local distinct, all_user = {}, true
+            for _, n in ipairs(names) do
+                distinct[n] = true
+                if not n:find("^user:") and not n:find("^plain:") and not n:find("^tls:") then all_user = false end
+            end
+            local count = 0
+            for _ in pairs(distinct) do count = count + 1 end
+            ngx.say(count, " ", all_user)
+            ngx.say(names[1]:find("^user:") ~= nil, " ", names[3]:find("^user:") ~= nil, " ", names[4]:find("^user:") ~= nil)
+            ngx.say(names[5]:find("^plain:") ~= nil, " ", names[6]:find("^tls:") ~= nil)
+            -- a name from the caller never equals one of the driver
+            local c = mongo:new()
+            pools = {}
+            c:connect(H, P, {pool = names[5]})
+            ngx.say(pools[1] ~= names[5])
+        }
+    }
+--- request
+GET /t
+--- response_body
+6 true
+true true true
+true true
+true
+--- no_error_log
+[error]
