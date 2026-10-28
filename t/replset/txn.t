@@ -379,7 +379,11 @@ GET /t
             col:insert({{a = 1}}, nil, true, {session = s})
             local real = wire.command
             local function commit_with(reply)
-                wire.command = function() return reply end
+                -- like wire.command: a reply with ok 0 is nil, errmsg, reply
+    wire.command = function()
+        if reply.ok ~= 1 then return nil, reply.errmsg, reply end
+        return reply
+    end
                 local r, err, doc = s:commit_transaction()
                 wire.command = real
                 return r, err, doc
@@ -424,7 +428,11 @@ nil waiting for replication timed out true 1
             col:insert({{a = 1}}, nil, true, {session = s})
             local real = wire.command
             local function commit_with(reply)
-                wire.command = function() return reply end
+                -- like wire.command: a reply with ok 0 is nil, errmsg, reply
+                wire.command = function()
+                    if reply.ok ~= 1 then return nil, reply.errmsg, reply end
+                    return reply
+                end
                 local r, err, doc = s:commit_transaction()
                 wire.command = real
                 return r, err, doc
