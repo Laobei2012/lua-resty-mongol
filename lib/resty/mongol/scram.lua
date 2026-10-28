@@ -278,7 +278,7 @@ function _M.authenticate ( conn , dbname , user , password , mechanism )
         return wire.fail ( conn , "bad server reply" )
     end
     if strsub ( sf.r , 1 , #nonce ) ~= nonce then
-        return nil , "server nonce mismatch"
+        return wire.fail ( conn , "server nonce mismatch" )
     end
 
     local without_proof = "c=biws,r=" .. sf.r
@@ -299,7 +299,7 @@ function _M.authenticate ( conn , dbname , user , password , mechanism )
     local server_final = payload_of ( reply )
     local v = server_final and parse ( server_final ).v
     if v ~= server_sig then
-        return nil , "server signature mismatch"
+        return wire.fail ( conn , "server signature mismatch" )
     end
 
     -- without skipEmptyExchange the server waits for an empty message
@@ -307,7 +307,7 @@ function _M.authenticate ( conn , dbname , user , password , mechanism )
     while not reply.done do
         tries = tries + 1
         if tries > 2 then
-            return nil , "SASL conversation failed to complete"
+            return wire.fail ( conn , "SASL conversation failed to complete" )
         end
         reply , err = wire.command ( conn , dbname , bson.ordered ( {
             { "saslContinue" , 1 } ,
