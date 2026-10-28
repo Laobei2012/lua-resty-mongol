@@ -211,13 +211,17 @@ local function parse ( msg )
     return t
 end
 
+-- the payload of a reply as a string, or nil if it is missing or has
+-- another type
 local function payload_of ( reply )
     local p = reply.payload
     if type ( p ) == "table" then
-        return p.v
+        p = p.v
+    elseif type ( p ) == "string" then
+        p = decode_base64 ( p )
     end
     if type ( p ) == "string" then
-        return decode_base64 ( p )
+        return p
     end
 end
 
@@ -260,14 +264,18 @@ function _M.authenticate ( conn , dbname , user , password , mechanism )
         return nil , err
     end
 
+    -- from here on, a bad reply breaks the connection, so that it never
+    -- goes back to the pool
     local server_first = payload_of ( reply )
     if not server_first then
-        return nil , "bad server reply"
+        return wire.fail ( conn , "bad server reply" )
     end
     local sf = parse ( server_first )
     local iter = tonumber ( sf.i )
-    if not sf.r or not sf.s or not iter or iter < 1 or iter ~= iter - iter % 1 then
-        return nil , "bad server reply"
+    local salt = sf.s and decode_base64 ( sf.s )
+    if not sf.r or not salt or #salt == 0 or not iter or iter < 1
+       or iter ~= iter - iter % 1 then
+        return wire.fail ( conn , "bad server reply" )
     end
     if strsub ( sf.r , 1 , #nonce ) ~= nonce then
         return nil , "server nonce mismatch"
