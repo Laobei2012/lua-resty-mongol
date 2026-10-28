@@ -3,8 +3,8 @@ version = "1.0.0-1"
 
 source = {
     -- Existing implementation/docs snapshot; 1.0.0 is not tagged or published.
-    url = "https://github.com/Laobei2012/lua-resty-mongol/archive/e141bb1f7452a548e911506a74654bbda33a1d8f.tar.gz",
-    dir = "lua-resty-mongol-e141bb1f7452a548e911506a74654bbda33a1d8f",
+    url = "https://github.com/Laobei2012/lua-resty-mongol/archive/7c87307b5b9805ec9bbf3840e9ea0f63e270bf32.tar.gz",
+    dir = "lua-resty-mongol-7c87307b5b9805ec9bbf3840e9ea0f63e270bf32",
 }
 
 description = {
