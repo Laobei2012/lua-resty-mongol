@@ -26,6 +26,9 @@ function gridfs_file_mt:write(buf, offset, size)
     local first = math.floor(offset / cs)
     local last = math.floor((offset + size - 1) / cs)
 
+    local ok, ierr = self.bucket:ensure_indexes()
+    if not ok then return nil, ierr end
+
     -- the chunks that exist in the range
     local old = {}
     local cursor = self.chunk_col:find({files_id = self.files_id,
@@ -56,6 +59,10 @@ function gridfs_file_mt:write(buf, offset, size)
             r, err = self.chunk_col:update({files_id = self.files_id, n = n},
                         {["$set"] = {data = get_bin_data(data)}}, 0, 0, true)
             if not r then return nil, "write failed: " .. err end
+            if r == 0 then
+                -- the chunk was removed after we read it
+                return nil, "write failed: chunk " .. n .. " is gone"
+            end
         else
             inserts[#inserts + 1] = {files_id = self.files_id,
                                      n = bson.int32(n),
@@ -67,15 +74,16 @@ function gridfs_file_mt:write(buf, offset, size)
         if not r then return nil, "write failed: " .. err end
     end
 
-    -- the length, and the md5 is not valid any more
-    local set = {md5 = 0}
+    -- The stored length only grows ($max), even if this handle has an old
+    -- file size. The md5 is not valid any more.
     local new_size = offset + size
-    if new_size > self.file_size then
-        set.length = bson.int64(new_size)
-    end
-    r, err = self.file_col:update({_id = self.files_id}, {["$set"] = set},
-                                  0, 0, true)
+    r, err = self.file_col:update({_id = self.files_id},
+                {["$max"] = {length = bson.int64(new_size)},
+                 ["$set"] = {md5 = 0}}, 0, 0, true)
     if not r then return nil, "write failed: " .. err end
+    if r == 0 then
+        return nil, "write failed: the files document is gone"
+    end
     if new_size > self.file_size then
         self.file_size = new_size
     end

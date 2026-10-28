@@ -4,6 +4,7 @@ local pairs = pairs
 local setmetatable = setmetatable
 local ngx = ngx
 local string = string
+local tostring = tostring
 
 local md5 = require "resty.md5"
 local str = require "resty.string"
@@ -31,6 +32,28 @@ local function files_doc(meta, length, md5_value)
     return doc
 end
 
+-- The GridFS specification wants the unique index {files_id: 1, n: 1} on
+-- the chunks collection. It is created once for each bucket object, and
+-- createIndexes does nothing if the index exists.
+function gridfs_mt:ensure_indexes()
+    if self.indexed then
+        return true
+    end
+    local r, err = self.chunk_col.db_obj:cmd(bson.ordered({
+        { "createIndexes", self.chunk_col.col },
+        { "indexes", {{
+            key = bson.ordered({ { "files_id", 1 }, { "n", 1 } }),
+            name = "files_id_1_n_1",
+            unique = true,
+        }} },
+    }))
+    if not r then
+        return nil, "cannot create the chunks index: " .. tostring(err)
+    end
+    self.indexed = true
+    return true
+end
+
 function gridfs_mt:find_one(fields)
     local r, err = self.file_col:find_one(fields)
     if not r then return nil, err end
@@ -43,6 +66,7 @@ function gridfs_mt:find_one(fields)
                     file_size = r.length;
                     file_md5 = r.md5;
                     file_name = r.filename;
+                    bucket = self;
                     }, gridfs_file)
 end
 
@@ -91,7 +115,9 @@ function gridfs_mt:new(meta)
     meta.chunkSize = meta.chunkSize or 256*1024
     meta.filename = meta.filename or meta._id:tostring()
 
-    local r, err = self.file_col:insert({files_doc(meta, 0, 0)}, nil, true)
+    local r, err = self:ensure_indexes()
+    if not r then return nil, err end
+    r, err = self.file_col:insert({files_doc(meta, 0, 0)}, nil, true)
     if not r then return nil, err end
 
     return setmetatable({
@@ -102,6 +128,7 @@ function gridfs_mt:new(meta)
                     file_size = 0;
                     file_md5 = 0;
                     file_name = meta.filename;
+                    bucket = self;
                     }, gridfs_file)
 end
 
@@ -113,7 +140,8 @@ function gridfs_mt:insert(fh, meta, safe)
 
     local n = 0
     local length = 0
-    local r, err
+    local r, err = self:ensure_indexes()
+    if not r then return nil, err end
     local md5_obj = md5:new()
     while true do
         local bytes = fh:read(meta.chunkSize)
