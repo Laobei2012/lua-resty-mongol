@@ -168,8 +168,9 @@ function connmethods:connect(host, port, opts)
     -- handshake, so a later connect with other TLS rules would skip them.
     -- Without a pool name from the caller, the pool name holds the TLS
     -- settings.
-    -- The prefixes keep the two kinds of names apart, so that a pool name
-    -- from the caller can never equal a generated one.
+    -- The prefixes "plain:", "tls:" and "user:" keep the three kinds of
+    -- names apart, so that a name can never equal another kind, not even
+    -- the cosocket default "host:port".
     local pool
     if opts and opts.pool then
         pool = "user:" .. opts.pool
@@ -177,18 +178,15 @@ function connmethods:connect(host, port, opts)
         pool = "tls:" .. host .. ":" .. port .. ":"
                .. (opts.ssl_verify == false and "noverify" or "verify") .. ":"
                .. (opts.ssl_server_name or host)
+    else
+        pool = "plain:" .. host .. ":" .. port
     end
 
-    local ok, err
-    if pool or (opts and (opts.pool_size or opts.backlog)) then
-        ok, err = sock:connect(host, port, {
-            pool = pool,
-            pool_size = opts.pool_size,
-            backlog = opts.backlog,
-        })
-    else
-        ok, err = sock:connect(host, port)
-    end
+    local ok, err = sock:connect(host, port, {
+        pool = pool,
+        pool_size = opts and opts.pool_size,
+        backlog = opts and opts.backlog,
+    })
     if not ok then
         return nil, err
     end
