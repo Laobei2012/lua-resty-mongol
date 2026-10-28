@@ -216,3 +216,47 @@ GET /t
 1
 --- no_error_log
 [crit]
+
+
+
+=== TEST 8: getprimary keeps the tls options of the seed
+--- http_config eval
+"$::HttpConfig" . qq{
+    lua_ssl_trusted_certificate $ENV{TEST_NGINX_MONGO_CA};
+}
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local seed = mongo:new()
+            seed:set_timeout(5000)
+            assert(seed:connect(H, P, {ssl = true, ssl_server_name = "localhost", pool = "seedpool"}))
+            -- the first hello (the seed) says: not primary, ask H:P
+            local real = wire.command
+            local calls = 0
+            wire.command = function(...)
+                calls = calls + 1
+                if calls == 1 then
+                    return {ok = 1, isWritablePrimary = false, hosts = {H .. ":" .. P}}
+                end
+                return real(...)
+            end
+            local found, err = seed:getprimary({})
+            wire.command = real
+            ngx.say(found ~= nil, " ", err)
+            if found then
+                ngx.say(found ~= seed, " ", found.opts.ssl, " ", found.opts.ssl_server_name, " ", found.opts.pool)
+                ngx.say(found:new_db_handle("admin"):cmd({ping = 1}).ok)
+            end
+        }
+    }
+--- request
+GET /t
+--- response_body
+true nil
+true true localhost nil
+1
+--- no_error_log
+[crit]
