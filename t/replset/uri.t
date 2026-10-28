@@ -51,13 +51,16 @@ true true
             local uri = require "resty.mongol.uri"
             local bson = require "resty.mongol.bson"
             local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
-            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
             local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?readPreference=secondaryPreferred"))
             ngx.say((conn.read_conn:ismaster()))
-            local col = conn:new_db_handle("test"):get_col("rs_t")
-            -- the read goes to the secondary; it may not see a document yet
-            local _, err = col:find_one({})
-            ngx.say(err)
+            local db = conn:new_db_handle("test")
+            local col = db:get_col("rs_t")
+            db:cmd({drop = "rs_t"})
+            -- the fixture is on every member before the read
+            assert(db:cmd(bson.ordered{{"insert", "rs_t"}, {"documents", {{_id = 1, v = "fixture"}}},
+                                       {"writeConcern", {w = 3}}}))
+            local doc, err = col:find_one({_id = 1})
+            ngx.say(doc and doc.v, " ", err)
             ngx.say(col:insert({{a = 1}}, nil, true))
         }
     }
@@ -65,7 +68,7 @@ true true
 GET /t
 --- response_body
 false
-nil
+fixture nil
 0
 --- no_error_log
 [error]
@@ -284,5 +287,45 @@ GET /t
 1
 25 true
 nil
+--- no_error_log
+[error]
+
+
+
+=== TEST 8: the read preference is on the wire
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            local conn = assert(mongo.connect_uri("mongodb://" .. H .. ":" .. P .. "/?readPreference=secondaryPreferred"))
+            local db = conn:new_db_handle("test")
+            local col = db:get_col("rs_wire")
+            db:cmd({drop = "rs_wire"})
+            local seen = {}
+            mongo.set_monitor({started = function(ev)
+                local rp = ev.command["$readPreference"]
+                seen[#seen + 1] = ev.command_name .. " " .. (ev.port == conn.read_conn.port and "read" or "primary") .. " " .. (rp and rp.mode or "-")
+            end})
+            col:insert({{a = 1}}, nil, true)
+            col:find_one({})
+            col:count({})
+            db:cmd({ping = 1})
+            mongo.set_monitor(nil)
+            for _, l in ipairs(seen) do ngx.say(l) end
+        }
+    }
+--- request
+GET /t
+--- response_body
+insert primary -
+find read secondaryPreferred
+count read secondaryPreferred
+ping primary -
 --- no_error_log
 [error]
