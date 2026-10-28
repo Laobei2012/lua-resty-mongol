@@ -74,3 +74,36 @@ nil true
 nil string
 --- no_error_log
 [error]
+
+
+
+=== TEST 3: a reconnect logs in again
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local uri = require "resty.mongol.uri"
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local SH, SP = "$TEST_NGINX_MONGO_SECONDARY_HOST", $TEST_NGINX_MONGO_SECONDARY_PORT
+            local conn = assert(mongo.connect_uri("mongodb://admin:admin@" .. H .. ":" .. P .. "/?authSource=admin"))
+            ngx.say(#conn:databases() > 0)
+            conn:close()
+            assert(conn:connect())
+            ngx.say(#conn:databases() > 0)
+            conn:close()
+            assert(conn:connect())
+            local info = conn:new_db_handle("admin"):cmd({connectionStatus = 1}).authInfo.authenticatedUsers
+            ngx.say(info[1].user)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true
+true
+admin
+--- no_error_log
+[error]
