@@ -116,14 +116,6 @@ local function call ( mon , name , ev )
     end
 end
 
-local function sensitive ( state )
-    if state.sensitive == nil then
-        state.sensitive = is_sensitive ( state.command_name , state.body ,
-                                         state.extra ) and true or false
-    end
-    return state.sensitive
-end
-
 -- starts the monitoring of a command: returns the state for succeeded
 -- and failed. mon is the monitor that was current when the command began;
 -- the end events go to the same monitor. An event is built only for a
@@ -132,14 +124,15 @@ end
 function _M.started ( mon , conn , dbname , body , seqinfo , request_id , extra )
     local state = {
         mon = mon ,
-        body = body ,
-        extra = extra ,
         command_name = command_name ( body ) ,
         db = dbname ,
         request_id = request_id ,
         host = conn.host ,
         port = conn.port ,
     }
+    if mon.started or mon.succeeded or mon.failed then
+        state.sensitive = is_sensitive ( state.command_name , body , extra )
+    end
     if mon.succeeded or mon.failed then
         -- the duration needs the start time
         ngx_update_time ( )
@@ -152,7 +145,7 @@ function _M.started ( mon , conn , dbname , body , seqinfo , request_id , extra 
             request_id = request_id ,
             host = state.host ,
             port = state.port ,
-            command = sensitive ( state ) and { } or command_copy ( body , seqinfo , extra ) ,
+            command = state.sensitive and { } or command_copy ( body , seqinfo , extra ) ,
         } )
     end
     return state
@@ -174,7 +167,7 @@ function _M.succeeded ( state , reply )
         host = state.host ,
         port = state.port ,
         duration_ms = duration_ms ( state ) ,
-        reply = sensitive ( state ) and { } or copy ( reply ) ,
+        reply = state.sensitive and { } or copy ( reply ) ,
     } )
 end
 
@@ -189,7 +182,7 @@ function _M.failed ( state , err )
         host = state.host ,
         port = state.port ,
         duration_ms = duration_ms ( state ) ,
-        error = sensitive ( state ) and "redacted" or tostring ( err ) ,
+        error = state.sensitive and "redacted" or tostring ( err ) ,
     } )
 end
 
