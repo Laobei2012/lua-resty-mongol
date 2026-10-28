@@ -1,6 +1,7 @@
 local mod_name = (...):match ( "^(.*)%..-$" )
 
 local error = error
+local next = next
 local ipairs , pairs = ipairs , pairs
 local type = type
 local math_abs = math.abs
@@ -322,6 +323,35 @@ function colmethods:find(query, returnfields, num_each_query)
         return nil, "num_each_query must larger than 1"
     end
     return new_cursor(self, query, returnfields, num_each_query)
+end
+
+-- runs an aggregation pipeline and returns a cursor over the results;
+-- options.batch_size is the batch size of each fetch (default 100)
+function colmethods:aggregate(pipeline, options)
+    if type(pipeline) ~= "table" then
+        error("bad argument #1 to 'aggregate' (table expected)", 2)
+    end
+    if options ~= nil and type(options) ~= "table" then
+        error("bad argument #2 to 'aggregate' (table expected)", 2)
+    end
+    local batch_size = options and options.batch_size or 100
+    if type(batch_size) ~= "number" or batch_size < 0
+       or batch_size ~= batch_size - batch_size % 1 then
+        error("bad argument #2 to 'aggregate' "
+              .. "(batch_size must be a non-negative integer)", 2)
+    end
+    if next(pipeline) == nil then
+        pipeline = bson.empty_array
+    end
+    local r, err = wire.command(self.conn, self.db, ordered{
+        {"aggregate", self.col},
+        {"pipeline", pipeline},
+        {"cursor", {batchSize = int32(batch_size)}},
+    })
+    if not r then
+        return nil, err
+    end
+    return new_cursor.from_reply(self, r.cursor, batch_size)
 end
 
 function colmethods:find_one(query, returnfields)
