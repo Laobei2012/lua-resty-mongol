@@ -1,6 +1,6 @@
 local mod_name = (...)
 
-local _M = { _VERSION = "0.9.0" }
+local _M = { _VERSION = "1.0.0" }
 
 local ipairs = ipairs
 local setmetatable = setmetatable

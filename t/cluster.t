@@ -17,36 +17,9 @@ run_tests();
 
 __DATA__
 
-=== TEST 2: db auth failed
---- http_config eval: $::HttpConfig
---- config
-    location /t {
-        content_by_lua '
-            local mongo = require "resty.mongol"
-            conn = mongo:new()
-            conn:set_timeout(1000) 
-
-            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
-            if not ok then
-                ngx.say("connect failed: "..err)
-            end
-
-            local db = conn:new_db_handle("test")
-            local r,err = db:auth("admin", "pass")
-            if not r then ngx.say(err) 
-            else
-                ngx.say(r)
-            end
-        ';
-    }
---- request
-GET /t
---- response_body
-auth fails
---- no_error_log
-[error]
-
 === TEST 5: is master
+# TODO(Task 12): skipped until the replica set CI job starts the members on ports 27017 and 27018. Task 12 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -80,6 +53,8 @@ true
 [error]
 
 === TEST 6: is not master
+# TODO(Task 12): skipped until the replica set CI job starts the members on ports 27017 and 27018. Task 12 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -113,6 +88,8 @@ false
 [error]
 
 === TEST 7: get primary
+# TODO(Task 12): skipped until the replica set CI job starts the members on ports 27017 and 27018. Task 12 removes this skip.
+--- skip_eval: 3: 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -152,33 +129,4 @@ GET /t
 get primary
 --- no_error_log
 [error]
-
-=== TEST 8: db auth
---- http_config eval: $::HttpConfig
---- config
-    lua_code_cache off;
-    location /t {
-        content_by_lua '
-            local mongo = require "resty.mongol"
-            conn = mongo:new()
-            conn:set_timeout(1000) 
-
-            ok, err = conn:connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT)
-            if not ok then
-                ngx.say("connect failed: "..err)
-            end
-
-            local db = conn:new_db_handle("test")
-            local r,err = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
-            ngx.say(r)
-        ';
-    }
---- request
-GET /t
---- response_body
-1
---- no_error_log
-[error]
-
 

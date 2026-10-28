@@ -22,9 +22,6 @@ run_tests();
 __DATA__
 
 === TEST 1: object id
-# TODO(Task 5): needs the Phase 2 write code (col:insert over commands).
-# Task 5 removes this skip.
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -39,8 +36,7 @@ __DATA__
             end
 
             local db = conn:new_db_handle("test")
-            local r = db:auth("$TEST_NGINX_MONGO_USER", "$TEST_NGINX_MONGO_PASS")
-            if not r then ngx.say("auth failed") end
+            local r
             local col = db:get_col("test")
 
             r, err = col:delete({}, nil, true)

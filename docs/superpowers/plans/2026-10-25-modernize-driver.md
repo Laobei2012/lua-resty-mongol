@@ -275,7 +275,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 ### Task 4: Writes (insert, update, delete)
 
 **Files:**
-- Modify: `lib/resty/mongol/colmt.lua:30-208` (delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`)
+- Modify: `lib/resty/mongol/colmt.lua:30-208` (only the three write methods change. The opcode table, `compose_msg`, `docmd`, `read_msg_header` and `handle_reply` stay for the old read methods, and Task 5 step 3 deletes them)
 - Test: `t/sanity.t` (existing tests, ported to `$TEST_NGINX_MONGO_*`), plus new blocks. Most blocks call `db:auth("admin", "admin")` only as setup. Keep those blocks in their files, and delete the `db:auth()` lines and the `auth failed` lines from the expected output. This covers `t/sanity.t` (15 blocks), `t/cursor.t` (4 blocks), `t/gridfs.t` (4 blocks), `t/gridfs_write.t` (15 blocks) and `t/objid.t` (1 block). Move only the blocks whose purpose is login, `t/cluster.t` TEST 2 (`db auth failed`) and TEST 8 (`db auth`), to `t/auth/legacy.t`. That file runs only in the Phase 3 auth job. In the moved blocks, log in against the `admin` database, because the CI root user lives there. Rewrite `t/sanity.t` TEST 16 for the Task 2b rules. `tab1 = {[0] = "a0", "a1", "a2"}` and the sparse `tab2` are not arrays, so they are stored as documents. The new expected values are `r.tab[1].a == "aa"`, `r.tab1["0"] == "a0"` and `r.tab2["2"] == "a20"`. Rewrite TEST 18 the same way. `$push` works only on arrays, so its fixtures for `tab1` and `tab2` become the arrays `{"a10", "a11", "a12"}` and `{"a22", "a23", "a24"}`. The update returns `1`. The new expected values are `r.tab[2].b == "bb"`, `r.tab[3] == "a3"`, `r.tab1[4] == "a13"` and `r.tab2[4] == "a25"`. Rewrite TEST 11. It inserts 10 documents and reads them with `find(..., 4)`. The value 4 is now the batch size and not a limit, so the test expects all 10 documents. Rewrite TEST 12 the same way. It reads 10 documents twice with `find(..., 3)`, once with `{n = 0}` and once with `{n = 1}`. Each loop now prints all 10 documents. The first loop prints `nil` and `puppy` for each document, and the second prints `n` from 1 to 10 and `nil`. Keep TEST 22 unchanged. It now passes with the standard `pairs`.
 
 **Interfaces:**
@@ -293,17 +293,17 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Add `TEST: insert split`. Set `wire.limits.max_message_size = 20000`. A safe insert of 50 documents of 1,000 bytes each returns `0`, and `count({})` gives `50`. Add `TEST: document too large`. Set `wire.limits.max_bson_size = 100`. An insert of a 200-byte document returns `nil` and `document too large`, and `count({})` gives `0`. Add `TEST: ordered stop across batches`. Use the same lowered limit and 50 documents, with a duplicate `_id` at position 2. The ordered insert gives `count({}) == 1`. The same insert with `continue_on_error = 1` gives `count({}) == 49`. Each test restores the limits at the end.
 - Add `TEST: delete with flag 0`. Insert 3 documents, then `delete({}, 0, true)` gives `3`. Add `TEST: update with flags 0`. `update({x = 9}, {["$set"] = {y = 1}}, 0, 0, true)` on an empty collection gives `0`, and a later `count({})` gives `0`.
 
-- [ ] **Step 1: Write failing tests** in `t/sanity.t`:
+- [x] **Step 1: Write failing tests** in `t/sanity.t`:
   - `TEST: insert safe returns 0`. `col:insert({{name="dog"}}, nil, true)` gives `0`.
   - `TEST: insert unsafe returns -1`. `col:insert({{name="dog"}})` gives `-1`.
   - `TEST: duplicate key`. Two safe inserts with the same `_id` give `nil` and a message that contains `E11000`.
   - `TEST: continue_on_error`. A safe batch of three documents, with a duplicate in the middle and `continue_on_error = 1`, gives `nil, err`. A later `count({})` is `2`.
   - `TEST: update multi`. Three documents, then `update({}, {["$set"]={x=1}}, 0, 1, true)`, give `3`.
   - `TEST: delete single`. Three documents, then `delete({}, 1, true)`, give `1`.
-- [ ] **Step 2: Run** `prove t/sanity.t`. Expected: the new blocks FAIL.
-- [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** `prove t/sanity.t`. Expected: the new blocks PASS.
-- [ ] **Step 5: Commit** `feat(col): writes over insert/update/delete commands`.
+- [x] **Step 2: Run** `prove t/sanity.t`. Expected: the new blocks FAIL.
+- [x] **Step 3: Implement** the interfaces above.
+- [x] **Step 4: Run** `prove t/sanity.t`. Expected: the new blocks PASS.
+- [x] **Step 5: Commit** `feat(col): writes over insert/update/delete commands`.
 
 ### Task 5: Reads, count, drop, and database methods
 
@@ -332,7 +332,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: if the reply has `value = bson.null`, `col:find_and_modify(options)` returns `nil`, as the old code did for a miss. A document inside the reply keeps `bson.null` in its fields.
 - `db:listcollections()` and `db:list()` move to Task 6, because they need a cursor built from a command reply. `db:add_user(u, p)` sends `createUser` with `roles = bson.empty_array`.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `TEST: find_one`. Insert `{name="dog"}`. `find_one({name="dog"}).name` is `dog`.
   - `TEST: find_one miss`. The result is `nil`.
   - `TEST: count`. Insert 5 documents, then `count({})` gives `5`. This covers issue #61.
@@ -345,11 +345,12 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: query server error`. `col:query({["$bad"] = 1})` returns 4 values. The flags table has `QueryFailure == true`, and the fourth value is a string.
   - `TEST: find_and_modify`. Upsert `{x=1}` with `new=true`, and `.x` is `1`.
   - `TEST: find_and_modify miss`. On an empty collection, an update without `upsert` returns `nil`, a `remove = true` returns `nil`, and an upsert without `new = true` returns `nil`.
-- [ ] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
-- [ ] **Step 3: Implement** the interfaces above.
-- [ ] **Step 4: Run** the same command. Expected: PASS, except `t/sanity.t` TEST 11 and TEST 12. These two tests read across batches, which needs the Task 6 cursor. Task 6 Step 4 runs them.
-- [ ] **Step 4b: Restore the full CI run.** In the Makefile, replace `$(PHASE1_TESTS)` with `t/*.t` and delete the `PHASE1_TESTS` list and its TODO. Remove `TEST_NGINX_PHASE1` from the Makefile target. In `t/objid.t` TEST 1 and in the `t/api.t` blocks that name Task 5 in a TODO comment, remove the TODO comment and the `$ENV{TEST_NGINX_PHASE1}` skip (keep the `TEST_NGINX_MONGO_BASELINE` part where it exists). Remove the TODO comment in `.github/workflows/test.yml`. Expected: `make test` runs every file.
-- [ ] **Step 5: Commit** `feat(col): reads over find/getMore commands`.
+- [x] **Step 2: Run** `prove t/sanity.t`. Expected: FAIL. The new blocks of this task are in `t/sanity.t`. The full `t/cursor.t` gate is in Task 6.
+- [x] **Step 3: Implement** the interfaces above.
+  Delete the opcode table, `compose_msg`, `docmd`, `read_msg_header`, `handle_reply`, `full_collection_name` and the imports that only they use. Task 4 left them in place for the old read methods (order change from the original plan).
+- [x] **Step 4: Run** the same command. Expected: PASS, except `t/sanity.t` TEST 11 and TEST 12. These two tests read across batches, which needs the Task 6 cursor. Task 6 Step 4 runs them.
+- [x] **Step 4b: Restore the full CI run.** In the Makefile, replace `$(PHASE1_TESTS)` with `t/*.t` and delete the `PHASE1_TESTS` list and its TODO. Remove `TEST_NGINX_PHASE1` from the Makefile target. In `t/objid.t` TEST 1 and in the `t/api.t` blocks that name Task 5 in a TODO comment, remove the TODO comment and the `$ENV{TEST_NGINX_PHASE1}` skip (keep the `TEST_NGINX_MONGO_BASELINE` part where it exists). Remove the TODO comment in `.github/workflows/test.yml`. Expected: `make test` runs every file.
+- [x] **Step 5: Commit** `feat(col): reads over find/getMore commands`.
 
 ### Task 6: Cursor
 
@@ -368,7 +369,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
 - Produces: `db:listcollections(num_each)` sends `listCollections` and returns `cursor.from_reply(...)`. The optional `num_each` goes out as `cursor = {batchSize = num_each}`, and `from_reply` uses it for each `getMore`. Without it, the command sends `cursor = {}`. `db:list(num_each)` is an alias for it, because the README documents that name.
 - Produces: any `getMore` error makes `next()` return `nil, err`. This includes code 43 (`CursorNotFound`) and code 175 (`QueryPlanKilled`). The cursor does not run the query again. Today `next()` runs the query again after `CursorNotFound`, which can return a document twice.
 
-- [ ] **Step 1: Write failing tests** in `t/cursor.t`:
+- [x] **Step 1: Write failing tests** in `t/cursor.t`:
   - `TEST: limit across batches`. Insert 25 documents, then `find({}, nil, 10)` with `limit(23)` yields exactly 23 documents, then `nil`.
   - `TEST: no batch size`. Insert 150 documents. `find({}, nil, 0)` yields exactly 150 documents. The first batch has 101 documents, so this test sends a `getMore` without `batchSize`.
   - `TEST: all documents` (issue #74). Insert 2,500 documents. `find({}, nil, 100)` without a limit yields exactly 2,500 documents.
@@ -380,11 +381,11 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `TEST: close`. After `close()`, `next()` returns `nil`.
   - `TEST: listcollections`. Create 3 collections, then `db:listcollections(2)` yields all 3 names. The second batch comes from a `getMore` on `$cmd.listCollections`.
   - `TEST: fetch error`. Drop the collection between batches with `num_each = 2`. `next()` returns exactly `nil` and a string.
-- [ ] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `t/gridfs.t`, `t/gridfs_write.t` and the aligned GridFS block in `api.t` must also pass. The `1.0.0` release must not ship a documented call that raises a Lua error. If one fails, fix it in this task before the tag. `cluster.t` and the unaligned GridFS block in `api.t` can still fail. Mark them `--- SKIP` with the reasons "Task 12" and "Task 13". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
-- [ ] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
-- [ ] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
+- [x] **Step 2: Run** `prove t/cursor.t`. Expected: FAIL.
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run** `make test`. Expected: all blocks in `bson.t`, `bson_corpus.t`, `wire.t`, `sanity.t`, `cursor.t`, `api.t` and `globals.t` PASS on all four servers. `t/gridfs.t`, `t/gridfs_write.t` and the aligned GridFS block in `api.t` must also pass. The `1.0.0` release must not ship a documented call that raises a Lua error. If one fails, fix it in this task before the tag. `cluster.t` and the unaligned GridFS block in `api.t` can still fail. Mark them `--- SKIP` with the reasons "Task 12" and "Task 13". The `shutdown` block in `api.t` must pass. If the server closes the socket after the command, `conn:shutdown()` returns `true`.
+- [x] **Step 5: Commit** `feat(cursor): server cursors, skip, close`.
+- [x] **Step 6: Prepare the first release.** Before the tag, set `_M._VERSION = "1.0.0"`. Create `CHANGELOG.md` with a `1.0.0` section. Add a "Migrating to 1.0" section at the top of `Readme.md`. Both describe these changes:
   - 1-based arrays and their effect on old data.
   - int32 and int64 numbers, and int64 cdata above 2^53.
   - Timestamp wrappers.
@@ -571,6 +572,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - [ ] **Step 2: Run** `prove t/uri.t` and, in the `replset` job, `make test-replset`. Expected: FAIL. `t/replset/uri.t` holds `TEST: connect_uri replset`.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `prove t/uri.t` and `make test-replset`. Expected: PASS.
+- [ ] **Step 4b: Remove the skips.** Remove the `skip_eval` line and the `TODO(Task 12)` comment from the three blocks of `t/cluster.t` (or from `t/replset/cluster.t` after the move).
 - [ ] **Step 5: Commit** `feat(conn): mongodb:// URIs and replica set primary selection`.
 
 ### Task 13: GridFS on the new methods
@@ -591,6 +593,7 @@ Source: the MongoDB Command Logging and Monitoring specification in `mongodb/spe
 - [ ] **Step 2: Run** `prove t/gridfs.t t/gridfs_write.t t/api.t`. Expected: the new blocks FAIL, and the old blocks pass.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** Expected: PASS on all four servers.
+- [ ] **Step 4b: Remove the skips.** Remove `|| 1` and the `TODO(Task 13)` comment from `t/api.t` TEST 10 (gridfs read unaligned). Remove the `skip_eval` line and the `TODO(Task 13)` comment from `t/gridfs.t` TEST 2.
 - [ ] **Step 5: Commit** `feat(gridfs): port to command API`.
 
 ### Task 14: Sessions and transactions

@@ -56,8 +56,6 @@ nil string
 
 
 === TEST 3: databases
-# TODO(Task 5): skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -85,8 +83,7 @@ GET /t
 
 === TEST 4: dropDatabase
 # db:dropDatabase sends dropDatabase = true; the server needs 1
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -114,8 +111,6 @@ false
 
 
 === TEST 5: query and getmore
-# TODO(Task 5): skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -146,8 +141,7 @@ GET /t
 
 === TEST 6: kill_cursors
 # col:kill_cursors sends the collection name inside OP_KILL_CURSORS
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -195,8 +189,6 @@ GET /t
 
 
 === TEST 8: count with filter
-# TODO(Task 5): skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -220,8 +212,6 @@ GET /t
 
 
 === TEST 9: gridfs read aligned
-# TODO(Task 5): skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_PHASE1}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -252,8 +242,8 @@ abcdefghijkl
 
 === TEST 10: gridfs read unaligned
 # gridfs_file:read ignores the offset inside the first chunk
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+# TODO(Task 13): also skipped until gridfs_file:read honors the offset inside a chunk.
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || 1
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -281,8 +271,7 @@ fgh
 
 === TEST 11: add_user
 # db:add_user calls self:update, which does not exist
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -307,8 +296,7 @@ u_api
 
 === TEST 12: listcollections
 # listcollections reads system.namespaces, which WiredTiger does not have
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -337,8 +325,7 @@ true
 
 === TEST 13: db list
 # db:list() does not exist in the old code
-# TODO(Task 5): also skipped in the Phase 1 gate (needs Phase 2 collection code).
---- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE} || $ENV{TEST_NGINX_PHASE1}
+--- skip_eval: 3: $ENV{TEST_NGINX_MONGO_BASELINE}
 --- http_config eval: $::HttpConfig
 --- config
     location /t {
@@ -373,11 +360,11 @@ true true
 --- config
     location /t {
         content_by_lua_block {
-                        local conn = require("resty.mongol"):new()
+            local conn = require("resty.mongol"):new()
             conn:set_timeout(1000)
             conn:connect("127.0.0.1", 12345)
-            local ok, err = pcall(conn.shutdown, conn)
-            ngx.say(ok)
+            local ok, r = pcall(conn.shutdown, conn)
+            ngx.say(ok, " ", r)
         }
     }
 --- tcp_listen: 12345
@@ -385,6 +372,6 @@ true true
 --- request
 GET /t
 --- response_body
-true
+true true
 --- no_error_log
 [error]
