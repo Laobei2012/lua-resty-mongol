@@ -10,9 +10,11 @@ local t_concat = table.concat
 local strbyte = string.byte
 local strformat = string.format
 
+local wire = require ( mod_name .. ".wire" )
 local ll = require ( mod_name .. ".ll" )
 local int64_to_le = ll.int64_to_le
 
+local type = type
 local ZERO_ID = "\0\0\0\0\0\0\0\0"
 
 local cursor_methods = { }
@@ -42,10 +44,26 @@ local function new_cursor(col, query, returnfields, num_each_query)
         } , cursor_mt )
 end
 
+-- checks the cursor document of a successful reply; batch_name is the
+-- field with the documents. A bad reply marks the connection broken, so
+-- it never goes back to the pool. Returns the batch | nil, err.
+local function check_reply(conn, c, batch_name, need_ns)
+    local id = type(c) == "table" and c.id
+    local batch = type(c) == "table" and c[batch_name]
+    if type(c) ~= "table"
+       or not (type(id) == "number" or ll.is_int64(id))
+       or type(batch) ~= "table"
+       or (need_ns and type(c.ns) ~= "string") then
+        return wire.fail(conn, "bad cursor reply")
+    end
+    return batch
+end
+
 -- a cursor from the cursor document of a command reply (aggregate,
 -- listCollections); the collection for getMore and killCursors comes
 -- from the namespace of the reply
 local function from_reply(col, reply_cursor, num_each, session)
+    local batch = reply_cursor.firstBatch or {}
     local name = reply_cursor.ns:match("^[^.]+%.(.*)$") or reply_cursor.ns
     local ncol = setmetatable({
             conn = col.conn;
@@ -53,7 +71,6 @@ local function from_reply(col, reply_cursor, num_each, session)
             db = col.db;
             col = name;
         }, getmetatable(col))
-    local batch = reply_cursor.firstBatch or {}
     local id = int64_to_le(reply_cursor.id)
     local c = new_cursor(ncol, nil, nil, num_each or 0)
     c.session = session
@@ -211,4 +228,5 @@ end
 return setmetatable({
     new = new_cursor ;
     from_reply = from_reply ;
+    check_reply = check_reply ;
 }, { __call = function ( _, ... ) return new_cursor ( ... ) end })

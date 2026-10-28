@@ -193,7 +193,7 @@ local function cursor_flags(start, n)
 end
 
 -- turns a find or getMore reply into the legacy return values
-local function cursor_result(r, err, doc, start, batch_name)
+local function cursor_result(conn, r, err, doc, start, batch_name)
     if not r then
         if not doc then
             return nil, err
@@ -207,7 +207,10 @@ local function cursor_result(r, err, doc, start, batch_name)
         return ZERO_ID, {}, flags, err
     end
     local c = r.cursor
-    local batch = c[batch_name] or {}
+    local batch, cerr = new_cursor.check_reply(conn, c, batch_name)
+    if not batch then
+        return nil, cerr
+    end
     return int64_to_le(c.id), batch, cursor_flags(start, #batch)
 end
 
@@ -256,7 +259,7 @@ function colmethods:query(query, returnfields, numberToSkip, numberToReturn,
 
     local conn = options.conn or self.conn
     local r, err, doc = wire.command(conn, self.db, ordered(cmd))
-    return cursor_result(r, err, doc, numberToSkip, "firstBatch")
+    return cursor_result(conn, r, err, doc, numberToSkip, "firstBatch")
 end
 
 function colmethods:getmore(cursorID, numberToReturn, offset_i, opts)
@@ -272,7 +275,7 @@ function colmethods:getmore(cursorID, numberToReturn, offset_i, opts)
     end
     local conn = opts and opts.conn or self.conn
     local r, err, doc = wire.command(conn, self.db, ordered(cmd))
-    return cursor_result(r, err, doc, offset_i, "nextBatch")
+    return cursor_result(conn, r, err, doc, offset_i, "nextBatch")
 end
 
 function colmethods:kill_cursors(cursorIDs, opts)

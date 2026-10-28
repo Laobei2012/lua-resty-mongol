@@ -242,6 +242,7 @@ function _M.send_only ( conn , dbname , cmd , sequences , extra )
     return send ( conn , msg )
 end
 
+_M.fail = fail
 _M.encode_msg = encode_msg
 _M.decode_reply = decode_reply
 
