@@ -578,3 +578,40 @@ true 2 createUser true true
 true
 --- no_error_log
 [error]
+
+
+=== TEST 16: a protected metatable does not change the command
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local t = require "mongol_t"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local events = {}
+            local function rec(kind)
+                return function(ev) events[#events + 1] = {kind, ev} end
+            end
+            local all = {started = rec("started"), succeeded = rec("succeeded"), failed = rec("failed")}
+            local function text() return cjson.encode(bson.to_json_safe(events)) end
+            local conn, db = t.connect(H, P, "test")
+            local col = db:get_col("monitor_t")
+            col:delete({}, nil, true)
+            local comment = setmetatable({a = 1}, {__metatable = "locked"})
+            local r = db:cmd(bson.ordered{{"ping", 1}, {"comment", comment}})
+            ngx.say(r and r.ok)
+            mongo.set_monitor(all)
+            r = db:cmd(bson.ordered{{"ping", 1}, {"comment", comment}})
+            mongo.set_monitor(nil)
+            ngx.say(r and r.ok, " ", #events, " ", events[1][2].command_name, " ", events[1][2].command.comment.a)
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+1 2 ping 1
+--- no_error_log
+[error]
