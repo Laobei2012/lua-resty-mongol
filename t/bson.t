@@ -587,7 +587,7 @@ true true
 GET /t
 --- response_body
 true 0 false
-2 0
+2 1
 --- no_error_log
 [error]
 
