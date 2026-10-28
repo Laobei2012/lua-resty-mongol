@@ -517,7 +517,10 @@ falsebad argument #1 to 'decimal128' (string expected)
             local d = bson.decode(s)
             ngx.say(d.r.pattern, " ", d.r.options, " ", getmetatable(d.r) == bson.regex_mt)
             ngx.say(getmetatable(d.lo) == bson.minkey_mt, " ", getmetatable(d.hi) == bson.maxkey_mt)
-            ngx.say(bson.to_bson(d) == s)
+            -- the order of the fields in a Lua table is not fixed, so decode again
+            local d2 = bson.decode(bson.to_bson(d))
+            ngx.say(d2.r.pattern == d.r.pattern, " ", d2.r.options == d.r.options, " ",
+                    getmetatable(d2.lo) == bson.minkey_mt, " ", getmetatable(d2.hi) == bson.maxkey_mt)
             ngx.say(bson.to_bson({r = bson.regex("a\0b", "")}))
             ngx.say(bson.to_bson({r = bson.regex("a", "i\0")}))
         }
@@ -528,7 +531,7 @@ GET /t
 0x0b 0xff 0x7f
 ^a/b imx true
 true true
-true
+true true true true
 nilinvalid regex
 nilinvalid regex
 --- no_error_log
