@@ -170,6 +170,58 @@ true true
 [error]
 
 
+=== TEST 6: non-table session options raise bad argument before I/O
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local col = db:get_col("sess_opts")
+            local sent = 0
+            mongo.set_monitor({started = function() sent = sent + 1 end})
+            local calls = {
+                insert = function(o) return col:insert({{a = 1}}, nil, true, o) end,
+                update = function(o) return col:update({}, {a = 1}, false, false, true, o) end,
+                delete = function(o) return col:delete({}, false, true, o) end,
+                query = function(o) return col:query({}, nil, 0, 1, o) end,
+                find = function(o) return col:find({}, nil, 1, o) end,
+                find_one = function(o) return col:find_one({}, nil, o) end,
+                aggregate = function(o) return col:aggregate({}, o) end,
+                getmore = function(o) return col:getmore(string.rep("\0", 8), 1, 0, o) end,
+                kill_cursors = function(o) return col:kill_cursors({string.rep("\0", 8)}, o) end,
+            }
+            for _, name in ipairs({"insert", "update", "delete", "query", "find", "find_one", "aggregate", "getmore", "kill_cursors"}) do
+                local valid = true
+                for _, opts in ipairs({true, false, 1, "invalid", function() end}) do
+                    local ok, err = pcall(calls[name], opts)
+                    if ok or not tostring(err):find("bad argument", 1, true) then valid = false end
+                end
+                ngx.say(name, " ", valid)
+            end
+            mongo.set_monitor(nil)
+            ngx.say("sent ", sent)
+            conn:close()
+        }
+    }
+--- request
+GET /t
+--- response_body
+insert true
+update true
+delete true
+query true
+find true
+find_one true
+aggregate true
+getmore true
+kill_cursors true
+sent 0
+--- no_error_log
+[error]
+
+
 
 === TEST 5: transaction state without a server
 --- http_config eval: $::HttpConfig
