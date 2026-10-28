@@ -1334,3 +1334,76 @@ false true
 nil invalid chunkSize in the files document
 --- no_error_log
 [error]
+
+
+
+=== TEST 31: md5 is a digest or absent
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            local gf = assert(fs:new({chunkSize = 4, filename = "new"}))
+            local doc = db:get_col("fs14.files"):find_one({filename = "new"})
+            ngx.say(doc.md5, " ", gf.file_md5)
+            assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = "ins"}, true))
+            doc = db:get_col("fs14.files"):find_one({filename = "ins"})
+            ngx.say(doc.md5 == ngx.md5("abcdefgh"))
+            local g2 = fs:find_one({filename = "ins"})
+            g2:write("zz", 0)
+            doc = db:get_col("fs14.files"):find_one({filename = "ins"})
+            ngx.say(doc.md5, " ", g2.file_md5)
+            ngx.say(g2:update_md5())
+            doc = db:get_col("fs14.files"):find_one({filename = "ins"})
+            ngx.say(#doc.md5, " ", doc.md5 == ngx.md5("zzcdefgh"))
+        }
+    }
+--- request
+GET /t
+--- response_body
+nil nil
+true
+nil nil
+true
+32 true
+--- no_error_log
+[error]
+
+
+
+=== TEST 32: remove deletes every file with a filter and with {}
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local wire = require "resty.mongol.wire"
+            local t = require "mongol_t"
+            local conn, db = t.connect("$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT, "test")
+            local fs = db:get_gridfs("fs14")
+            fs:remove({}, nil, true)
+            db:cmd({drop = "fs14.files"})
+            db:cmd({drop = "fs14.chunks"})
+            for _, name in ipairs({"a", "b", "c"}) do
+                assert(fs:insert(t.string_fh("abcdefgh"), {chunkSize = 4, filename = name}, true))
+            end
+            ngx.say(fs:remove({filename = "a"}, nil, true))
+            ngx.say(fs:remove({}, nil, true))
+            ngx.say(db:get_col("fs14.files"):count({}), " ", db:get_col("fs14.chunks"):count({}))
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+2
+0 0
+--- no_error_log
+[error]
