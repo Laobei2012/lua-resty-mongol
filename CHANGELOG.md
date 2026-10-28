@@ -17,8 +17,11 @@ to list yet. Phase labels describe implementation work, not release dates.
 - Provide a builtin LuaRocks rockspec covering all 17 modules and OPM
   metadata. Keep the existing `1.0.0` module version as an unreleased
   candidate; no phase release numbers or publication dates are invented.
-- `Changes.md` aliases this changelog for OPM's filename convention. The
-  README includes the license notice because OPM does not collect `LICENSE`.
+- `Changes.md` is a regular distribution copy of this changelog for OPM's
+  filename convention; keep the two files synchronized. A symlink was
+  omitted by LuaRocks when building from the source archive, breaking the
+  README's changelog link. The README includes the license notice because
+  OPM does not collect `LICENSE`.
 
 ### Phase 5 additions and fixes
 
