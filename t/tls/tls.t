@@ -120,3 +120,99 @@ GET /t
 1
 --- no_error_log
 [error]
+
+
+
+=== TEST 5: tls socket is not reused by a plain connect
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local conn = mongo:new()
+            conn:set_timeout(5000)
+            assert(conn:connect(H, P, {ssl = true, ssl_verify = false}))
+            ngx.say(conn:new_db_handle("admin"):cmd({ping = 1}).ok)
+            ngx.say(conn:set_keepalive(10000, 5))
+            local plain = mongo:new()
+            plain:set_timeout(5000)
+            assert(plain:connect(H, P))
+            ngx.say(plain:get_reused_times())
+            local r, err = plain:new_db_handle("admin"):cmd({ping = 1})
+            ngx.say(r, " ", type(err))
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+1
+0
+nil string
+--- no_error_log
+[crit]
+
+
+
+=== TEST 6: unverified tls socket is not reused by a verified connect
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local conn = mongo:new()
+            conn:set_timeout(5000)
+            assert(conn:connect(H, P, {ssl = true, ssl_verify = false}))
+            ngx.say(conn:set_keepalive(10000, 5))
+            -- no lua_ssl_trusted_certificate: a fresh socket must fail
+            local c2 = mongo:new()
+            c2:set_timeout(5000)
+            local ok, err = c2:connect(H, P, {ssl = true, ssl_verify = true, ssl_server_name = "localhost"})
+            ngx.say(ok, " ", err ~= nil)
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+nil true
+--- no_error_log
+[crit]
+
+
+
+=== TEST 7: tls socket is reused with the same settings
+--- http_config eval
+"$::HttpConfig" . qq{
+    lua_ssl_trusted_certificate $ENV{TEST_NGINX_MONGO_CA};
+}
+--- config
+    location /t {
+        content_by_lua_block {
+            local mongo = require "resty.mongol"
+            local wire = require "resty.mongol.wire"
+            local H, P = "$TEST_NGINX_MONGO_HOST", $TEST_NGINX_MONGO_PORT
+            local opts = {ssl = true, ssl_server_name = "localhost"}
+            local conn = mongo:new()
+            conn:set_timeout(5000)
+            assert(conn:connect(H, P, opts))
+            ngx.say(conn:set_keepalive(10000, 5))
+            local c2 = mongo:new()
+            c2:set_timeout(5000)
+            assert(c2:connect(H, P, opts))
+            ngx.say(c2:get_reused_times())
+            ngx.say(c2:new_db_handle("admin"):cmd({ping = 1}).ok)
+        }
+    }
+--- request
+GET /t
+--- response_body
+1
+1
+1
+--- no_error_log
+[crit]
