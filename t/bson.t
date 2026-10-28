@@ -710,3 +710,34 @@ a b x y q
 table 0
 --- no_error_log
 [error]
+
+
+=== TEST 26: json NaN and Infinity
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local bson = require "resty.mongol.bson"
+            local cjson = require "cjson"
+            local doc = {
+                a = 0/0, b = 1/0, c = -1/0, d = bson.double(0/0), e = bson.double(-1/0),
+                nested = {x = 1/0, list = {1, 0/0, {deep = -1/0}}},
+                f = 1.5, g = bson.double(2.5), h = bson.int32(7),
+            }
+            local json, err = cjson.encode(bson.to_json_safe(doc))
+            ngx.say(json ~= nil, " ", err)
+            local back = cjson.decode(json)
+            ngx.say(back.a, " ", back.b, " ", back.c, " ", back.d, " ", back.e)
+            ngx.say(back.nested.x, " ", back.nested.list[1], " ", back.nested.list[2], " ", back.nested.list[3].deep)
+            ngx.say(back.f, " ", back.g, " ", back.h)
+        }
+    }
+--- request
+GET /t
+--- response_body
+true nil
+NaN Infinity -Infinity NaN -Infinity
+Infinity 1 NaN -Infinity
+1.5 2.5 7
+--- no_error_log
+[error]
