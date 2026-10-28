@@ -48,7 +48,7 @@
 
 | File | Responsibility |
 |---|---|
-| `bench/nginx.conf.in` | Template for the server on port 8090. One location for each API. `lua_package_path` does not expand environment variables, so `ctl.sh` renders it with `envsubst '$MONGOL_LIB'` into `<prefix>/conf/nginx.conf` before `nginx -p <prefix>` |
+| `bench/nginx.conf.in` | Template for the server on port 8090. One location for each API. `lua_package_path` does not expand environment variables, so `ctl.sh` renders it with `envsubst '$MONGOL_LIB $BENCH_DIR'` into `<prefix>/conf/nginx.conf` before `nginx -p <prefix>` |
 | `bench/handlers.lua` | One function for each API. Each one does one driver call, checks the result, returns 200 or 500 |
 | `bench/seed.lua` | `resty -I /src/new/lib` script: always the new driver, whatever `MONGOL_LIB` is, so every pass reads the same fixtures. Logs in as the admin user. Drops only the `read`, `write`, `fs.files` and `fs.chunks` collections, never the whole database, and inserts the fixtures. Creates the user `bench` only when `usersInfo` shows it is missing: `dropDatabase` would not remove the user, so a second `createUser` would fail (code 51003). Recreating the user would also break the pooled sockets that nginx holds logged in as it |
 | `bench/server_status.lua` | `resty -I /src/new/lib` script: always the new driver, like `seed.lua`. Logs in as the admin user and prints `serverStatus().connections.current`, through the driver. Exits non-zero when Mongo is not reachable, so it also serves as the "Mongo is up" check |
@@ -96,16 +96,17 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - Test: `bench/smoke.sh`
 
 **Interfaces:**
-- Produces: `MONGOL_LIB` (directory that holds `resty/mongol/`), used only by `ctl.sh` to render `nginx.conf.in` with `envsubst`.
+- Produces: `MONGOL_LIB` (directory that holds `resty/mongol/`) and `BENCH_DIR` (the `bench/` directory, for `handlers.lua`), used only by `ctl.sh` to render `nginx.conf.in` with `envsubst '$MONGOL_LIB $BENCH_DIR'`.
 - Produces: `MONGO_HOST`, `MONGO_PORT`, `MONGO_ADMIN_USER`, `MONGO_ADMIN_PASSWORD` (default `admin` / `admin`) environment variables, passed to Lua with `env` directives and read with `os.getenv`. Only `seed.lua` and `server_status.lua` use the admin credentials. Both always load the new driver (`resty -I <new>/lib`, `/src/new/lib` on Kubernetes), because the old driver would write GridFS with its own chunking and run `createUser` through `OP_QUERY`, and only the new driver works on the `trend` servers.
 - Produces: `handlers.<name>()` for each location in the table above, including `/reuse`. Each one calls `ngx.exit(200)` on success and `ngx.exit(500)` with the error in `ngx.log(ngx.ERR, ...)` on failure.
+- Produces: `handlers.old_unsupported`, the APIs that the old driver cannot run, with the reason. Under the old driver their locations return 501 with the reason as the body; the runner skips an API that answers 501, so the report shows `n/a (old)`. Found in Step 4: `find_100`, because the old `cursor:next` drops every batch after the first (`handle_reply` numbers each reply from 1 and ignores `offset_i`), so it returns 50 of 100 documents.
 - Produces: `resty bench/seed.lua` logs in to `admin` with the admin credentials, drops and re-creates the fixture collections, creates the user `bench` / `bench` (role `readWrite` on database `bench`, mechanism SCRAM-SHA-1 only) if `usersInfo` does not list it, and exits 0. It is safe to run any number of times while nginx is up; the smoke test runs it twice in a row.
 
-- [ ] **Step 1: Write `bench/smoke.sh`.** Mongo runs with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`. The script renders the conf and starts nginx with `-p` on a temp prefix, runs the seed, and sends one `curl` to each location. Cases: `smoke: all 200` (every location returns 200), `smoke: empty collection` (drop `read`, then `/find_one` returns 500), `smoke: seed twice` (a second `seed.lua` run exits 0, and `/find_one` on a pooled socket still returns 200).
-- [ ] **Step 2: Run `MONGOL_LIB=<new>/lib bench/smoke.sh` against `mongo:4.4`.** Expected: fails, because no handlers exist.
-- [ ] **Step 3: Write `nginx.conf.in`, `handlers.lua`, `seed.lua`, `server_status.lua`.** Use `math.random` seeded once in `init_worker_by_lua_block`. Add `exclude_files` patterns for `bench/` and `docs/perf/` to `dist.ini`, and check with `opm build` that the tarball does not contain them.
-- [ ] **Step 4: Run the smoke test with the new driver and with the old driver (`MONGOL_LIB=<3eb6349 checkout>/lib`, for example from `git worktree add ../mongol-old 3eb6349`), both against `mongo:4.4`.** Expected: both pass. If the old driver fails one location, find the API form that both accept, or mark the location old-unsupported in `handlers.lua` with the reason.
-- [ ] **Step 5: Commit** `test(bench): add bench server, handlers and seed`.
+- [x] **Step 1: Write `bench/smoke.sh`.** Mongo runs with `MONGO_INITDB_ROOT_USERNAME=admin` and `MONGO_INITDB_ROOT_PASSWORD=admin`. The script renders the conf and starts nginx with `-p` on a temp prefix, runs the seed, and sends one `curl` to each location. Cases: `smoke: all 200` (every location returns 200), `smoke: empty collection` (drop `read`, then `/find_one` returns 500), `smoke: seed twice` (a second `seed.lua` run exits 0, and `/find_one` on a pooled socket still returns 200).
+- [x] **Step 2: Run `MONGOL_LIB=<new>/lib bench/smoke.sh` against `mongo:4.4`.** Expected: fails, because no handlers exist.
+- [x] **Step 3: Write `nginx.conf.in`, `handlers.lua`, `seed.lua`, `server_status.lua`.** Use `math.random` seeded once in `init_worker_by_lua_block`. Add `exclude_files` patterns for `bench/` and `docs/perf/` to `dist.ini`, and check with `opm build` that the tarball does not contain them.
+- [x] **Step 4: Run the smoke test with the new driver and with the old driver (`MONGOL_LIB=<3eb6349 checkout>/lib`, for example from `git worktree add ../mongol-old 3eb6349`), both against `mongo:4.4`.** Expected: both pass. If the old driver fails one location, find the API form that both accept, or mark the location old-unsupported in `handlers.lua` with the reason.
+- [x] **Step 5: Commit** `test(bench): add bench server, handlers and seed`.
 
 ## Task 2: Load runner
 
