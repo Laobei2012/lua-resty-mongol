@@ -17,7 +17,7 @@
 - A/B rule: the old and new driver run on `mongo:4.4`, on the same machine, in the same job, one after the other. Only this pair decides pass or fail.
 - Trend rule: the new driver also runs on `mongo:6.0`, `mongo:7.0`, `mongo:8.0` and `mongo:9.0`. These numbers are for information. They do not gate.
 - Handlers use only the API forms that both drivers accept: no arrays in documents, whole numbers below 2^31, no BSON types that Phase 4 adds.
-- Auth is always on: Mongo starts with a root user, both locally and on Kubernetes. Auth is per connection, so every handler except `/ping`, `/connect_nopool` and `/auth` logs in with `db:auth_scram_sha1("bench", "bench")` only when `conn:get_reused_times() == 0`. Pooled requests then measure the API alone, without SCRAM.
+- Auth is always on: Mongo starts with a root user, both locally and on Kubernetes. Auth is per connection, and both drivers keep one shared pool per host and port for all locations. So every handler that calls `set_keepalive`, `/ping`, `/reuse` and `/auth` included, logs in with `db:auth_scram_sha1("bench", "bench")` when `conn:get_reused_times() == 0`. Otherwise `/ping` would return unauthenticated sockets to the pool, and later APIs would reuse them and fail with `Unauthorized`. Only `/connect_nopool` skips the login, since it closes its socket. Pooled requests then measure the API alone, without SCRAM.
 - Handlers check results in a way that is true for both drivers. Insert handlers check only that the result is not `nil`: the old `insert(..., safe)` returns `getlasterror.n`, which is 0 for inserts. Build every `options` or document table inside the handler, once per request. The old `find_and_modify` changes its `options` table (it sets `options.findAndModify`), so a table defined at module level must never be reused.
 - Nginx: `worker_processes 1`, `lua_code_cache on`, `access_log off`, `error_log` at `warn`.
 - Connection reuse: every handler ends with `conn:set_keepalive(10000, 100)`. The `connect_nopool` location is the only exception.
@@ -50,13 +50,13 @@
 |---|---|
 | `bench/nginx.conf.in` | Template for the server on port 8090. One location for each API. `lua_package_path` does not expand environment variables, so `ctl.sh` renders it with `envsubst '$MONGOL_LIB'` into `<prefix>/conf/nginx.conf` before `nginx -p <prefix>` |
 | `bench/handlers.lua` | One function for each API. Each one does one driver call, checks the result, returns 200 or 500 |
-| `bench/seed.lua` | `resty` script. Logs in as the admin user, drops the `bench` database, creates the user `bench`, inserts fixtures |
-| `bench/server_status.lua` | `resty` script. Logs in as the admin user and prints `serverStatus().connections.current`, through the driver. Exits non-zero when Mongo is not reachable, so it also serves as the "Mongo is up" check |
+| `bench/seed.lua` | `resty -I /src/new/lib` script: always the new driver, whatever `MONGOL_LIB` is, so every pass reads the same fixtures. Logs in as the admin user, drops the `bench` database, creates the user `bench`, inserts fixtures |
+| `bench/server_status.lua` | `resty -I /src/new/lib` script: always the new driver, like `seed.lua`. Logs in as the admin user and prints `serverStatus().connections.current`, through the driver. Exits non-zero when Mongo is not reachable, so it also serves as the "Mongo is up" check |
 | `bench/ctl.sh` | `ctl.sh <start\|stop\|seed\|check-log\|check-conns>`. Runs on the nginx host: renders the conf, starts and stops nginx, seeds, checks `error.log` and the connection count |
 | `bench/load.sh` | `load.sh <label> <api> <runs>`. Runs on the wrk host: 10 s warm-up, then `<runs>` wrk runs, appends to `results/<label>.jsonl` |
 | `bench/wrk_report.lua` | wrk `done()` hook. Prints one JSON line: req/s, p50, p90, p99, errors |
 | `bench/run.sh` | Single host: for each API calls `ctl.sh` and `load.sh` in turn, writes `results/<label>.jsonl` |
-| `bench/compare.lua` | `resty` script. Reads two `.jsonl` files and writes a Markdown table with pass or fail |
+| `bench/compare.lua` | `resty` script. Reads two `.jsonl` files and writes a Markdown table with pass or fail. With `--trend`, reads one file per Mongo tag and writes a table without pass or fail |
 | `bench/bson_micro.lua` | `resty` script. Encode and decode loops, prints ops/s. Uses a small adapter for each driver (see Task 4) |
 | `bench/k8s/mongo.yaml` | Mongo Pod and Service. The image tag is a template value |
 | `bench/k8s/bench.yaml` | Bench Pod: init container clones both refs, container `nginx`, container `wrk`. Both containers mount `/src` and `/work` (logs and results) from shared `emptyDir` volumes |
@@ -92,12 +92,12 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 ## Task 1: Bench server and handlers
 
 **Files:**
-- Create: `bench/nginx.conf`, `bench/handlers.lua`, `bench/seed.lua`
+- Create: `bench/nginx.conf.in`, `bench/handlers.lua`, `bench/seed.lua`, `bench/server_status.lua`
 - Test: `bench/smoke.sh`
 
 **Interfaces:**
 - Produces: `MONGOL_LIB` (directory that holds `resty/mongol/`), used only by `ctl.sh` to render `nginx.conf.in` with `envsubst`.
-- Produces: `MONGO_HOST`, `MONGO_PORT`, `MONGO_ADMIN_USER`, `MONGO_ADMIN_PASSWORD` (default `admin` / `admin`) environment variables, passed to Lua with `env` directives and read with `os.getenv`. Only `seed.lua` and `server_status.lua` use the admin credentials.
+- Produces: `MONGO_HOST`, `MONGO_PORT`, `MONGO_ADMIN_USER`, `MONGO_ADMIN_PASSWORD` (default `admin` / `admin`) environment variables, passed to Lua with `env` directives and read with `os.getenv`. Only `seed.lua` and `server_status.lua` use the admin credentials. Both always load the new driver (`resty -I <new>/lib`, `/src/new/lib` on Kubernetes), because the old driver would write GridFS with its own chunking and run `createUser` through `OP_QUERY`, and only the new driver works on the `trend` servers.
 - Produces: `handlers.<name>()` for each location in the table above, including `/reuse`. Each one calls `ngx.exit(200)` on success and `ngx.exit(500)` with the error in `ngx.log(ngx.ERR, ...)` on failure.
 - Produces: `resty bench/seed.lua` logs in to `admin` with the admin credentials and exits 0 after it creates the fixtures and the user `bench` / `bench` with role `readWrite` on database `bench`, mechanism SCRAM-SHA-1 only.
 
@@ -115,7 +115,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 
 **Interfaces:**
 - Consumes: Task 1 locations and environment variables.
-- Produces: `bench/ctl.sh` and `bench/load.sh` as in the File Structure table. Logs go to `$WORK/logs/` and results to `$WORK/results/` (`WORK` defaults to `bench/`), so on Kubernetes both containers see them on the shared `/work` volume.
+- Produces: `bench/ctl.sh` and `bench/load.sh` as in the File Structure table. `load.sh` reads `RUN_BASE` (default 0) and numbers its runs `RUN_BASE + 1` to `RUN_BASE + RUNS`. Logs go to `$WORK/logs/` and results to `$WORK/results/` (`WORK` defaults to `bench/`), so on Kubernetes both containers see them on the shared `/work` volume.
 - Produces: `bench/run.sh <label> [api ...]`. With no API names, it runs all of them. `RUNS` (default 3) sets the wrk runs for each API. It writes `$WORK/results/<label>.jsonl`.
 - Produces: one JSON line for each run: `{"label", "driver_sha", "mongo_version", "api", "run", "rps", "p50_ms", "p90_ms", "p99_ms", "non2xx", "socket_errors"}`.
 
@@ -134,6 +134,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 **Interfaces:**
 - Consumes: the JSON line format from Task 2.
 - Produces: `resty bench/compare.lua <old.jsonl> <new.jsonl>` prints a Markdown table: API, old rps, new rps, ratio, old p99, new p99, ratio, result. If any API is `fail`, it exits 1.
+- Produces: `resty bench/compare.lua --trend <new-4.4.jsonl> <new-6.0.jsonl> ...` prints one row per API and one column pair (median rps, median p99) per file, labelled by the file's `mongo_version`. It has no pass or fail and always exits 0. Task 5 uses it for the trend table.
 
 - [ ] **Step 1: Write the test cases.**
   - `pass`: new rps 95% of old, p99 110%.
@@ -141,6 +142,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
   - `fail on p99`: p99 130%.
   - `median of three`: runs 100, 300, 200 give 200.
   - `missing side`: an API only in new gives `n/a (old)` and does not fail.
+  - `trend`: three files give one row per API with three column pairs, and exit 0.
 - [ ] **Step 2: Run `resty bench/t/compare_test.lua`.** Expected: fails, no `compare.lua`.
 - [ ] **Step 3: Write `compare.lua`.** The thresholds are constants at the top of the file: `MIN_RPS_RATIO = 0.90`, `MAX_P99_RATIO = 1.20`.
 - [ ] **Step 4: Run the test.** Expected: all cases pass.
@@ -153,7 +155,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 
 **Interfaces:**
 - Consumes: `run.sh`, `compare.lua`.
-- Produces: `resty -I <lib> bench/bson_micro.lua` picks an adapter by driver: the new driver has `bson.encode(t)` and `bson.decode(s)`; the old one has `to_bson(t)` and `from_bson(get)`, where `get` is a reader made from the string with `get.lua`. It prints one JSON line for each case: `encode_small`, `decode_small` (the fixture doc), `encode_large`, `decode_large` (a doc with 1,000 string fields). Each line has `ops_per_s` over 2 seconds after 100,000 warm-up loops.
+- Produces: `resty -I <lib> bench/bson_micro.lua` picks an adapter by driver: the new driver has `bson.to_bson(t)` and `bson.decode(s)` (`lib/resty/mongol/bson.lua`); the old one has `to_bson(t)` and `from_bson(get.get_from_string(s))`, using the reader from its `get.lua`. It prints one JSON line for each case: `encode_small`, `decode_small` (the fixture doc), `encode_large`, `decode_large` (a doc with 1,000 string fields). Each line has `ops_per_s` over 2 seconds after 100,000 warm-up loops.
 - Produces: `bench/k8s/run-k8s.sh <ab|trend|all>`. Required variables: `KUBE_CONTEXT`, `MONGO_NODE`, `BENCH_NODE`, `NEW_REF`. Optional: `OLD_REF` (default `3eb6349`). It writes `bench/results/k8s-<date>/` on your machine.
 - Produces: `bench.yaml` paths in the Pod: `/src/old/lib`, `/src/new/lib`, `/src/new/bench`, and `/work` (logs and results), all mounted in both containers. The `wrk` container calls the `nginx` container on `127.0.0.1:8090`. `run-k8s.sh` restarts nginx with a different `MONGOL_LIB` through `kubectl exec -c nginx -- /src/new/bench/ctl.sh ...`, and runs load through `kubectl exec -c wrk -- /src/new/bench/load.sh ...`.
 
@@ -163,8 +165,8 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - [ ] **Step 4: Write `run-k8s.sh`.** Order of work:
   1. If `KUBE_CONTEXT` or a node variable is empty, exit 2 with a usage line.
   2. Create the namespace, apply `mongo.yaml` with tag `4.4`, apply `bench.yaml`, wait for both Pods to be ready.
-  3. Mode `ab`: run `interleaved order` with `RUNS=1`: `old-1`, `new-1`, `old-2`, `new-2`, `old-3`, `new-3`, each one a full pass over all APIs. That gives 3 runs per API per side. Then concatenate `old-1..3.jsonl` into `old.jsonl` and `new-1..3.jsonl` into `new.jsonl`; each line keeps its `label`, and `run` is set to N, so `compare.lua` takes the median of the three lines per API. Run `bson_micro.lua` for both libs.
-  4. Mode `trend`: for each tag `6.0`, `7.0`, `8.0`, `9.0`, replace the Mongo Pod and run `new` once with `RUNS=3`, into `new-<tag>.jsonl`.
+  3. Mode `ab`: run `interleaved order` with `RUNS=1`: `old-1`, `new-1`, `old-2`, `new-2`, `old-3`, `new-3`, each one a full pass over all APIs. That gives 3 runs per API per side. Then concatenate `old-1..3.jsonl` into `old.jsonl` and `new-1..3.jsonl` into `new.jsonl`; each line keeps its `label`. `run-k8s.sh` passes `RUN_BASE=N-1` to `load.sh`, which writes `run = RUN_BASE + i`, so the joined file has runs 1, 2 and 3 and `compare.lua` takes the median of the three lines per API. Run `bson_micro.lua` for both libs.
+  4. Mode `trend`: for each tag `6.0`, `7.0`, `8.0`, `9.0`, replace the Mongo Pod and run `new` once with `RUNS=3`, into `new-<tag>.jsonl`. The `new-1..3.jsonl` lines from `ab` are the 4.4 column. `run-k8s.sh` prints the table from `compare.lua --trend`.
   5. Copy `/src/new/bench/results/` back with `kubectl cp`. Run `compare.lua` on your machine.
   6. Delete the namespace in a `trap`, also when a step fails.
 - [ ] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
