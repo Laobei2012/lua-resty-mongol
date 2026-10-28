@@ -261,7 +261,7 @@ function _M.command ( conn , dbname , cmd , sequences , extra , session )
         session:mark_sent ( )
     end
     local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
-                                           seqinfo , request_id )
+                                           seqinfo , request_id , extra )
     local ok
     ok , err = send ( conn , msg )
     if not ok then
@@ -304,7 +304,7 @@ function _M.send_only ( conn , dbname , cmd , sequences , extra , session )
         session:mark_sent ( )
     end
     local state = mon and monitor.started ( mon , conn , dbname , cmd_bytes ,
-                                           seqinfo , request_id )
+                                           seqinfo , request_id , extra )
     local ok
     ok , err = send ( conn , msg )
     if not ok then

@@ -79,8 +79,12 @@ end
 -- it is a new table with no link to the tables of the caller, and it has
 -- the keys that went on the wire. The kind-1 sequences are merged in under
 -- their identifier.
-local function command_copy ( body , seqinfo )
+local function command_copy ( body , seqinfo , extra )
     local out = decode ( body )
+    -- the fields that the driver adds after $db: $readPreference, lsid ...
+    for _ , kv in ipairs ( extra or { } ) do
+        out [ kv [ 1 ] ] = copy ( kv [ 2 ] )
+    end
     for _ , seq in ipairs ( seqinfo or { } ) do
         local docs = { }
         for i , bytes in ipairs ( seq [ 2 ] ) do
@@ -116,7 +120,7 @@ end
 -- the end events go to the same monitor. An event is built only for a
 -- handler that exists, so that a monitor with one handler pays only for
 -- that handler.
-function _M.started ( mon , conn , dbname , body , seqinfo , request_id )
+function _M.started ( mon , conn , dbname , body , seqinfo , request_id , extra )
     local state = {
         mon = mon ,
         body = body ,
@@ -138,7 +142,7 @@ function _M.started ( mon , conn , dbname , body , seqinfo , request_id )
             request_id = request_id ,
             host = state.host ,
             port = state.port ,
-            command = sensitive ( state ) and { } or command_copy ( body , seqinfo ) ,
+            command = sensitive ( state ) and { } or command_copy ( body , seqinfo , extra ) ,
         } )
     end
     return state

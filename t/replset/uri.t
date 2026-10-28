@@ -310,7 +310,7 @@ nil
             local seen = {}
             mongo.set_monitor({started = function(ev)
                 local rp = ev.command["$readPreference"]
-                seen[#seen + 1] = ev.command_name .. " " .. (ev.port == conn.read_conn.port and "read" or "primary") .. " " .. (rp and rp.mode or "-")
+                seen[#seen + 1] = ev.command_name .. " " .. ((ev.host == conn.read_conn.host and ev.port == conn.read_conn.port) and "read" or "primary") .. " " .. (rp and rp.mode or "-")
             end})
             col:insert({{a = 1}}, nil, true)
             col:find_one({})
