@@ -115,6 +115,25 @@ Connection strings
  - `tls=true` verifies the certificate against the host name, and needs `lua_ssl_trusted_certificate`. Use host names in the string, not IP addresses.
  - Use a `resolver` in `nginx.conf` for host names.
 
+Sessions and transactions
+======
+
+`session = conn:start_session()` makes a logical session. Pass `{session = session}` as the last argument of the collection methods. A transaction needs a replica set and runs on the primary only:
+
+        local session = conn:start_session()
+        session:start_transaction()
+        col:insert({{a = 1}}, nil, nil, {session = session})
+        local ok, err, reply = session:commit_transaction()
+        if not ok then
+            -- reply.errorLabels can hold "UnknownTransactionCommitResult":
+            -- commit again, after conn:connect() if the socket broke
+            session:abort_transaction()
+        end
+
+ - In a transaction every write is acknowledged, and `safe` is ignored.
+ - Do not call `conn:set_keepalive()` while a transaction is open.
+ - Outside a transaction a write with a session must be acknowledged (`safe` true).
+
 Command monitoring
 ======
 

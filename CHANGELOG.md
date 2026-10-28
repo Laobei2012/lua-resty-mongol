@@ -2,6 +2,37 @@
 
 ## Unreleased (Phase 5)
 
+### Sessions and transactions
+
+- `conn:start_session()` is new. It returns a session with an `lsid`. Pass it
+  as `opts.session` (the last argument) of `col:insert`, `col:update`,
+  `col:delete`, `col:query`, `col:getmore`, `col:kill_cursors`, `col:find`,
+  `col:find_one` and `col:aggregate`. A bad session raises `bad argument`,
+  also a session from another connection.
+- `session:start_transaction()`, `session:commit_transaction()` and
+  `session:abort_transaction()` are new (they need a replica set). They
+  return `true`, or `nil, err` (commit and abort also return the reply as a
+  third value). A transaction runs on the primary connection only: it
+  ignores `conn.read_conn` and the read preference.
+- Inside a transaction every write is acknowledged, whatever `safe` says, and
+  returns the value of a safe write. The operations carry no write concern;
+  only commit and abort do. A cursor keeps the session, so each `getMore` has
+  the same `lsid` and `txnNumber`.
+- Outside a transaction a write with a session and a false `safe` returns
+  `nil, "unacknowledged write with a session"` and sends nothing.
+- A commit that fails with a socket error, a timeout, error 50, a
+  `RetryableWriteError` label, or a write concern error other than 79 and 100
+  gets the label `UnknownTransactionCommitResult` in the reply. Commit again
+  with `session:commit_transaction()`: it sends the same `txnNumber` with
+  `w = "majority"`. After a socket error, call `conn:connect()` with no
+  arguments (and `db:auth()` if you use a login) before you commit again.
+- `session:abort_transaction()` ends the transaction whatever the result, so
+  the session can start a new one.
+- `conn:set_keepalive()` returns `nil, "transaction in progress"` while a
+  transaction is open.
+- `col:count` is not part of a transaction. It reads collection metadata and
+  can count the documents of an open transaction; use an aggregation.
+
 ### GridFS
 
 - `gridfs_file:read(size, offset)` honors the offset inside a chunk. Before,
