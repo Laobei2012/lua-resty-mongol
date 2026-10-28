@@ -12,134 +12,71 @@ local gridfs_file_mt = { }
 local gridfs_file = { __index = gridfs_file_mt }
 local get_bin_data = bson.get_bin_data
 
--- write size bytes from the buf string into mongo, by the offset
+-- write size bytes from the buf string into mongo, by the offset.
+-- Chunks that exist are updated, so the bytes around the written range
+-- stay. Chunks that do not exist yet are inserted with one col:insert,
+-- which splits them into batches that fit the server limits.
 function gridfs_file_mt:write(buf, offset, size)
     size = size or string.len(buf)
-    if offset > self.file_size then return nil, "invalid offset" end
+    if offset < 0 or offset > self.file_size then return nil, "invalid offset" end
     if size > #buf then return nil, "invalid size" end
+    if size == 0 then return 0 end
 
-    local cn        -- number of chunks to be updated
-    local af        -- number of bytes to be updated in first chunk
-    local bn = 0    -- bytes number of buf already updated
-    local nv = {}
-    local od, t, r, err
-    local of = offset % self.chunk_size
-    local n = math.floor(offset/self.chunk_size)
+    local cs = self.chunk_size
+    local first = math.floor(offset / cs)
+    local last = math.floor((offset + size - 1) / cs)
 
-    if of == 0 and size % self.chunk_size == 0 then
-        --               chunk1 chunk2 chunk3
-        -- old data      ====== ====== ======
-        -- write buf            ====== ======
-        --
-        -- old data      ====== ====== ======
-        -- write buf     ======
+    -- the chunks that exist in the range
+    local old = {}
+    local cursor = self.chunk_col:find({files_id = self.files_id,
+                                        n = {["$gte"] = first, ["$lte"] = last}})
+    while true do
+        local _, doc = cursor:next()
+        if not doc then break end
+        old[doc.n] = doc.data.v
+    end
 
-        cn = size/self.chunk_size
-        for i = 1, cn do
-            nv["$set"] = {data = get_bin_data(string.sub(buf,
-                            self.chunk_size*(i-1) + 1,
-                            self.chunk_size*(i-1) + self.chunk_size))}
-            r, err = self.chunk_col:update({files_id = self.files_id,
-                                            n = n+i-1}, nv, 1, 0, true)
-            if not r then return nil,"write failed: "..err end
-        end
-        bn = size
-    else
-
-        if of + size > self.chunk_size then
-            --               chunk1 chunk2 chunk3
-            -- old data      ====== ====== ======
-            -- write buf        =======
-            --               ...     -> of
-            --                  ...  -> af
-            af = self.chunk_size - of
+    local inserts = {}
+    local r, err
+    for n = first, last do
+        local chunk_start = n * cs
+        local lo = math.max(offset, chunk_start)
+        local hi = math.min(offset + size, chunk_start + cs)
+        local piece = string.sub(buf, lo - offset + 1, hi - offset)
+        local before = old[n]
+        local data
+        if before then
+            -- keep the bytes before and after the written range
+            data = string.sub(before, 1, lo - chunk_start) .. piece
+                   .. string.sub(before, hi - chunk_start + 1)
+            r, err = self.chunk_col:update({files_id = self.files_id, n = n},
+                        {["$set"] = {data = get_bin_data(data)}}, 0, 0, true)
+            if not r then return nil, "write failed: " .. err end
         else
-            af = size
-        end
-
-        cn = math.ceil((size + offset)/self.chunk_size) - n
-        for i = 1, cn do
-            if i == 1 then
-                od = self.chunk_col:find_one(
-                                {files_id = self.files_id, n = n+i-1})
-                if of ~= 0 and od then
-                    if size + of >= self.chunk_size then
-                        --               chunk1 chunk2 chunk3
-                        -- old data      ====== ====== ======
-                        -- write buf        =====
-                        t = string.sub(od.data.v, 1, of)
-                                .. string.sub(buf, 1, af)
-                    else
-                        --               chunk1 chunk2 chunk3
-                        -- old data      ====== ====== ======
-                        -- write buf        ==
-                        t = string.sub(od.data.v, 1, of)
-                                .. string.sub(buf, 1, af)
-                                .. string.sub(od.data.v, size + of + 1)
-                    end
-                    bn = af
-                elseif of == 0 and od then
-                    if size < self.chunk_size then
-                        --               chunk1 chunk2 chunk3
-                        -- old data      ====== ====== ======
-                        -- write buf     ===
-                        t = string.sub(buf, 1)
-                                .. string.sub(od.data.v, size + 1)
-                        bn = bn + size
-                    else
-                        --               chunk1 chunk2 chunk3
-                        -- old data      ====== ====== ======
-                        -- write buf     =========
-                        t = string.sub(buf, 1, self.chunk_size)
-                        bn = bn + self.chunk_size
-                    end
-                else
-                    t = string.sub(buf, 1, self.chunk_size)
-                    bn = bn + #t --self.chunk_size
-                end
-                nv["$set"] = {data = get_bin_data(t)}
-                r,err = self.chunk_col:update({files_id = self.files_id,
-                                            n = n+i-1}, nv, 1, 0, true)
-                if not r then return nil,"write failed: "..err end
-            elseif i == cn then
-                od = self.chunk_col:find_one(
-                                {files_id = self.files_id, n = n + i - 1}
-                            )
-                if od then
-                    t = string.sub(buf, bn + 1, size)
-                                .. string.sub(od.data.v, size - bn + 1)
-                else
-                    t = string.sub(buf, bn + 1, size)
-                end
-                nv["$set"] = {data = get_bin_data(t)}
-                r,err = self.chunk_col:update({files_id = self.files_id,
-                                            n = n+i-1}, nv, 1, 0, true)
-                if not r then return nil,"write failed: "..err end
-                bn = size
-            else
-                nv["$set"] = {data = get_bin_data(string.sub(buf,
-                                        bn + 1, bn + self.chunk_size))}
-                r,err = self.chunk_col:update({files_id = self.files_id,
-                                        n = n+i-1}, nv, 1, 0, true)
-                if not r then return nil,"write failed: "..err end
-                bn = bn + self.chunk_size
-            end
+            inserts[#inserts + 1] = {files_id = self.files_id,
+                                     n = bson.int32(n),
+                                     data = get_bin_data(piece)}
         end
     end
-
-    local nf = offset + bn
-    if nf > self.file_size then
-        nv["$set"] = {length = nf}
-        r,err = self.file_col:update({_id = self.files_id},nv,
-                        0, 0, true)
-        if not r then return nil,"write failed: "..err end
+    if #inserts > 0 then
+        r, err = self.chunk_col:insert(inserts, nil, true)
+        if not r then return nil, "write failed: " .. err end
     end
 
-    nv["$set"] = {md5 = 0}
-    r,err = self.file_col:update({_id = self.files_id},nv,
-                        0, 0, true)
-    if not r then return nil,"write failed: "..err end
-    return bn
+    -- the length, and the md5 is not valid any more
+    local set = {md5 = 0}
+    local new_size = offset + size
+    if new_size > self.file_size then
+        set.length = bson.int64(new_size)
+    end
+    r, err = self.file_col:update({_id = self.files_id}, {["$set"] = set},
+                                  0, 0, true)
+    if not r then return nil, "write failed: " .. err end
+    if new_size > self.file_size then
+        self.file_size = new_size
+    end
+    self.file_md5 = 0
+    return size
 end
 
 -- read size bytes from mongo by the offset; size defaults to the rest of
