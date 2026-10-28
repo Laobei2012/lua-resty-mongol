@@ -5,7 +5,6 @@ local _M = { _VERSION = "1.0.0" }
 local error = error
 local ipairs = ipairs
 local type = type
-local tonumber = tonumber
 local setmetatable = setmetatable
 
 local socket = ngx.socket.tcp
@@ -55,9 +54,14 @@ function connmethods:ismaster()
     return r.isWritablePrimary, r.hosts
 end
 
+-- "host:port" or "[ipv6]:port" as the members of hello are named; the same
+-- parser as for the URI. Returns host, port | nil.
 local function parse_host ( str )
-    local host , port = str:match ( "([^:]+):?(%d*)" )
-    return host , tonumber ( port ) or 27017
+    local h = uri.parse_host ( str )
+    if not h then
+        return nil
+    end
+    return h.host , h.port
 end
 
 function connmethods:getprimary ( searched )
@@ -85,6 +89,9 @@ function connmethods:getprimary ( searched )
             if not searched[v] then
                 searched[v] = true
                 local host, port = parse_host(v)
+                if not host then
+                    return nil, "invalid member name: " .. v
+                end
                 local conn = new()
                 local ok, err = conn:connect(host, port, discovery_opts)
                 if not ok then
@@ -354,7 +361,10 @@ function _M.connect_uri ( str )
         local members = consider ( h.host , h.port )
         if primary then break end
         for _ , m in ipairs ( members or { } ) do
-            consider ( parse_host ( m ) )
+            local mhost , mport = parse_host ( m )
+            if mhost then
+                consider ( mhost , mport )
+            end
             if primary then break end
         end
         if primary then break end
@@ -374,7 +384,11 @@ function _M.connect_uri ( str )
         local read_conn
         for _ , m in ipairs ( hello.hosts or { } ) do
             if m ~= hello.me then
-                local conn , r = try_host ( u , parse_host ( m ) )
+                local mhost , mport = parse_host ( m )
+                local conn , r
+                if mhost then
+                    conn , r = try_host ( u , mhost , mport )
+                end
                 if conn and r.secondary then
                     read_conn = conn
                     break
