@@ -5,6 +5,7 @@ local setmetatable = setmetatable
 local ngx = ngx
 local string = string
 local type = type
+local error = error
 local math = math
 local tostring = tostring
 

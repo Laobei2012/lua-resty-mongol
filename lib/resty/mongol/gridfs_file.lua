@@ -2,6 +2,7 @@ local mod_name = (...):match ( "^(.*)%..-$" )
 
 local string = string
 local type = type
+local error = error
 local math = math
 local table = table
 
