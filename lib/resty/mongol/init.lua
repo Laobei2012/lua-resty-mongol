@@ -38,6 +38,18 @@ end
 function connmethods:getprimary ( searched )
     searched = searched or { [ self.host .. ":" .. self.port ] = true }
 
+    -- the hosts that hello names use the TLS options of the seed, but not
+    -- its pool name, which belongs to the seed
+    local discovery_opts
+    local sopts = self.opts
+    if sopts and sopts.ssl then
+        discovery_opts = {
+            ssl = true,
+            ssl_verify = sopts.ssl_verify,
+            ssl_server_name = sopts.ssl_server_name,
+        }
+    end
+
     local db = self:new_db_handle("admin")
     local r, err = db:cmd({ hello = 1 })
     if not r then
@@ -49,7 +61,7 @@ function connmethods:getprimary ( searched )
                 searched[v] = true
                 local host, port = parse_host(v)
                 local conn = new()
-                local ok, err = conn:connect(host, port)
+                local ok, err = conn:connect(host, port, discovery_opts)
                 if not ok then
                     return nil, "connect failed: "..err..v
                 end
