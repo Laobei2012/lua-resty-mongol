@@ -15,6 +15,9 @@
   the command. Without a monitor, each command does one check.
 - `succeeded` means that the command succeeded, not that the write
   succeeded. A reply with `writeErrors` is a succeeded command.
+- The `command` of an event is decoded from the bytes that the driver sent, so
+  it has the keys that went on the wire. `bson.null` and empty arrays keep
+  their meaning in events, and a hook cannot change the tables of the caller.
 
 ### Aggregation
 
