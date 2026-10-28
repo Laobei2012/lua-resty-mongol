@@ -165,7 +165,7 @@ function connmethods:set_keepalive(...)
     if self.broken then
         return nil, "closed"
     end
-    if self.active_session then
+    if self.active_sessions then
         return nil, "transaction in progress"
     end
 

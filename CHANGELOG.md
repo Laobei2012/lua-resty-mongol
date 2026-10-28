@@ -4,6 +4,9 @@
 
 ### Sessions and transactions
 
+- `conn:set_keepalive()` rejects pooling until every session's open
+  transaction finishes. Previously only the last session was tracked, so
+  finishing its transaction could pool a socket while another remained open.
 - Non-table collection options raise `bad argument` before I/O. Previously
   some values caused an indexing error or were silently accepted, hiding
   caller mistakes in the optional session argument.

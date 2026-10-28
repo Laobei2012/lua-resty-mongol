@@ -7,6 +7,7 @@ local mod_name = (...):match ( "^(.*)%..-$" )
 local getmetatable , setmetatable = getmetatable , setmetatable
 local ipairs , unpack = ipairs , unpack
 local type = type
+local next = next
 
 local resty_random = require "resty.random"
 
@@ -50,8 +51,12 @@ end
 
 local function finish ( self , state )
     self.state = state
-    if self.conn.active_session == self then
-        self.conn.active_session = nil
+    local sessions = self.conn.active_sessions
+    if sessions then
+        sessions [ self ] = nil
+        if next ( sessions ) == nil then
+            self.conn.active_sessions = nil
+        end
     end
 end
 
@@ -83,7 +88,9 @@ function methods:start_transaction ( )
     end
     self.txn_number = self.txn_number + 1
     self.state = "starting"
-    self.conn.active_session = self
+    local sessions = self.conn.active_sessions or { }
+    sessions [ self ] = true
+    self.conn.active_sessions = sessions
     return true
 end
 
