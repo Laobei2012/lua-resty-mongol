@@ -5,8 +5,8 @@ It supports MongoDB 6.0, 7.0, 8.0 and 9.0 through `OP_MSG`, with CRUD,
 SCRAM authentication, TLS, aggregation, replica-set reads, GridFS, sessions
 and transactions. Based on [daurnimator's Mongol](https://github.com/daurnimator/mongol).
 
-**Release status:** this branch prepares **1.0.0**. It is unreleased; merged
-implementation phases are not separate published releases. Read the
+**Release:** **1.0.0** consolidates all modernization phases into one major
+release. Read the
 [migration guide](#migration-to-100) before upgrading an older application.
 
 ## Table of contents
@@ -67,9 +67,9 @@ luarocks make lua-resty-mongol-1.0.0-1.rockspec
 Add the LuaRocks tree's `share/lua/5.1/?.lua` and
 `share/lua/5.1/?/init.lua` patterns to `lua_package_path` if it is a separate
 tree. LuaRocks installs the modules; OpenResty remains the required runtime.
-The rockspec pins an existing source commit for the unreleased candidate.
-OPM metadata is provided for local `opm build`; no registry installation or
-published `1.0.0` package is assumed here.
+The rockspec pins the `v1.0.0` source tag. OPM metadata supports local
+`opm build`. Registry publication is separate from the GitHub release;
+these source-installation instructions do not require registry availability.
 
 ## Synopsis
 
@@ -605,8 +605,8 @@ opm build
 ```
 
 The builtin rockspec lists every module explicitly. OPM reads `1.0.0` from
-`lib/resty/mongol/init.lua`; locally built candidate packages are not a
-release announcement. [OPM metadata](https://opm.openresty.org/docs#file-distini)
+`lib/resty/mongol/init.lua`. Building a package locally does not publish it.
+[OPM metadata](https://opm.openresty.org/docs#file-distini)
 and the [LuaRocks rockspec format](https://github.com/luarocks/luarocks/blob/main/docs/rockspec_format.md)
 describe the packaging fields.
 
