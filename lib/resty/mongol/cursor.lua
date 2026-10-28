@@ -2,7 +2,6 @@ local mod_name = (...):match ( "^(.*)%..-$" )
 
 local setmetatable = setmetatable
 local getmetatable = getmetatable
-local assert = assert
 local next = next
 local table = table
 local t_insert = table.insert
@@ -14,6 +13,7 @@ local wire = require ( mod_name .. ".wire" )
 local ll = require ( mod_name .. ".ll" )
 local int64_to_le = ll.int64_to_le
 
+local error = error
 local type = type
 local ZERO_ID = "\0\0\0\0\0\0\0\0"
 
@@ -95,15 +95,22 @@ cursor_mt.__tostring = function ( ob )
     return "CursorId(" .. t_concat ( t ) .. ")"
 end
 
+local function check_count(name, n)
+    if type(n) ~= "number" or n < 0 or n ~= n - n % 1 then
+        error("bad argument #1 to '" .. name
+              .. "' (non-negative integer expected)", 3)
+    end
+end
+
 function cursor_methods:limit(n)
-    assert(n)
+    check_count("limit", n)
     if self.started then return nil, "cursor already started" end
     self.limit_n = n
     return true
 end
 
 function cursor_methods:skip(n)
-    assert(n)
+    check_count("skip", n)
     if self.started then return nil, "cursor already started" end
     self.skip_n = n
     return true
