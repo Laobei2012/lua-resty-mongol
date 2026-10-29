@@ -1,0 +1,8 @@
+# Copy to environment.local (ignored), fill from verified Teleport context/nodes.
+# Authenticate separately with tsh kube login <cluster> before running.
+export KUBE_CONTEXT='<exact-context>'
+export MONGO_NODE='<mongo-node>'
+export BENCH_NODE='<different-bench-node>'
+# Push the complete benchmark implementation first; use its full commit SHA.
+export NEW_REF='<pushed-40-character-commit-sha>'
+export OLD_REF='3eb6349db4d30b11aab271fb14a82b8504f6aa8e'

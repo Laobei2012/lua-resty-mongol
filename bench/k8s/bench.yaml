@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bench
+  namespace: mongol-bench
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: "${BENCH_NODE}"
+  initContainers:
+    - name: clone
+      image: alpine/git:2.47.2
+      command: ["/bin/sh", "-ec"]
+      args:
+        - |
+          for side in old new; do
+            if [ "$side" = old ]; then ref="$OLD_SHA"; else ref="$NEW_SHA"; fi
+            git init "/src/$side"
+            git -C "/src/$side" fetch --depth=1 "$REPOSITORY" "$ref"
+            git -C "/src/$side" checkout --detach FETCH_HEAD
+            test "$(git -C "/src/$side" rev-parse HEAD)" = "$ref"
+          done
+      env:
+        - name: OLD_SHA
+          value: "${OLD_SHA}"
+        - name: NEW_SHA
+          value: "${NEW_SHA}"
+        - name: REPOSITORY
+          value: https://github.com/Laobei2012/lua-resty-mongol
+      resources:
+        requests:
+          cpu: 200m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+      volumeMounts:
+        - name: src
+          mountPath: /src
+  containers:
+    - name: nginx
+      image: openresty/openresty:1.31.1.1-jammy
+      command: ["/bin/bash", "-ec"]
+      args:
+        - |
+          apt-get update
+          apt-get install -y --no-install-recommends gettext-base git curl
+          touch /work/nginx-ready
+          exec sleep infinity
+      resources:
+        requests:
+          cpu: "1"
+          memory: 512Mi
+        limits:
+          cpu: "1"
+          memory: 512Mi
+      readinessProbe:
+        exec:
+          command: ["test", "-f", "/work/nginx-ready"]
+        periodSeconds: 2
+      volumeMounts:
+        - name: src
+          mountPath: /src
+        - name: work
+          mountPath: /work
+    - name: wrk
+      image: ubuntu:22.04
+      command: ["/bin/bash", "-ec"]
+      args:
+        - |
+          apt-get update
+          apt-get install -y --no-install-recommends wrk curl ca-certificates
+          touch /work/wrk-ready
+          exec sleep infinity
+      resources:
+        requests:
+          cpu: "2"
+          memory: 512Mi
+        limits:
+          cpu: "2"
+          memory: 512Mi
+      readinessProbe:
+        exec:
+          command: ["test", "-f", "/work/wrk-ready"]
+        periodSeconds: 2
+      volumeMounts:
+        - name: src
+          mountPath: /src
+        - name: work
+          mountPath: /work
+  volumes:
+    - name: src
+      emptyDir: {}
+    - name: work
+      emptyDir: {}

@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mongo
+  namespace: mongol-bench
+  labels:
+    app: mongol-bench-mongo
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: "${MONGO_NODE}"
+  containers:
+    - name: mongo
+      image: mongo:${MONGO_TAG}
+      args: ["--wiredTigerCacheSizeGB", "1.5"]
+      env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: admin
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          value: admin
+      ports:
+        - containerPort: 27017
+      resources:
+        requests:
+          cpu: "2"
+          memory: 4Gi
+          ephemeral-storage: 12Gi
+        limits:
+          cpu: "2"
+          memory: 4Gi
+          ephemeral-storage: 12Gi
+      readinessProbe:
+        tcpSocket:
+          port: 27017
+        periodSeconds: 2
+      volumeMounts:
+        - name: data
+          mountPath: /data/db
+  volumes:
+    - name: data
+      emptyDir:
+        sizeLimit: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: mongol-bench
+spec:
+  selector:
+    app: mongol-bench-mongo
+  ports:
+    - port: 27017
+      targetPort: 27017

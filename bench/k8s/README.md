@@ -1,0 +1,33 @@
+Run from a host with Bash, kubectl, git, gettext `envsubst`, and OpenResty `resty`.
+Authenticate through Teleport, verify the exact context and both node hostnames,
+then copy `environment.example` to `environment.local` and fill its values.
+The file is ignored; do not commit cluster details. Push the complete benchmark
+implementation and set NEW_REF to that commit before starting.
+
+```bash
+source bench/k8s/environment.local
+bench/k8s/run-k8s.sh all
+```
+
+`all` takes about 2 hours 10 minutes. Run it three separate times for the first
+report. Each invocation creates a unique local `bench/results/k8s-*` directory.
+`ab` runs old/new alternately three times on Mongo 4.4; `trend` runs three measured
+samples on each of Mongo 6, 7, 8, and 9. Warm-up is always 10 seconds and each
+measured sample is 30 seconds with two wrk threads and 32 connections.
+
+The script creates only `mongol-bench` and refuses an existing namespace. Every
+kubectl operation uses KUBE_CONTEXT explicitly. It copies all shared results,
+wrk output, nginx logs and pod diagnostics before deleting its own namespace.
+If copying fails it saves diagnostics, deletes its namespace, and exits nonzero.
+Threshold failures exit nonzero after all trends finish and results are saved.
+The Mongo and bench pods need separate nodes, outbound GitHub/Ubuntu access, and
+the resource capacity specified in the manifests. No custom image is needed.
+
+`bson_micro.lua` also runs directly with
+`resty -I /path/to/driver/lib bench/bson_micro.lua`. Its four cases each warm up
+for 100,000 operations and then measure for two seconds. Large-case warm-up can
+take several minutes on the old driver.
+
+The runner falls back from kubectl cp to a tar stream before cleanup. If both
+methods fail, shared files cannot be recovered; local pod and container diagnostics
+remain available. Cleanup still deletes the owned namespace and the run fails.
