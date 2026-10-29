@@ -1,0 +1,41 @@
+# Bench server. ctl.sh (smoke.sh until Task 2) renders this file with
+# envsubst '$MONGOL_LIB $BENCH_DIR' into <prefix>/conf/nginx.conf, because
+# lua_package_path does not expand environment variables.
+worker_processes 1;
+error_log logs/error.log warn;
+pid logs/nginx.pid;
+
+env MONGO_HOST;
+env MONGO_PORT;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    access_log off;
+    lua_code_cache on;
+    lua_package_path "${MONGOL_LIB}/?.lua;${MONGOL_LIB}/?/init.lua;${BENCH_DIR}/?.lua;;";
+
+    init_worker_by_lua_block {
+        math.randomseed(ngx.now() * 1000 + ngx.worker.pid())
+    }
+
+    server {
+        listen 8090;
+
+        location = /ping { content_by_lua_block { require("handlers").ping() } }
+        location = /find_one { content_by_lua_block { require("handlers").find_one() } }
+        location = /find_100 { content_by_lua_block { require("handlers").find_100() } }
+        location = /count { content_by_lua_block { require("handlers").count() } }
+        location = /insert_1 { content_by_lua_block { require("handlers").insert_1() } }
+        location = /insert_100 { content_by_lua_block { require("handlers").insert_100() } }
+        location = /update { content_by_lua_block { require("handlers").update() } }
+        location = /delete_insert { content_by_lua_block { require("handlers").delete_insert() } }
+        location = /find_and_modify { content_by_lua_block { require("handlers").find_and_modify() } }
+        location = /gridfs_read { content_by_lua_block { require("handlers").gridfs_read() } }
+        location = /auth { content_by_lua_block { require("handlers").auth() } }
+        location = /connect_nopool { content_by_lua_block { require("handlers").connect_nopool() } }
+        location = /reuse { content_by_lua_block { require("handlers").reuse() } }
+    }
+}
