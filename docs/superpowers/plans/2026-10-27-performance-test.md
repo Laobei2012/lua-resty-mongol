@@ -21,7 +21,7 @@
 - Handlers check results in a way that is true for both drivers. Insert handlers check only that the result is not `nil`: the old `insert(..., safe)` returns `getlasterror.n`, which is 0 for inserts. Build every `options` or document table inside the handler, once per request. The old `find_and_modify` changes its `options` table (it sets `options.findAndModify`), so a table defined at module level must never be reused.
 - Nginx: `worker_processes 1`, `lua_code_cache on`, `access_log off`, `error_log` at `warn`.
 - Connection reuse: every handler ends with `conn:set_keepalive(10000, 100)`. The `connect_nopool` location is the only exception.
-- Load: `wrk -t2 -c32 -d30s --latency` after a 10 second warm-up. Three runs for each API. The report uses the median run.
+- Load: `wrk -t1 -c8 --timeout 10s -d30s --latency` after a 10 second warm-up. Three runs for each API. The report uses the median run. This constrained profile uses a ten second request timeout; any timeout still invalidates the run.
 - Pass threshold (owner decision, 2026-10-27): for each API on `mongo:4.4`, new req/s is at least 90% of old req/s. New p99 latency is at most 120% of old p99.
 - Cluster: Kubernetes, reached through Teleport. `run-k8s.sh` requires `KUBE_CONTEXT` and passes `--context "$KUBE_CONTEXT"` to every `kubectl` call. It never uses the current context.
 - Namespace: `mongol-bench`, created and deleted by `run-k8s.sh`. The script changes no other namespace.
@@ -123,7 +123,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - [x] **Step 1: Write the checks in `ctl.sh` as subcommands that exit non-zero.** Case `reuse check`: after the `/find_one` run, `curl /reuse` returns a reused count above 0. Also, `ctl.sh check-conns` (which runs `resty bench/server_status.lua`; no Mongo shell is needed) reports `connections.current` at most 105. Other cases: `reseed between APIs` (the count of `read` is 1,000 before each API), `error log clean` (no `[error]` line in `error.log`).
 - [x] **Step 2: Write `wrk_report.lua`.** It uses `done(summary, latency, requests)` and prints the JSON line to stdout. The latency values come from `latency:percentile(50)` and so on, converted from microseconds to milliseconds.
 - [x] **Step 3: Write `ctl.sh`, `load.sh` and `run.sh`.** For each API: `ctl.sh seed` (drops and re-seeds the `read`, `write`, `fs.files` and `fs.chunks` collections; keeps the database and the `bench` user), `load.sh` (warm up for 10 seconds, `RUNS` wrk runs of 30 seconds, append each line), `ctl.sh check-log`. `run.sh` starts nginx once with `ctl.sh start` and stops it on exit with a `trap`.
-- [x] **Step 4: Run `bench/run.sh new-local find_one ping` against `mongo:4.4`.** Expected: 6 lines in `results/new-local.jsonl`, `non2xx` is 0, and the script exits 0.
+- [ ] **Step 4: Run `bench/run.sh new-local find_one ping` against `mongo:4.4`.** Expected: 6 lines in `results/new-local.jsonl`, `non2xx` is 0, and the script exits 0. The earlier live check passed with `-t2 -c32`; repeat with the current `-t1 -c8 --timeout 10s` profile before marking this step complete.
 - [x] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on the scripts, then commit** `test(bench): add wrk runner and JSON report`.
 
 ## Task 3: Compare and report

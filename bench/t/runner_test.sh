@@ -69,9 +69,9 @@ grep -q '"driver_sha":"0000000000000000000000000000000000000001"' \
   "$WORK/results/test.jsonl" || fail 'driver identity'
 grep -q '"mongo_version":"4.4.29"' \
   "$WORK/results/test.jsonl" || fail 'server identity'
-[[ $(grep -c -- '-t2 -c32 -d30s --latency' "$TEST_CALLS") == 3 ]] \
+[[ $(grep -c -- '-t1 -c8 --timeout 10s -d30s --latency' "$TEST_CALLS") == 3 ]] \
   || fail 'measured defaults'
-[[ $(grep -c -- '-t2 -c32 -d10s --latency' "$TEST_CALLS") == 1 ]] \
+[[ $(grep -c -- '-t1 -c8 --timeout 10s -d10s --latency' "$TEST_CALLS") == 1 ]] \
   || fail 'warmup defaults'
 printf 'ok - report, run numbering, metadata and load defaults\n'
 for mode in redirect socket status empty log; do

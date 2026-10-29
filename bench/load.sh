@@ -62,14 +62,14 @@ main() {
   trap 'rm -rf -- "${TEMPORARY:?}"' EXIT
   # Warm-up uses the same response/error validation as a measured run.
   export BENCH_RUN=0
-  wrk -t2 -c32 -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
+  wrk -t1 -c8 --timeout 10s -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
     "$URL/$api" > "$WORK/logs/$label-$api-warmup.log" 2>&1
   check_log
   local i report
   for ((i = 1; i <= runs; i++)); do
     export BENCH_RUN=$((RUN_BASE + i))
     report=$WORK/logs/$label-$api-$BENCH_RUN.log
-    wrk -t2 -c32 -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
+    wrk -t1 -c8 --timeout 10s -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
       "$URL/$api" > "$report" 2>&1
     check_log
     # wrk's human summary shares stdout with done(); only keep its JSON.

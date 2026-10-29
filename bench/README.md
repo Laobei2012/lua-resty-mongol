@@ -13,7 +13,9 @@ MONGOL_LIB=/path/to/new/lib MONGO_HOST=127.0.0.1 \
 
 With no API arguments, `run.sh` measures all twelve APIs. Each API gets
 fresh fixtures, a ten second warm-up, and three thirty second runs with
-`wrk -t2 -c32 --latency`. `RUNS` changes the number of measured runs.
+`wrk -t1 -c8 --timeout 10s --latency`. `RUNS` changes the number of measured runs.
+The ten second request timeout accommodates the constrained CPU profile;
+any timeout still invalidates the run.
 The coordinator checks socket reuse after `find_one`, the Mongo connection
 limit after every API, and the nginx error log. It stops nginx on exit.
 A label identifies one pass; `run.sh` rejects an existing result file.
