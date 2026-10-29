@@ -120,11 +120,11 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - Produces: `bench/run.sh <label> [api ...]`. With no API names, it runs all of them. `RUNS` (default 3) sets the wrk runs for each API. It writes `$WORK/results/<label>.jsonl`.
 - Produces: one JSON line for each run: `{"label", "driver_sha", "mongo_version", "api", "run", "rps", "p50_ms", "p90_ms", "p99_ms", "non2xx", "socket_errors"}`.
 
-- [ ] **Step 1: Write the checks in `ctl.sh` as subcommands that exit non-zero.** Case `reuse check`: after the `/find_one` run, `curl /reuse` returns a reused count above 0. Also, `ctl.sh check-conns` (which runs `resty bench/server_status.lua`; no Mongo shell is needed) reports `connections.current` at most 105. Other cases: `reseed between APIs` (the count of `read` is 1,000 before each API), `error log clean` (no `[error]` line in `error.log`).
-- [ ] **Step 2: Write `wrk_report.lua`.** It uses `done(summary, latency, requests)` and prints the JSON line to stdout. The latency values come from `latency:percentile(50)` and so on, converted from microseconds to milliseconds.
-- [ ] **Step 3: Write `ctl.sh`, `load.sh` and `run.sh`.** For each API: `ctl.sh seed` (drops and re-seeds the `read`, `write`, `fs.files` and `fs.chunks` collections; keeps the database and the `bench` user), `load.sh` (warm up for 10 seconds, `RUNS` wrk runs of 30 seconds, append each line), `ctl.sh check-log`. `run.sh` starts nginx once with `ctl.sh start` and stops it on exit with a `trap`.
-- [ ] **Step 4: Run `bench/run.sh new-local find_one ping` against `mongo:4.4`.** Expected: 6 lines in `results/new-local.jsonl`, `non2xx` is 0, and the script exits 0.
-- [ ] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on the scripts, then commit** `test(bench): add wrk runner and JSON report`.
+- [x] **Step 1: Write the checks in `ctl.sh` as subcommands that exit non-zero.** Case `reuse check`: after the `/find_one` run, `curl /reuse` returns a reused count above 0. Also, `ctl.sh check-conns` (which runs `resty bench/server_status.lua`; no Mongo shell is needed) reports `connections.current` at most 105. Other cases: `reseed between APIs` (the count of `read` is 1,000 before each API), `error log clean` (no `[error]` line in `error.log`).
+- [x] **Step 2: Write `wrk_report.lua`.** It uses `done(summary, latency, requests)` and prints the JSON line to stdout. The latency values come from `latency:percentile(50)` and so on, converted from microseconds to milliseconds.
+- [x] **Step 3: Write `ctl.sh`, `load.sh` and `run.sh`.** For each API: `ctl.sh seed` (drops and re-seeds the `read`, `write`, `fs.files` and `fs.chunks` collections; keeps the database and the `bench` user), `load.sh` (warm up for 10 seconds, `RUNS` wrk runs of 30 seconds, append each line), `ctl.sh check-log`. `run.sh` starts nginx once with `ctl.sh start` and stops it on exit with a `trap`.
+- [x] **Step 4: Run `bench/run.sh new-local find_one ping` against `mongo:4.4`.** Expected: 6 lines in `results/new-local.jsonl`, `non2xx` is 0, and the script exits 0.
+- [x] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on the scripts, then commit** `test(bench): add wrk runner and JSON report`.
 
 ## Task 3: Compare and report
 

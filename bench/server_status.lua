@@ -25,10 +25,26 @@ ok, err = db:auth(ADMIN_USER, ADMIN_PASSWORD)
 if not ok then
     die("admin login", err)
 end
+local mode = arg[1]
+local command = { serverStatus = 1 }
+if mode == "--version" then
+    command = { buildInfo = 1 }
+elseif mode == "--read-count" then
+    db = conn:new_db_handle("bench")
+    command = { count = "read" }
+elseif mode ~= nil then
+    die("argument", "expected --version or --read-count")
+end
 local r
-r, err = db:cmd({ serverStatus = 1 })
+r, err = db:cmd(command)
 if not r then
     die("serverStatus", err)
 end
 conn:close()
-print(r.connections.current)
+if mode == "--version" then
+    print(r.version)
+elseif mode == "--read-count" then
+    print(r.n)
+else
+    print(r.connections.current)
+end

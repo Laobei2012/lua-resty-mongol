@@ -1,4 +1,4 @@
-# Bench server. ctl.sh (smoke.sh until Task 2) renders this file with
+# Bench server. ctl.sh renders this file with
 # envsubst '$MONGOL_LIB $BENCH_DIR' into <prefix>/conf/nginx.conf, because
 # lua_package_path does not expand environment variables.
 worker_processes 1;
