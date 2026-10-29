@@ -137,17 +137,17 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - Produces: `resty bench/compare.lua <old.jsonl> <new.jsonl>` prints a Markdown table: API, old rps, new rps, ratio, old p99, new p99, ratio, result. If any API is `fail`, it exits 1.
 - Produces: `resty bench/compare.lua --trend <new-4.4.jsonl> <new-6.0.jsonl> ...` prints one row per API and one column pair (median rps, median p99) per file, labelled by the file's `mongo_version`. It has no pass or fail and always exits 0. Task 5 uses it for the trend table.
 
-- [ ] **Step 1: Write the test cases.**
+- [x] **Step 1: Write the test cases.**
   - `pass`: new rps 95% of old, p99 110%.
   - `fail on rps`: new rps 85%.
   - `fail on p99`: p99 130%.
   - `median of three`: runs 100, 300, 200 give 200.
   - `missing side`: an API only in new gives `n/a (old)` and does not fail.
   - `trend`: three files give one row per API with three column pairs, and exit 0.
-- [ ] **Step 2: Run `resty bench/t/compare_test.lua`.** Expected: fails, no `compare.lua`.
-- [ ] **Step 3: Write `compare.lua`.** The thresholds are constants at the top of the file: `MIN_RPS_RATIO = 0.90`, `MAX_P99_RATIO = 1.20`.
-- [ ] **Step 4: Run the test.** Expected: all cases pass.
-- [ ] **Step 5: Commit** `test(bench): add result compare script`.
+- [x] **Step 2: Run `resty bench/t/compare_test.lua`.** Expected: fails, no `compare.lua`. The absence control was verified after implementation in a temporary copy.
+- [x] **Step 3: Write `compare.lua`.** The thresholds are constants at the top of the file: `MIN_RPS_RATIO = 0.90`, `MAX_P99_RATIO = 1.20`.
+- [x] **Step 4: Run the test.** Expected: all cases pass. Verified 86 checks on OpenResty 1.31.1.1.
+- [x] **Step 5: Commit** `test(bench): add result compare script`.
 
 ## Task 4: BSON micro benchmark and Kubernetes runner
 
