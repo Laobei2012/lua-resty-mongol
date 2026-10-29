@@ -239,12 +239,20 @@ main() {
   kube -n "$NAMESPACE" apply -f "$RESULT_DIR/bench.yaml"
   kube -n "$NAMESPACE" wait --for=condition=Ready pod/bench --timeout=900s
   wait_mongo
-  local openresty_version wrk_version
+  local openresty_version wrk_version wrk_banner
   openresty_version=$(ctl nginx -v 2>&1 | sed -n 's/.*openresty\/\([0-9.]*\).*/\1/p')
-  wrk_version=$(kube -n "$NAMESPACE" exec bench -c wrk -- wrk --version \
-    | sed -n 's/^wrk \([0-9.]*\).*/\1/p')
-  [[ $openresty_version =~ ^[0-9]+(\.[0-9]+){3}$ &&
-    $wrk_version =~ ^[0-9]+(\.[0-9]+){2}$ ]] || die "cannot identify benchmark tools"
+  # wrk 4.1.0 prints its version then exits 1 without a URL. Normalize that
+  # inside the pod so kubectl/transport errors still fail the outer command.
+  # shellcheck disable=SC2016 # status expands inside the pod
+  wrk_banner=$(kube -n "$NAMESPACE" exec bench -c wrk -- sh -c '
+    wrk --version
+    status=$?
+    case "$status" in 0|1) exit 0;; *) exit "$status";; esac')
+  # Ubuntu packages prefix the upstream version with debian/ and add a revision.
+  [[ $wrk_banner =~ ^wrk\ (debian/)?([0-9]+\.[0-9]+\.[0-9]+)(-[[:alnum:].+~]+)?([[:space:]].*)?$ ]] \
+    || die "cannot identify benchmark tools"
+  wrk_version=${BASH_REMATCH[2]}
+  [[ $openresty_version =~ ^[0-9]+(\.[0-9]+){3}$ ]] || die "cannot identify benchmark tools"
   printf '{"openresty":"%s","wrk":"%s"}\n' "$openresty_version" "$wrk_version" \
     > "$RESULT_DIR/tool-versions.json"
   if [[ $mode == ab || $mode == all ]]; then

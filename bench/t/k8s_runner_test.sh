@@ -43,8 +43,14 @@ elif [[ ${1:-} == get && ${2:-} == namespace ]]; then
   if [[ ${SCENARIO:-} == changed ]]; then printf 'other-uid'; else printf 'owned-uid'; fi
 elif [[ " $* " == *' nginx -v '* ]]; then
   printf 'nginx version: openresty/1.31.1.1\n' >&2
-elif [[ " $* " == *' wrk --version '* ]]; then
-  printf 'wrk 4.1.0\n'
+elif [[ " $* " == *'wrk --version'* ]]; then
+  if [[ ${SCENARIO:-} == wrk-transport-fail ]]; then
+    printf 'wrk debian/4.1.0-3build1 [epoll] Copyright (C) 2012 Will Glozer\n'
+    exit 1
+  fi
+  while [[ $1 != -- ]]; do shift; done
+  shift
+  "$@"
 elif [[ ${SCENARIO:-} == delete-fail && ${1:-} == delete ]]; then
   exit 1
 elif [[ " $* " == *'cat /sys/fs/cgroup/cpu.stat'* ]]; then
@@ -58,6 +64,22 @@ elif [[ " $* " == *' tar -C /work '* ]]; then
 elif [[ ${SCENARIO:-} == load-fail && " $* " == *'/load.sh '* ]]; then
   exit 1
 fi
+MOCK
+cat > "$TEMPORARY/bin/wrk" << 'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ $* == --version ]]
+case ${SCENARIO:-} in
+  wrk-empty) exit 1 ;;
+  wrk-malformed) printf 'wrk 4.1.0invalid [epoll]\n' ;;
+  wrk-upstream) printf 'wrk 4.1.0 [epoll] Copyright (C) 2012 Will Glozer\n' ;;
+  *) printf 'wrk debian/4.1.0-3build1 [epoll] Copyright (C) 2012 Will Glozer\n' ;;
+esac
+case ${SCENARIO:-} in
+  wrk-zero) exit 0 ;;
+  wrk-fail) exit 2 ;;
+  *) exit 1 ;;
+esac
 MOCK
 cat > "$TEMPORARY/bin/resty" << 'MOCK'
 #!/usr/bin/env bash
@@ -79,6 +101,7 @@ run_case() {
   local expected=$2 rc=0
   "$TEMPORARY/bench/k8s/run-k8s.sh" all > "$TEMPORARY/output" 2>&1 || rc=$?
   [[ $rc == "$expected" ]] || {
+    printf 'Scenario %s: expected exit %s, got %s\n' "$SCENARIO" "$expected" "$rc" >&2
     cat -- "$TEMPORARY/output"
     exit 1
   }
@@ -88,7 +111,26 @@ for scenario in bench-low mongo-low integer-low missing-node missing-cpu \
   run_case "$scenario" 1
   if grep -q 'create namespace' "$CALLS"; then exit 1; fi
 done
+for scenario in wrk-empty wrk-malformed wrk-fail wrk-transport-fail; do
+  expected=1
+  if [[ $scenario == wrk-fail ]]; then expected=2; fi
+  run_case "$scenario" "$expected"
+  result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+  [[ ! -e $result_dir/COMPLETE ]]
+  if grep -q '/load.sh ' "$CALLS"; then exit 1; fi
+  grep -q 'delete namespace mongol-bench' "$CALLS"
+done
+for scenario in wrk-upstream wrk-zero; do
+  run_case "$scenario" 0
+  result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+  [[ $(cat -- "$result_dir/tool-versions.json") == '{"openresty":"1.31.1.1","wrk":"4.1.0"}' ]]
+  [[ $(cat -- "$result_dir/COMPLETE") == all ]]
+  [[ $(grep -c '/load.sh ' "$CALLS") == 120 ]]
+done
 run_case hostname-diff 0
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ $(cat -- "$result_dir/tool-versions.json") == '{"openresty":"1.31.1.1","wrk":"4.1.0"}' ]]
+[[ $(grep -c '/load.sh ' "$CALLS") == 120 ]]
 grep -q 'get nodes -l kubernetes.io/hostname=mongo-fixture' "$CALLS"
 grep -q 'get nodes -l kubernetes.io/hostname=bench-fixture' "$CALLS"
 grep -q 'create namespace mongol-bench' "$CALLS"
