@@ -41,6 +41,12 @@ elif [[ " $* " == *' get service mongo '* ]]; then
   printf '192.0.2.1'
 elif [[ ${1:-} == get && ${2:-} == namespace ]]; then
   if [[ ${SCENARIO:-} == changed ]]; then printf 'other-uid'; else printf 'owned-uid'; fi
+elif [[ " $* " == *' nginx -v '* ]]; then
+  printf 'nginx version: openresty/1.31.1.1\n' >&2
+elif [[ " $* " == *' wrk --version '* ]]; then
+  printf 'wrk 4.1.0\n'
+elif [[ ${SCENARIO:-} == delete-fail && ${1:-} == delete ]]; then
+  exit 1
 elif [[ " $* " == *'cat /sys/fs/cgroup/cpu.stat'* ]]; then
   [[ ${SCENARIO:-} != diagnostics-unavailable ]] || exit 1
   printf 'cgroup v2\nusage_usec 100\nnr_periods 10\nnr_throttled 1\nthrottled_usec 20\n'
@@ -59,6 +65,7 @@ set -Eeuo pipefail
 printf 'resty %s\n' "$*" >> "$CALLS"
 printf 'mock report\n'
 if [[ ${SCENARIO:-} == threshold && ${2:-} != --trend ]]; then exit 1; fi
+if [[ ${SCENARIO:-} == invalid-compare && ${2:-} != --trend ]]; then exit 2; fi
 MOCK
 chmod +x "$TEMPORARY/bin/"*
 export PATH="$TEMPORARY/bin:$PATH"
@@ -88,6 +95,8 @@ grep -q 'create namespace mongol-bench' "$CALLS"
 run_case capacity-units 0
 grep -q 'create namespace mongol-bench' "$CALLS"
 run_case threshold 1
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ $(cat -- "$result_dir/COMPLETE") == all ]]
 # Six alternating A/B passes, then all four trends, despite failed comparison.
 actual=$(awk '/\/ctl.sh start/ {for(i=1;i<=NF;i++) if($i ~ /^MONGOL_LIB=/) print $i}' "$CALLS")
 expected=$(printf 'MONGOL_LIB=/src/%s/lib\n' old new old new old new new new new new)
@@ -108,10 +117,14 @@ grep -q 'delete namespace mongol-bench' "$CALLS"
 # Collection must precede namespace deletion.
 awk '/ cp / {copied=1} /delete namespace/ {if(!copied) exit 1}' "$CALLS"
 run_case load-fail 1
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ ! -e $result_dir/COMPLETE ]]
 [[ $(grep -c 'cat /sys/fs/cgroup/cpu.stat' "$CALLS") == 6 ]]
 grep -q ' cp ' "$CALLS"
 grep -q 'delete namespace mongol-bench' "$CALLS"
 run_case copy-fail 1
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ ! -e $result_dir/COMPLETE ]]
 grep -q 'delete namespace mongol-bench' "$CALLS"
 grep -q 'saved diagnostics' "$TEMPORARY/output"
 run_case fallback 0
@@ -121,6 +134,13 @@ run_case existing 1
 if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
 run_case changed 1
 if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
+for scenario in delete-fail invalid-compare; do
+  expected=1
+  if [[ $scenario == invalid-compare ]]; then expected=2; fi
+  run_case "$scenario" "$expected"
+  result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+  [[ ! -e $result_dir/COMPLETE ]]
+done
 run_case diagnostics-unavailable 0
 result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
 grep -q '^unavailable: ' "$result_dir/cpu/old-1-ping-before-nginx.stat"

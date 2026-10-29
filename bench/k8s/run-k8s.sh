@@ -12,6 +12,7 @@ OWNED_UID=
 RESULT_DIR=
 COLLECTED=0
 STATUS=0
+FINISHED=0
 
 die() {
   printf 'Error: %s\n' "$*" >&2
@@ -89,19 +90,26 @@ collect() {
   fi
 }
 cleanup() {
-  local rc=$? uid
+  local rc=$? uid cleaned=0
   trap - EXIT INT TERM ERR
   if [[ -n $OWNED_UID ]]; then
     if ((COLLECTED == 0)); then collect || rc=1; fi
     if ((COLLECTED > 0)); then
       uid=$(kube get namespace "$NAMESPACE" -o jsonpath='{.metadata.uid}') || uid=
       if [[ $uid == "$OWNED_UID" ]]; then
-        kube delete namespace "$NAMESPACE" --wait=true --timeout=180s || rc=1
+        if kube delete namespace "$NAMESPACE" --wait=true --timeout=180s; then
+          cleaned=1
+        else
+          rc=1
+        fi
       else
         printf 'Namespace ownership changed; refusing cleanup.\n' >&2
         rc=1
       fi
     fi
+  fi
+  if ((FINISHED == 1 && COLLECTED == 1 && cleaned == 1)); then
+    printf '%s\n' "$MODE" > "$RESULT_DIR/COMPLETE"
   fi
   printf 'Results: %s\n' "$RESULT_DIR" >&2
   exit "$rc"
@@ -177,8 +185,8 @@ pass() {
 }
 compare() {
   local rc=0
-  if ! resty "$BENCH_DIR/compare.lua" "$RESULT_DIR/work/results/old.jsonl" \
-    "$RESULT_DIR/work/results/new.jsonl" > "$RESULT_DIR/ab.md"; then rc=1; fi
+  resty "$BENCH_DIR/compare.lua" "$RESULT_DIR/work/results/old.jsonl" \
+    "$RESULT_DIR/work/results/new.jsonl" > "$RESULT_DIR/ab.md" || rc=$?
   cat -- "$RESULT_DIR/ab.md"
   return "$rc"
 }
@@ -193,6 +201,7 @@ main() {
     exit 2
   fi
   local mode=$1 command replicate side tag
+  MODE=$mode
   case $mode in ab | trend | all) ;; *)
     usage
     exit 2
@@ -209,7 +218,12 @@ main() {
   OLD_SHA=$(resolve_ref "${OLD_REF:-3eb6349db4d30b11aab271fb14a82b8504f6aa8e}")
   NEW_SHA=$(resolve_ref "$NEW_REF")
   mkdir -p -- "$BENCH_DIR/results"
-  RESULT_DIR=$(mktemp -d "$BENCH_DIR/results/k8s-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")
+  if [[ -n ${RUN_RESULT_DIR:-} ]]; then
+    mkdir -- "$RUN_RESULT_DIR"
+    RESULT_DIR=$RUN_RESULT_DIR
+  else
+    RESULT_DIR=$(mktemp -d "$BENCH_DIR/results/k8s-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")
+  fi
   printf 'old=%s\nnew=%s\nmode=%s\n' "$OLD_SHA" "$NEW_SHA" "$mode" \
     > "$RESULT_DIR/refs.txt"
   trap cleanup EXIT
@@ -225,6 +239,14 @@ main() {
   kube -n "$NAMESPACE" apply -f "$RESULT_DIR/bench.yaml"
   kube -n "$NAMESPACE" wait --for=condition=Ready pod/bench --timeout=900s
   wait_mongo
+  local openresty_version wrk_version
+  openresty_version=$(ctl nginx -v 2>&1 | sed -n 's/.*openresty\/\([0-9.]*\).*/\1/p')
+  wrk_version=$(kube -n "$NAMESPACE" exec bench -c wrk -- wrk --version \
+    | sed -n 's/^wrk \([0-9.]*\).*/\1/p')
+  [[ $openresty_version =~ ^[0-9]+(\.[0-9]+){3}$ &&
+    $wrk_version =~ ^[0-9]+(\.[0-9]+){2}$ ]] || die "cannot identify benchmark tools"
+  printf '{"openresty":"%s","wrk":"%s"}\n' "$openresty_version" "$wrk_version" \
+    > "$RESULT_DIR/tool-versions.json"
   if [[ $mode == ab || $mode == all ]]; then
     for replicate in 1 2 3; do
       for side in old new; do pass "$side" "$side-$replicate" 1 "$((replicate - 1))"; done
@@ -244,7 +266,12 @@ main() {
   fi
   collect
   # Compare only after collecting every pass: threshold failures do not abort trends.
-  if [[ $mode == ab || $mode == all ]]; then compare || STATUS=1; fi
+  if [[ $mode == ab || $mode == all ]]; then
+    local compare_rc=0
+    compare || compare_rc=$?
+    ((compare_rc <= 1)) || return "$compare_rc"
+    STATUS=$compare_rc
+  fi
   if [[ $mode == trend || $mode == all ]]; then
     local files=()
     if [[ $mode == all ]]; then files+=("$RESULT_DIR/work/results/new.jsonl"); fi
@@ -252,6 +279,7 @@ main() {
     resty "$BENCH_DIR/compare.lua" --trend "${files[@]}" > "$RESULT_DIR/trend.md"
     cat -- "$RESULT_DIR/trend.md"
   fi
+  FINISHED=1
   return "$STATUS"
 }
 main "$@"
