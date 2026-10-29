@@ -85,7 +85,7 @@
 - [x] **Step 4: Run** `prove t/globals.t`. Expected: PASS.
 - [x] **Step 5: Add CI.** In `test.yml`, use `ubuntu-latest` with a matrix of `mongo: ["6.0", "7.0", "8.0", "9.0"]` and a `services.mongo` container on port 27017, without auth. Install OpenResty 1.31.1.1 from the OpenResty apt repo. Install Test::Nginx with `cpanm --notest Test::Nginx`. Then run `make test`. Set `permissions: contents: read`, and pin every third-party action by commit SHA. In `Makefile`, add three targets. `test` runs `prove -I t/lib t/*.t`, which is not recursive. `test-auth` runs `prove -I t/lib t/auth`. `test-replset` runs `prove -I t/lib t/replset`. Each target puts `$(OPENRESTY_PREFIX)/nginx/sbin` first in `PATH`. Make `install` honor `DESTDIR`. The no-auth jobs run only `make test`. Move every `t/*.t` header to `use lib 't/lib'; use Mongol;`. Replace the literal ports and credentials in the tests with `$TEST_NGINX_MONGO_*`.
 - [x] **Step 6: Add lint.** Write `.luacheckrc` with `std = "ngx_lua"`, `redefined = false` and `unused_args = false`, as `lua-resty-redis` does. Add a CI job `lint` that runs `luacheck -q lib` and `lj-releng` from `openresty/openresty-devel-utils`. Fix every finding in `lib/`. Add `_M._VERSION = "0.9.0"` to `init.lua`.
-- [ ] **Step 7: Push the branch and read the CI result.** Expected: all four jobs start their server, `lint` and `t/globals.t` pass, and the old tests fail. Record the failing test names in the PR description. This is the Phase 0 exit gate.
+- [x] **Step 7: Push the branch and read the CI result.** Expected: all four jobs start their server, `lint` and `t/globals.t` pass, and the old tests fail. Record the failing test names in the PR description. This is the Phase 0 exit gate.
 - [x] **Step 8: Commit** `chore(ci): add MongoDB 6-9 matrix, lint, license, remove globals`.
 
 ### Task 1b: Load anywhere, spec ObjectId
@@ -393,7 +393,7 @@ Owner decisions: Option B for numbers, 1-based arrays, both in the first release
   - `cursor:close()` in place of the `__gc` kill.
   - `skip` and `limit` before the first fetch.
   They also list the fixes that a caller can see. `db:list()`, `db:add_user`, `db:listcollections`, `col:kill_cursors` and `conn:shutdown()` work now. A binary value reads as a wrapper with `v` and `st`, not as a plain string. A date reads as a wrapper with `v`, not as a plain number. An array reads as a table with `bson.array_mt`. `cursor:sort()` before the first fetch sorts all documents on the server, not only the first batch. A server error from `col:query` or `col:getmore` adds the error message as a fourth return value. `db:cmd` no longer returns a fourth value, the flags table. `col:find` now yields every matching document across batches (issues #12 and #74). `num_each_query` is only the batch size, and `cursor:limit(n)` caps the results. A table with number keys that is not an array now goes out as a document with string keys, not as `_keys` and `_vals`.
-- [ ] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
+- [x] **Step 7: Commit** `docs: 1.0.0 changelog and migration guide`. Tag `1.0.0`. It is the major release that contains every breaking change.
 
 ---
 
