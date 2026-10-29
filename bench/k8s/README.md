@@ -44,6 +44,10 @@ The script creates only `mongol-bench` and refuses an existing namespace. Every
 kubectl operation uses KUBE_CONTEXT explicitly. It copies all shared results,
 wrk output, nginx logs and pod diagnostics before deleting its own namespace.
 If copying fails it saves diagnostics, deletes its namespace, and exits nonzero.
+The private `namespace-uid` result file records the UID immediately after namespace
+creation. If expired credentials prevent cleanup, renew them and compare this
+saved UID with the current namespace UID before any manual deletion; delete only
+when they match. The runner never adopts a namespace using this file.
 Threshold failures exit nonzero after all trends finish and results are saved.
 The Mongo and bench pods need separate nodes, outbound GitHub/Ubuntu access, and
 the resource capacity specified in the manifests. No custom image is needed.
@@ -68,8 +72,8 @@ source bench/k8s/environment.local
 /usr/bin/python3 bench/report.py series bench/results/first-report
 ```
 
-This runs exactly three complete `all` invocations sequentially. A performance
-gate failure continues the series only when the invocation is complete and
+By default this runs three fresh complete `all` invocations sequentially. A
+performance gate failure continues the series only when the invocation is complete and
 valid. An invalid comparison, incomplete result set, failed collection or failed
 namespace cleanup stops the series. It never changes the resource profile,
 durations or thresholds. The runner accepts an optional fresh `RUN_RESULT_DIR`
@@ -77,11 +81,13 @@ and writes `COMPLETE` only after all requested work and successful cleanup;
 `all` is required for reporting. Tool versions are queried from the containers.
 
 The series records resolved public SHAs, approved workload/resource Git blob
-IDs and the fixed workload arguments in each private `run-manifest.json`.
+IDs, the fixed workload arguments and private placement (context and both node
+hostnames) in each private `run-manifest.json`.
 The new workload and local manifest sources must match the approved blobs in
 `report.py`. This prevents a shorter workload from being reported as a full
-run. Commit the controller before running; the controller SHA is separate from
-the frozen driver/workload `NEW_REF`. Raw results, logs, manifests, node details
+run. Commit the controller before running and keep HEAD unchanged throughout
+the series; the controller SHA is separate from the frozen driver/workload
+`NEW_REF`. Raw results, logs, manifests, node details
 and context stay private under the ignored `bench/results/` directory.
 
 Only after all three directories validate does the script create
@@ -107,8 +113,28 @@ invocation requires 33 old samples, 36 new samples and 144 trend samples (213
 total), six correctly numbered interleaved A/B pass files and eight BSON cases.
 Result manifests attest a run produced by this controller; they do not prove
 authenticity of manually fabricated inputs. Do not hand-edit completion or
-provenance files to import older runs. To recover from an incomplete series,
-fix the cause and use a fresh series directory.
+provenance files to import older runs. If credentials expire after one or two
+complete invocations, renew them, fix the cause and use a fresh series directory
+with those completed directories:
+
+```bash
+/usr/bin/python3 bench/report.py series bench/results/first-report-recovery \
+  --reuse bench/results/first-report/run-1 bench/results/first-report/run-2
+```
+
+`--reuse` accepts at most two distinct complete `all` directories. Every reused
+invocation must pass the same full validation and match the current committed
+controller HEAD, resolved old/new SHAs, approved workload/resource blobs,
+full profile, tool versions and exact context/node placement before any runner
+starts. Offline reporting also requires the same private placement across all
+three runs and excludes it from public output. In this example only
+`first-report-recovery/run-3` runs fresh, then `public/` reports exactly three
+distinct complete invocations. Reused provenance and COMPLETE files are never
+rewritten; their paths stay private. Incomplete runs and their diagnostics remain
+in the original directory and cannot be reused. There are no automatic retries
+or namespace adoption. Three complete invocations, all 213 HTTP samples and
+eight BSON cases per invocation, the full warm-ups, durations, resources and
+thresholds remain required.
 
 Review only the generated `public/` files for a future `docs/perf/` commit.
 The scaffold neither publishes a report nor creates issues; open failed or

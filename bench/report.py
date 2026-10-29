@@ -42,6 +42,7 @@ HTTP_KEYS = [
     "socket_errors",
 ]
 CASES = {"encode_small", "decode_small", "encode_large", "decode_large"}
+PLACEMENT_KEYS = ("kube_context", "mongo_node", "bench_node")
 PROFILE = {
     "threads": 1,
     "connections": 8,
@@ -100,11 +101,20 @@ def sha(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[a-f0-9]{40}", value) is not None
 
 
-def validate_manifest(directory: Path) -> dict:
+def validate_manifest(directory: Path) -> tuple[dict, dict]:
     require(
         (directory / "COMPLETE").read_text() == "all\n", "incomplete all invocation"
     )
     data = read_json(directory / "run-manifest.json")
+    placement = data.get("placement")
+    require(
+        isinstance(placement, dict)
+        and set(placement) == set(PLACEMENT_KEYS)
+        and all(
+            isinstance(value, str) and value.strip() for value in placement.values()
+        ),
+        "missing or invalid private placement",
+    )
     require(
         data.get("profile") == PROFILE and data.get("source_blobs") == BLOBS,
         "workload or resource profile differs from approved full profile",
@@ -127,7 +137,7 @@ def validate_manifest(directory: Path) -> dict:
         "profile": PROFILE,
         "source_blobs": BLOBS,
         "tools": {"openresty": "1.31.1.1", "wrk": "4.1.0"},
-    }
+    }, placement
 
 
 def validate_http(
@@ -203,7 +213,7 @@ def cpu(directory: Path, *, label: str, api: str, container: str) -> dict:
 
 
 def validate(directory: Path) -> dict:
-    manifest = validate_manifest(directory)
+    manifest, placement = validate_manifest(directory)
     files, counters = {}, []
     for side in ("old", "new"):
         joined = []
@@ -279,6 +289,7 @@ def validate(directory: Path) -> dict:
                 )
     return {
         "manifest": manifest,
+        "placement": placement,
         "files": files,
         "cpu": counters,
         "directory": directory.resolve(),
@@ -308,6 +319,10 @@ def render(runs: list[dict], output: Path) -> None:
     require(
         all(run["manifest"] == runs[0]["manifest"] for run in runs),
         "repetitions use different source SHAs or profiles",
+    )
+    require(
+        all(run["placement"] == runs[0]["placement"] for run in runs),
+        "repetitions use different private placement",
     )
     require(not output.exists(), "public output must be a fresh directory")
     manifest = runs[0]["manifest"]
@@ -472,9 +487,10 @@ def run_all(directory: Path, *, environment: dict) -> int:
         ).returncode
 
 
-def series(directory: Path) -> None:
+def series(directory: Path, *, reuse: list[Path] | None = None) -> None:
     os.umask(0o077)
     require(not directory.exists(), "series directory must be fresh")
+    require(len(reuse or []) <= 2, "reuse at most two complete all invocations")
     require(
         all(
             os.environ.get(key)
@@ -493,10 +509,11 @@ def series(directory: Path) -> None:
         ),
         "local workload/resources differ from approved profile",
     )
+    controller_sha = git("rev-parse", "HEAD")
     require(
         not git(
             "diff",
-            "HEAD",
+            controller_sha,
             "--",
             "bench/report.py",
             "bench/compare.lua",
@@ -504,42 +521,72 @@ def series(directory: Path) -> None:
         ),
         "controller must match its committed SHA",
     )
+    manifest = {
+        "old_sha": old_sha,
+        "new_sha": new_sha,
+        "controller_sha": controller_sha,
+        "source_blobs": source,
+        "profile": PROFILE,
+    }
+    placement = {key: os.environ[key.upper()] for key in PLACEMENT_KEYS}
+    validated = [validate(path) for path in reuse or []]
+    require(
+        len({run["directory"] for run in validated}) == len(validated),
+        "reused all directories must be distinct",
+    )
+    require(
+        all(
+            run["manifest"]
+            == {**manifest, "tools": {"openresty": "1.31.1.1", "wrk": "4.1.0"}}
+            and run["placement"] == placement
+            for run in validated
+        ),
+        "reused invocation differs from current controller, sources, profile or placement",
+    )
     directory.mkdir(parents=True)
-    validated = []
-    for repetition in (1, 2, 3):
+    for repetition in range(len(validated) + 1, 4):
+        require(
+            git("rev-parse", "HEAD") == controller_sha,
+            "controller HEAD changed during series",
+        )
         result_dir = directory / f"run-{repetition}"
         environment = {
             **os.environ,
+            **{key.upper(): value for key, value in placement.items()},
             "NEW_REF": new_sha,
             "OLD_REF": old_sha,
             "RUN_RESULT_DIR": str(result_dir),
         }
         returncode = run_all(result_dir, environment=environment)
         require(returncode in (0, 1), "all runner failed; inspect private series log")
+        require(
+            git("rev-parse", "HEAD") == controller_sha,
+            "controller HEAD changed during series; results not attested",
+        )
         write_json(
             result_dir / "run-manifest.json",
-            {
-                "old_sha": old_sha,
-                "new_sha": new_sha,
-                "controller_sha": git("rev-parse", "HEAD"),
-                "source_blobs": source,
-                "profile": PROFILE,
-            },
+            {**manifest, "placement": placement},
         )
         validated.append(validate(result_dir))
+    require(
+        git("rev-parse", "HEAD") == controller_sha,
+        "controller HEAD changed during series",
+    )
     render(validated, directory / "public")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("series").add_argument("directory", type=Path)
+    series_parser = commands.add_parser("series")
+    series_parser.add_argument("directory", type=Path)
+    series_parser.add_argument("--reuse", type=Path, nargs="+", default=[])
     report = commands.add_parser("report")
     report.add_argument("output", type=Path)
     report.add_argument("runs", type=Path, nargs=3)
     args = parser.parse_args()
     if args.command == "series":
-        series(args.directory.absolute())
+        series(args.directory.absolute(), reuse=args.reuse)
     else:
         render([validate(path) for path in args.runs], args.output.absolute())
 

@@ -129,6 +129,7 @@ for scenario in wrk-upstream wrk-zero; do
 done
 run_case hostname-diff 0
 result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ $(cat -- "$result_dir/namespace-uid") == owned-uid ]]
 [[ $(cat -- "$result_dir/tool-versions.json") == '{"openresty":"1.31.1.1","wrk":"4.1.0"}' ]]
 [[ $(grep -c '/load.sh ' "$CALLS") == 120 ]]
 grep -q 'get nodes -l kubernetes.io/hostname=mongo-fixture' "$CALLS"
@@ -173,6 +174,8 @@ run_case fallback 0
 grep -q 'tar -C /work' "$CALLS"
 grep -q 'delete namespace mongol-bench' "$CALLS"
 run_case existing 1
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ ! -e $result_dir/namespace-uid ]]
 if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
 run_case changed 1
 if grep -q 'delete namespace' "$CALLS"; then exit 1; fi

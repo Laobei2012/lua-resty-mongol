@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ def fixture(directory: Path) -> Path:
         "profile": report.PROFILE,
         "source_blobs": report.BLOBS,
         "context": CANARY,
+        "placement": {key: CANARY for key in report.PLACEMENT_KEYS},
     }
     report.write_json(directory / "run-manifest.json", manifest)
     report.write_json(
@@ -32,6 +34,7 @@ def fixture(directory: Path) -> Path:
     )
     (directory / "pods.yaml").write_text(CANARY)
     (directory / "refs.txt").write_text(CANARY)
+    (directory / "namespace-uid").write_text(CANARY)
     for side in ("old", "new"):
         combined = []
         for run in (1, 2, 3):
@@ -107,6 +110,8 @@ def save(path: Path, data: list) -> None:
         "nonfinite",
         "tools",
         "source",
+        "placement-missing",
+        "placement-invalid",
     ],
 )
 def test_rejects_invalid_invocations(tmp_path: Path, damage: str) -> None:
@@ -147,6 +152,13 @@ def test_rejects_invalid_invocations(tmp_path: Path, damage: str) -> None:
         manifest = report.read_json(directory / "run-manifest.json")
         manifest["source_blobs"]["bench/load.sh"] = "c" * 40
         report.write_json(directory / "run-manifest.json", manifest)
+    elif damage.startswith("placement-"):
+        manifest = report.read_json(directory / "run-manifest.json")
+        if damage == "placement-missing":
+            del manifest["placement"]
+        else:
+            manifest["placement"]["kube_context"] = 1
+        report.write_json(directory / "run-manifest.json", manifest)
     save(data_path, data)
     with pytest.raises((ValueError, FileNotFoundError)):
         report.validate(directory)
@@ -180,6 +192,10 @@ def test_allowlist_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     runs[2]["manifest"]["new_sha"] = "c" * 40
     with pytest.raises(ValueError, match="different source"):
         report.render(runs, tmp_path / "mixed")
+    runs[2]["manifest"]["new_sha"] = runs[0]["manifest"]["new_sha"]
+    runs[2]["placement"]["bench_node"] = "another-private-node"
+    with pytest.raises(ValueError, match="private placement"):
+        report.render(runs, tmp_path / "different-placement")
 
 
 def test_cpu_deltas_and_unavailable(tmp_path: Path) -> None:
@@ -248,3 +264,181 @@ def test_series_continues_only_complete_gate_failures(
         report.series(tmp_path / "series")
         assert calls == ["run-1", "run-2", "run-3"]
         assert (tmp_path / "series/public").is_dir()
+
+
+@pytest.fixture
+def series_calls(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    calls = []
+
+    def git(*args: str) -> str:
+        if args[0] == "diff":
+            return ""
+        if args[0] == "hash-object":
+            return report.BLOBS[str(Path(args[1]).relative_to(report.BENCH.parent))]
+        if ":bench/" in args[-1]:
+            return report.BLOBS[args[-1].split(":", 1)[1]]
+        if args[-1] == "HEAD":
+            return "b" * 40
+        if args[-1].startswith("3eb6349"):
+            return "3eb6349db4d30b11aab271fb14a82b8504f6aa8e"
+        return "a" * 40
+
+    def run_all(directory: Path, *, environment: dict) -> int:
+        calls.append(directory)
+        assert environment["NEW_REF"] == "a" * 40
+        assert environment["OLD_REF"] == "3eb6349db4d30b11aab271fb14a82b8504f6aa8e"
+        assert environment["RUN_RESULT_DIR"] == str(directory)
+        fixture(directory)
+        (directory / "run-manifest.json").unlink()
+        return 1  # A complete performance gate failure is eligible for reporting.
+
+    monkeypatch.setenv("NEW_REF", "test-new")
+    for key in ("KUBE_CONTEXT", "MONGO_NODE", "BENCH_NODE"):
+        monkeypatch.setenv(key, CANARY)
+    monkeypatch.delenv("OLD_REF", raising=False)
+    monkeypatch.setattr(report, "git", git)
+    monkeypatch.setattr(report, "run_all", run_all)
+    monkeypatch.setattr(
+        report,
+        "compare",
+        lambda paths, *, trend: "| API | Result |\n| --- | --- |\n| ping | pass |\n",
+    )
+    return calls
+
+
+@pytest.mark.parametrize("reuse_count", [0, 1, 2])
+def test_series_reuses_only_completed_full_invocations(
+    tmp_path: Path, series_calls: list[Path], reuse_count: int
+) -> None:
+    reused = [fixture(tmp_path / f"{CANARY}-{n}") for n in range(reuse_count)]
+    original = {
+        path: path.read_bytes()
+        for directory in reused
+        for path in directory.rglob("*")
+        if path.is_file()
+    }
+    output = tmp_path / "series"
+    if reuse_count:
+        report.series(output, reuse=reused)
+    else:
+        report.series(output)
+    assert series_calls == [output / f"run-{n}" for n in range(reuse_count + 1, 4)]
+    assert all(path.read_bytes() == data for path, data in original.items())
+    for n in (1, 2, 3):
+        assert len(report.rows(output / f"public/run-{n}/new-9.0.jsonl")) == 36
+    exported = "".join(
+        path.read_text() for path in (output / "public").rglob("*") if path.is_file()
+    )
+    assert CANARY not in exported
+    assert str(tmp_path) not in exported
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "incomplete",
+        "controller",
+        "new-sha",
+        "profile",
+        "source",
+        "tools",
+        "coverage",
+        "bson",
+        "joined",
+        "duplicate",
+        "too-many",
+        *report.PLACEMENT_KEYS,
+    ],
+)
+def test_series_rejects_reuse_before_runner_calls(
+    tmp_path: Path, series_calls: list[Path], damage: str
+) -> None:
+    directory = fixture(tmp_path / "previous")
+    reused = [directory]
+    manifest = report.read_json(directory / "run-manifest.json")
+    if damage == "incomplete":
+        (directory / "COMPLETE").unlink()
+    elif damage == "controller":
+        manifest["controller_sha"] = "c" * 40
+    elif damage == "new-sha":
+        manifest["new_sha"] = "c" * 40
+        for path in (directory / "work/results").glob("new*.jsonl"):
+            data = report.rows(path)
+            for row in data:
+                row["driver_sha"] = manifest["new_sha"]
+            save(path, data)
+    elif damage == "profile":
+        manifest["profile"]["warmup_s"] = 1
+    elif damage == "source":
+        manifest["source_blobs"]["bench/load.sh"] = "c" * 40
+    elif damage == "tools":
+        report.write_json(directory / "tool-versions.json", {"wrk": "4.1.0"})
+    elif damage == "coverage":
+        save(directory / "work/results/new-9.0.jsonl", [])
+    elif damage == "bson":
+        save(directory / "bson-old.jsonl", [])
+    elif damage == "joined":
+        save(directory / "work/results/new.jsonl", [])
+    elif damage == "duplicate":
+        alias = tmp_path / "alias"
+        alias.symlink_to(directory, target_is_directory=True)
+        reused.append(alias)
+    elif damage == "too-many":
+        reused.extend(fixture(tmp_path / f"previous-{n}") for n in (2, 3))
+    elif damage in report.PLACEMENT_KEYS:
+        manifest["placement"][damage] = "another-private-placement"
+    report.write_json(directory / "run-manifest.json", manifest)
+    before = (directory / "run-manifest.json").read_bytes()
+    with pytest.raises((ValueError, FileNotFoundError)):
+        report.series(tmp_path / "series", reuse=reused)
+    assert not series_calls
+    assert not (tmp_path / "series").exists()
+    assert (directory / "run-manifest.json").read_bytes() == before
+
+
+def test_series_rejects_existing_recovery_directory(
+    tmp_path: Path, series_calls: list[Path]
+) -> None:
+    directory = tmp_path / "series"
+    directory.mkdir()
+    with pytest.raises(ValueError, match="fresh"):
+        report.series(directory)
+    assert not series_calls
+
+
+def test_series_does_not_attest_results_after_head_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, series_calls: list[Path]
+) -> None:
+    previous = [fixture(tmp_path / f"previous-{n}") for n in (1, 2)]
+    original_git = report.git
+
+    def git(*args: str) -> str:
+        if args[-1] == "HEAD" and series_calls:
+            return "c" * 40
+        return original_git(*args)
+
+    monkeypatch.setattr(report, "git", git)
+    output = tmp_path / "series"
+    with pytest.raises(ValueError, match="HEAD changed"):
+        report.series(output, reuse=previous)
+    assert series_calls == [output / "run-3"]
+    assert (output / "run-3/COMPLETE").read_text() == "all\n"
+    assert not (output / "run-3/run-manifest.json").exists()
+    assert not (output / "public").exists()
+
+
+def test_series_cli_accepts_reuse_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = []
+    reused = [tmp_path / "one", tmp_path / "two"]
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["report.py", "series", str(tmp_path / "fresh"), "--reuse", *map(str, reused)],
+    )
+    monkeypatch.setattr(
+        report, "series", lambda directory, *, reuse: called.append((directory, reuse))
+    )
+    report.main()
+    assert called == [(tmp_path / "fresh", reused)]

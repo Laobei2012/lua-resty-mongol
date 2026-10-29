@@ -232,6 +232,7 @@ main() {
   # Create fails if the namespace exists; never adopt an existing namespace.
   OWNED_UID=$(kube create namespace "$NAMESPACE" -o jsonpath='{.metadata.uid}')
   [[ -n $OWNED_UID ]] || die "namespace creation did not return a UID"
+  printf '%s\n' "$OWNED_UID" > "$RESULT_DIR/namespace-uid"
   render_mongo
   # shellcheck disable=SC2016
   envsubst '$BENCH_NODE $OLD_SHA $NEW_SHA' < "$BENCH_DIR/k8s/bench.yaml" \
