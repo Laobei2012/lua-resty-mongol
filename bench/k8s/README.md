@@ -6,7 +6,9 @@ implementation and set NEW_REF to that commit before starting.
 
 Before creating the namespace, the runner checks each selected node's allocatable
 CPU: Mongo needs at least 2000m and the bench pod needs at least 3000m. Missing
-nodes or CPU values fail the check. This checks absolute node capacity; existing
+or ambiguous hostname-label matches and missing CPU values fail the check.
+MONGO_NODE and BENCH_NODE select `kubernetes.io/hostname` labels, which can differ
+from node object names. This checks absolute node capacity; existing
 workload reservations, memory, storage, or placement rules can still prevent
 scheduling after it passes.
 

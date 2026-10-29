@@ -23,8 +23,13 @@ usage() {
 kube() { kubectl --context "$KUBE_CONTEXT" "$@"; }
 check_node_cpu() {
   local node=$1 minimum=$2 role=$3 quantity millicores
-  quantity=$(kube get node "$node" -o jsonpath='{.status.allocatable.cpu}') \
-    || die "cannot read allocatable CPU for $role node $node"
+  quantity=$(kube get nodes -l "kubernetes.io/hostname=$node" \
+    -o 'jsonpath={range .items[*]}{"["}{.status.allocatable.cpu}{"]"}{end}') \
+    || die "cannot read allocatable CPU for $role hostname $node"
+  # Brackets preserve every match, including nodes with a missing CPU value.
+  [[ $quantity =~ ^\[([0-9]+m?)\]$ ]] \
+    || die "$role hostname $node must match exactly one node with valid allocatable CPU"
+  quantity=${BASH_REMATCH[1]}
   if [[ $quantity =~ ^([0-9]+)m$ ]]; then
     millicores=$((10#${BASH_REMATCH[1]}))
   elif [[ $quantity =~ ^[0-9]+$ ]]; then
