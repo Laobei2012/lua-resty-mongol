@@ -21,12 +21,13 @@
 - Handlers check results in a way that is true for both drivers. Insert handlers check only that the result is not `nil`: the old `insert(..., safe)` returns `getlasterror.n`, which is 0 for inserts. Build every `options` or document table inside the handler, once per request. The old `find_and_modify` changes its `options` table (it sets `options.findAndModify`), so a table defined at module level must never be reused.
 - Nginx: `worker_processes 1`, `lua_code_cache on`, `access_log off`, `error_log` at `warn`.
 - Connection reuse: every handler ends with `conn:set_keepalive(10000, 100)`. The `connect_nopool` location is the only exception.
-- Load: `wrk -t1 -c8 --timeout 10s -d30s --latency` after a 10 second warm-up. Three runs for each API. The report uses the median run. This constrained profile uses a ten second request timeout; any timeout still invalidates the run.
+- Load (owner decision, 2026-10-28, existing node capacity): `wrk -t1 -c8 --timeout 10s -d30s --latency` after a 10 second warm-up. Three runs for each API. The report uses the median run. Any timeout still invalidates the run. The three complete `all` invocations and interleaved A/B order remain required.
 - Pass threshold (owner decision, 2026-10-27): for each API on `mongo:4.4`, new req/s is at least 90% of old req/s. New p99 latency is at most 120% of old p99.
 - Cluster: Kubernetes, reached through Teleport. `run-k8s.sh` requires `KUBE_CONTEXT` and passes `--context "$KUBE_CONTEXT"` to every `kubectl` call. It never uses the current context.
 - Namespace: `mongol-bench`, created and deleted by `run-k8s.sh`. The script changes no other namespace.
-- Placement: the Mongo Pod and the bench Pod run on two different nodes, set with `nodeSelector` values from `MONGO_NODE` and `BENCH_NODE`. The same two nodes serve all runs.
-- Resources, with requests equal to limits on every container, init containers included: Mongo 2 CPU and 4Gi. Container `nginx` 1 CPU and 512Mi. Container `wrk` 2 CPU and 512Mi. Init container `clone` 200m CPU and 128Mi.
+- Placement: the Mongo Pod and the bench Pod run on two different nodes in the same region, set with `nodeSelector` values from `MONGO_NODE` and `BENCH_NODE`. The same two nodes serve all runs.
+- Resources (owner decision, 2026-10-28, fit existing node capacity), with requests equal to limits on every container, init containers included: Mongo 400m CPU and 4Gi. Container `nginx` 300m CPU and 512Mi. Container `wrk` 800m CPU and 512Mi. Init container `clone` 200m CPU and 128Mi. The preflight requires absolute allocatable CPU of at least 400m for the Mongo node and 1100m for the bench node; existing workload reservations may still prevent scheduling. These constrained CPU measurements retain the same pass thresholds.
+- CPU diagnostics: before and after each API's warm-up and measured runs, save timestamped cgroup v2 `cpu.stat` for nginx, wrk and Mongo in private local results. Report CPU usage and throttling deltas; mark missing diagnostics unavailable rather than inferring no saturation.
 - Mongo memory and disk: mongod starts with `--wiredTigerCacheSizeGB 1.5`, because older mongod versions may not detect cgroup v2 limits. Storage is an `emptyDir` with `sizeLimit: 10Gi`, and the Mongo container sets `ephemeral-storage` request and limit to 12Gi, so `/insert_100` (millions of documents per API) does not get the Pod evicted.
 - Code: an init container (`alpine/git`) clones `https://github.com/Laobei2012/lua-resty-mongol` at `OLD_REF` and `NEW_REF` into an `emptyDir`. There is no custom image and no registry. The cluster needs network egress to `github.com` for the clone and to the Ubuntu mirrors for `apt-get install wrk`.
 - Trigger: by hand only (owner decision, 2026-10-27). There is no GitHub Actions job.
@@ -67,7 +68,7 @@
 
 Fixtures: collections `read` and `write` each have 1,000 documents `{_id = i, name = "user" .. i, age = i % 100, tags = "a b c", body = <200 byte string>}` with an index on `age`. GridFS bucket `fs` has one file `f1m` of 1 MiB. The user `bench` / `bench` has role `readWrite` on database `bench` and is created with `mechanisms = {"SCRAM-SHA-1"}`.
 
-Read handlers use `read`. Write handlers use `write`, so the `$inc age` of `/update` and `/find_and_modify` never changes what `/count` returns. Inserted documents never set `_id`: the server assigns it (neither driver adds one), so the 32 connections never get duplicate-key errors.
+Read handlers use `read`. Write handlers use `write`, so the `$inc age` of `/update` and `/find_and_modify` never changes what `/count` returns. Inserted documents never set `_id`: the server assigns it (neither driver adds one), so the eight connections never get duplicate-key errors.
 
 | Location | Driver call | Notes |
 |---|---|---|
@@ -160,27 +161,27 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - Produces: `bench/k8s/run-k8s.sh <ab|trend|all>`. Required variables: `KUBE_CONTEXT`, `MONGO_NODE`, `BENCH_NODE`, `NEW_REF`. Optional: `OLD_REF` (default `3eb6349`). It writes `bench/results/k8s-<date>/` on your machine.
 - Produces: `bench.yaml` paths in the Pod: `/src/old/lib`, `/src/new/lib`, `/src/new/bench`, and `/work` (logs and results), all mounted in both containers. The `wrk` container calls the `nginx` container on `127.0.0.1:8090`. `run-k8s.sh` restarts nginx with a different `MONGOL_LIB` through `kubectl exec -c nginx -- /src/new/bench/ctl.sh ...`, and runs load through `kubectl exec -c wrk -- /src/new/bench/load.sh ...`.
 
-- [ ] **Step 1: Write `bson_micro.lua`.** Use `ngx.update_time()` and `ngx.now()` for timing. Call `collectgarbage()` before each case.
-- [ ] **Step 2: Run it with both `lib` directories.** Expected: 4 lines each, no Lua error.
-- [ ] **Step 3: Write `mongo.yaml` and `bench.yaml`.** Mongo starts with `MONGO_INITDB_ROOT_USERNAME=admin`, `MONGO_INITDB_ROOT_PASSWORD=admin` and `--wiredTigerCacheSizeGB 1.5`, with the storage limits from Global Constraints. Its readiness probe is a `tcpSocket` probe on 27017, because `mongo:4.4` has only the `mongo` shell and `mongo:6.0` and later have only `mongosh`. After the Pods are ready, `run-k8s.sh` also waits until `ctl.sh check-conns` succeeds, which proves that auth works. The `wrk` container installs `wrk` with `apt-get` when it starts. `run-k8s.sh` fills the template values with `envsubst`.
-- [ ] **Step 4: Write `run-k8s.sh`.** Order of work:
+- [x] **Step 1: Write `bson_micro.lua`.** Use `ngx.update_time()` and `ngx.now()` for timing. Call `collectgarbage()` before each case.
+- [x] **Step 2: Run it with both `lib` directories.** Expected: 4 lines each, no Lua error. Both completed with the full 100,000 warm-up loops and two-second measurements on OpenResty 1.31.1.1; concurrent local results are validation only.
+- [x] **Step 3: Write `mongo.yaml` and `bench.yaml`.** Mongo starts with `MONGO_INITDB_ROOT_USERNAME=admin`, `MONGO_INITDB_ROOT_PASSWORD=admin` and `--wiredTigerCacheSizeGB 1.5`, with the storage limits from Global Constraints. Its readiness probe is a `tcpSocket` probe on 27017, because `mongo:4.4` has only the `mongo` shell and `mongo:6.0` and later have only `mongosh`. After the Pods are ready, `run-k8s.sh` also waits until `ctl.sh check-conns` succeeds, which proves that auth works. The `wrk` container installs `wrk` with `apt-get` when it starts. `run-k8s.sh` fills the template values with `envsubst`.
+- [x] **Step 4: Write `run-k8s.sh`.** Order of work:
   1. If `KUBE_CONTEXT` or a node variable is empty, exit 2 with a usage line.
   2. Create the namespace, apply `mongo.yaml` with tag `4.4`, apply `bench.yaml`, wait for both Pods to be ready.
   3. Mode `ab`: run `interleaved order` with `RUNS=1`: `old-1`, `new-1`, `old-2`, `new-2`, `old-3`, `new-3`, each one a full pass over all APIs. That gives 3 runs per API per side. Then concatenate `old-1..3.jsonl` into `old.jsonl` and `new-1..3.jsonl` into `new.jsonl`; each line keeps its `label`. `run-k8s.sh` passes `RUN_BASE=N-1` to `load.sh`, which writes `run = RUN_BASE + i`, so the joined file has runs 1, 2 and 3 and `compare.lua` takes the median of the three lines per API. Run `bson_micro.lua` for both libs.
   4. Mode `trend`: for each tag `6.0`, `7.0`, `8.0`, `9.0`, replace the Mongo Pod, restart nginx (`ctl.sh stop`, then `ctl.sh start`) so no pooled socket to the old Pod is reused without a login, and run `new` once with `RUNS=3`, into `new-<tag>.jsonl`. In mode `all`, the joined `new.jsonl` from `ab` is the 4.4 column. `run-k8s.sh` prints the table from `compare.lua --trend`.
   5. Copy `/src/new/bench/results/` back with `kubectl cp`. Run `compare.lua` on your machine.
   6. Delete the namespace in a `trap`, also when a step fails.
-- [ ] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
+- [x] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
 
   Time budget, with about 10 s of warm-up and re-seed per API: `RUNS=3` takes about 100 s per API, so about 20 minutes per pass over 12 APIs. `ab` is 6 passes with `RUNS=1` (about 40 s per API), so about 50 minutes. `trend` is 4 passes with `RUNS=3`, so about 80 minutes. `all` takes about 2 hours 10 minutes, and Task 5's three runs of `all` about 6.5 hours.
-- [ ] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`.
+- [x] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`. Verified live with the constrained profile: 33 old and 36 new samples, zero HTTP/socket errors, clean archived logs, four BSON cases per driver, comparison table produced, and namespace absent after cleanup. The comparator exits 1 for measured threshold failures; Task 5 checks their stability and records issues.
   Example, with placeholders for the real names:
   ```bash
   tsh kube login <cluster>
   KUBE_CONTEXT=<context> MONGO_NODE=<node-a> BENCH_NODE=<node-b> \
     NEW_REF=<branch-or-sha> bench/k8s/run-k8s.sh ab
   ```
-- [ ] **Step 7: Commit** `test(bench): add Kubernetes runner`.
+- [x] **Step 7: Commit** `test(bench): add Kubernetes runner`.
 
 ## Task 5: First run and report
 

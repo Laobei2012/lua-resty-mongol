@@ -11,3 +11,4 @@ bench/logs/
 bench/results/
 bench/driver_sha
 bench/mongo_version
+bench/k8s/environment.local
