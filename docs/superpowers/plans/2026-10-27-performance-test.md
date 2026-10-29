@@ -161,7 +161,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - Produces: `bench.yaml` paths in the Pod: `/src/old/lib`, `/src/new/lib`, `/src/new/bench`, and `/work` (logs and results), all mounted in both containers. The `wrk` container calls the `nginx` container on `127.0.0.1:8090`. `run-k8s.sh` restarts nginx with a different `MONGOL_LIB` through `kubectl exec -c nginx -- /src/new/bench/ctl.sh ...`, and runs load through `kubectl exec -c wrk -- /src/new/bench/load.sh ...`.
 
 - [x] **Step 1: Write `bson_micro.lua`.** Use `ngx.update_time()` and `ngx.now()` for timing. Call `collectgarbage()` before each case.
-- [ ] **Step 2: Run it with both `lib` directories.** Expected: 4 lines each, no Lua error.
+- [x] **Step 2: Run it with both `lib` directories.** Expected: 4 lines each, no Lua error. Both completed with the full 100,000 warm-up loops and two-second measurements on OpenResty 1.31.1.1; concurrent local results are validation only.
 - [x] **Step 3: Write `mongo.yaml` and `bench.yaml`.** Mongo starts with `MONGO_INITDB_ROOT_USERNAME=admin`, `MONGO_INITDB_ROOT_PASSWORD=admin` and `--wiredTigerCacheSizeGB 1.5`, with the storage limits from Global Constraints. Its readiness probe is a `tcpSocket` probe on 27017, because `mongo:4.4` has only the `mongo` shell and `mongo:6.0` and later have only `mongosh`. After the Pods are ready, `run-k8s.sh` also waits until `ctl.sh check-conns` succeeds, which proves that auth works. The `wrk` container installs `wrk` with `apt-get` when it starts. `run-k8s.sh` fills the template values with `envsubst`.
 - [x] **Step 4: Write `run-k8s.sh`.** Order of work:
   1. If `KUBE_CONTEXT` or a node variable is empty, exit 2 with a usage line.
