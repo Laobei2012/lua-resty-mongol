@@ -6,3 +6,8 @@ t/servroot*/
 .claude
 .claude.json
 t/tls/certs/
+bench/conf/
+bench/logs/
+bench/results/
+bench/driver_sha
+bench/mongo_version
