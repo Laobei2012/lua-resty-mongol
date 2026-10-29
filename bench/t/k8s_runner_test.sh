@@ -12,7 +12,22 @@ set -Eeuo pipefail
 printf '%s\n' "$*" >> "$CALLS"
 [[ $1 == --context && $2 == fixture-context ]]
 shift 2
-if [[ ${1:-} == create ]]; then
+if [[ ${1:-} == get && ${2:-} == node ]]; then
+  [[ ${5:-} == 'jsonpath={.status.allocatable.cpu}' ]]
+  case ${SCENARIO:-} in
+    missing-node) exit 1 ;;
+    missing-cpu) exit 0 ;;
+    invalid-cpu) printf '1500u' ;;
+    bench-low)
+      if [[ $3 == bench-fixture ]]; then printf '2999m'; else printf '2'; fi ;;
+    mongo-low) printf '1999m' ;;
+    integer-low) printf '2' ;;
+    capacity-units)
+      if [[ $3 == bench-fixture ]]; then printf '3'; else printf '2000m'; fi ;;
+    *)
+      if [[ $3 == bench-fixture ]]; then printf '3000m'; else printf '2'; fi ;;
+  esac
+elif [[ ${1:-} == create ]]; then
   [[ ${SCENARIO:-} != existing ]] || exit 1
   printf 'owned-uid'
 elif [[ " $* " == *' get service mongo '* ]]; then
@@ -51,6 +66,12 @@ run_case() {
     exit 1
   }
 }
+for scenario in bench-low mongo-low integer-low missing-node missing-cpu invalid-cpu; do
+  run_case "$scenario" 1
+  if grep -q 'create namespace' "$CALLS"; then exit 1; fi
+done
+run_case capacity-units 0
+grep -q 'create namespace mongol-bench' "$CALLS"
 run_case threshold 1
 # Six alternating A/B passes, then all four trends, despite failed comparison.
 actual=$(awk '/\/ctl.sh start/ {for(i=1;i<=NF;i++) if($i ~ /^MONGOL_LIB=/) print $i}' "$CALLS")

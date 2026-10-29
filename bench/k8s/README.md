@@ -4,6 +4,12 @@ then copy `environment.example` to `environment.local` and fill its values.
 The file is ignored; do not commit cluster details. Push the complete benchmark
 implementation and set NEW_REF to that commit before starting.
 
+Before creating the namespace, the runner checks each selected node's allocatable
+CPU: Mongo needs at least 2000m and the bench pod needs at least 3000m. Missing
+nodes or CPU values fail the check. This checks absolute node capacity; existing
+workload reservations, memory, storage, or placement rules can still prevent
+scheduling after it passes.
+
 ```bash
 source bench/k8s/environment.local
 bench/k8s/run-k8s.sh all

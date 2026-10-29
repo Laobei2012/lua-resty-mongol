@@ -21,6 +21,20 @@ usage() {
   printf 'Usage: KUBE_CONTEXT=... MONGO_NODE=... BENCH_NODE=... NEW_REF=... %s <ab|trend|all>\n' "$0" >&2
 }
 kube() { kubectl --context "$KUBE_CONTEXT" "$@"; }
+check_node_cpu() {
+  local node=$1 minimum=$2 role=$3 quantity millicores
+  quantity=$(kube get node "$node" -o jsonpath='{.status.allocatable.cpu}') \
+    || die "cannot read allocatable CPU for $role node $node"
+  if [[ $quantity =~ ^([0-9]+)m$ ]]; then
+    millicores=$((10#${BASH_REMATCH[1]}))
+  elif [[ $quantity =~ ^[0-9]+$ ]]; then
+    millicores=$((10#$quantity * 1000))
+  else
+    die "missing or invalid allocatable CPU for $role node $node: $quantity"
+  fi
+  ((millicores >= minimum)) \
+    || die "$role node $node has ${millicores}m allocatable CPU; needs at least ${minimum}m"
+}
 ctl() {
   kube -n "$NAMESPACE" exec bench -c nginx -- env WORK=/work \
     SEED_LIB=/src/new/lib MONGO_HOST="$MONGO_HOST" "$@"
@@ -158,6 +172,9 @@ main() {
   for command in kubectl envsubst git resty; do
     command -v "$command" > /dev/null || die "$command is required"
   done
+  # Absolute node capacity only; existing reservations may still prevent scheduling.
+  check_node_cpu "$MONGO_NODE" 2000 Mongo
+  check_node_cpu "$BENCH_NODE" 3000 bench
   export OLD_SHA NEW_SHA MONGO_NODE BENCH_NODE MONGO_TAG=4.4
   OLD_SHA=$(resolve_ref "${OLD_REF:-3eb6349db4d30b11aab271fb14a82b8504f6aa8e}")
   NEW_SHA=$(resolve_ref "$NEW_REF")
