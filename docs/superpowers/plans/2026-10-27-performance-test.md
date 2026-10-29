@@ -174,7 +174,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - [x] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
 
   Time budget, with about 10 s of warm-up and re-seed per API: `RUNS=3` takes about 100 s per API, so about 20 minutes per pass over 12 APIs. `ab` is 6 passes with `RUNS=1` (about 40 s per API), so about 50 minutes. `trend` is 4 passes with `RUNS=3`, so about 80 minutes. `all` takes about 2 hours 10 minutes, and Task 5's three runs of `all` about 6.5 hours.
-- [ ] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`.
+- [x] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`. Verified live with the constrained profile: 33 old and 36 new samples, zero HTTP/socket errors, clean archived logs, four BSON cases per driver, comparison table produced, and namespace absent after cleanup. The comparator exits 1 for measured threshold failures; Task 5 checks their stability and records issues.
   Example, with placeholders for the real names:
   ```bash
   tsh kube login <cluster>
