@@ -21,12 +21,13 @@
 - Handlers check results in a way that is true for both drivers. Insert handlers check only that the result is not `nil`: the old `insert(..., safe)` returns `getlasterror.n`, which is 0 for inserts. Build every `options` or document table inside the handler, once per request. The old `find_and_modify` changes its `options` table (it sets `options.findAndModify`), so a table defined at module level must never be reused.
 - Nginx: `worker_processes 1`, `lua_code_cache on`, `access_log off`, `error_log` at `warn`.
 - Connection reuse: every handler ends with `conn:set_keepalive(10000, 100)`. The `connect_nopool` location is the only exception.
-- Load: `wrk -t1 -c8 --timeout 10s -d30s --latency` after a 10 second warm-up. Three runs for each API. The report uses the median run. This constrained profile uses a ten second request timeout; any timeout still invalidates the run.
+- Load (owner decision, 2026-10-28, existing node capacity): `wrk -t1 -c8 --timeout 10s -d30s --latency` after a 10 second warm-up. Three runs for each API. The report uses the median run. Any timeout still invalidates the run. The three complete `all` invocations and interleaved A/B order remain required.
 - Pass threshold (owner decision, 2026-10-27): for each API on `mongo:4.4`, new req/s is at least 90% of old req/s. New p99 latency is at most 120% of old p99.
 - Cluster: Kubernetes, reached through Teleport. `run-k8s.sh` requires `KUBE_CONTEXT` and passes `--context "$KUBE_CONTEXT"` to every `kubectl` call. It never uses the current context.
 - Namespace: `mongol-bench`, created and deleted by `run-k8s.sh`. The script changes no other namespace.
-- Placement: the Mongo Pod and the bench Pod run on two different nodes, set with `nodeSelector` values from `MONGO_NODE` and `BENCH_NODE`. The same two nodes serve all runs.
-- Resources, with requests equal to limits on every container, init containers included: Mongo 2 CPU and 4Gi. Container `nginx` 1 CPU and 512Mi. Container `wrk` 2 CPU and 512Mi. Init container `clone` 200m CPU and 128Mi.
+- Placement: the Mongo Pod and the bench Pod run on two different nodes in the same region, set with `nodeSelector` values from `MONGO_NODE` and `BENCH_NODE`. The same two nodes serve all runs.
+- Resources (owner decision, 2026-10-28, fit existing node capacity), with requests equal to limits on every container, init containers included: Mongo 400m CPU and 4Gi. Container `nginx` 300m CPU and 512Mi. Container `wrk` 800m CPU and 512Mi. Init container `clone` 200m CPU and 128Mi. The preflight requires absolute allocatable CPU of at least 400m for the Mongo node and 1100m for the bench node; existing workload reservations may still prevent scheduling. These constrained CPU measurements retain the same pass thresholds.
+- CPU diagnostics: before and after each API's warm-up and measured runs, save timestamped cgroup v2 `cpu.stat` for nginx, wrk and Mongo in private local results. Report CPU usage and throttling deltas; mark missing diagnostics unavailable rather than inferring no saturation.
 - Mongo memory and disk: mongod starts with `--wiredTigerCacheSizeGB 1.5`, because older mongod versions may not detect cgroup v2 limits. Storage is an `emptyDir` with `sizeLimit: 10Gi`, and the Mongo container sets `ephemeral-storage` request and limit to 12Gi, so `/insert_100` (millions of documents per API) does not get the Pod evicted.
 - Code: an init container (`alpine/git`) clones `https://github.com/Laobei2012/lua-resty-mongol` at `OLD_REF` and `NEW_REF` into an `emptyDir`. There is no custom image and no registry. The cluster needs network egress to `github.com` for the clone and to the Ubuntu mirrors for `apt-get install wrk`.
 - Trigger: by hand only (owner decision, 2026-10-27). There is no GitHub Actions job.
@@ -67,7 +68,7 @@
 
 Fixtures: collections `read` and `write` each have 1,000 documents `{_id = i, name = "user" .. i, age = i % 100, tags = "a b c", body = <200 byte string>}` with an index on `age`. GridFS bucket `fs` has one file `f1m` of 1 MiB. The user `bench` / `bench` has role `readWrite` on database `bench` and is created with `mechanisms = {"SCRAM-SHA-1"}`.
 
-Read handlers use `read`. Write handlers use `write`, so the `$inc age` of `/update` and `/find_and_modify` never changes what `/count` returns. Inserted documents never set `_id`: the server assigns it (neither driver adds one), so the 32 connections never get duplicate-key errors.
+Read handlers use `read`. Write handlers use `write`, so the `$inc age` of `/update` and `/find_and_modify` never changes what `/count` returns. Inserted documents never set `_id`: the server assigns it (neither driver adds one), so the eight connections never get duplicate-key errors.
 
 | Location | Driver call | Notes |
 |---|---|---|

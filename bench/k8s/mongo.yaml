@@ -21,11 +21,11 @@ spec:
         - containerPort: 27017
       resources:
         requests:
-          cpu: "2"
+          cpu: 400m
           memory: 4Gi
           ephemeral-storage: 12Gi
         limits:
-          cpu: "2"
+          cpu: 400m
           memory: 4Gi
           ephemeral-storage: 12Gi
       readinessProbe:

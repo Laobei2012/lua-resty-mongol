@@ -18,21 +18,21 @@ if [[ ${1:-} == get && ${2:-} == nodes ]]; then
   case ${SCENARIO:-} in
     missing-node) exit 1 ;;
     no-match) exit 0 ;;
-    multiple-matches) printf '[2][2000m]' ;;
-    multiple-missing-cpu) printf '[2][]' ;;
+    multiple-matches) printf '[400m][400m]' ;;
+    multiple-missing-cpu) printf '[400m][]' ;;
     missing-cpu) printf '[]' ;;
     invalid-cpu) printf '[1500u]' ;;
     bench-low)
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[2999m]'; else printf '[2]'; fi ;;
-    mongo-low) printf '[1999m]' ;;
-    integer-low) printf '[2]' ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1099m]'; else printf '[400m]'; fi ;;
+    mongo-low) printf '[399m]' ;;
+    integer-low) printf '[0]' ;;
     capacity-units)
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[3]'; else printf '[2000m]'; fi ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[2]'; else printf '[400m]'; fi ;;
     hostname-diff)
       # The matching objects have metadata.name values unrelated to these labels.
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[3]'; else printf '[2]'; fi ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1100m]'; else printf '[1]'; fi ;;
     *)
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[3000m]'; else printf '[2]'; fi ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1100m]'; else printf '[400m]'; fi ;;
   esac
 elif [[ ${1:-} == create ]]; then
   [[ ${SCENARIO:-} != existing ]] || exit 1
@@ -41,6 +41,9 @@ elif [[ " $* " == *' get service mongo '* ]]; then
   printf '192.0.2.1'
 elif [[ ${1:-} == get && ${2:-} == namespace ]]; then
   if [[ ${SCENARIO:-} == changed ]]; then printf 'other-uid'; else printf 'owned-uid'; fi
+elif [[ " $* " == *'cat /sys/fs/cgroup/cpu.stat'* ]]; then
+  [[ ${SCENARIO:-} != diagnostics-unavailable ]] || exit 1
+  printf 'cgroup v2\nusage_usec 100\nnr_periods 10\nnr_throttled 1\nthrottled_usec 20\n'
 elif [[ ${1:-} == -n && ${3:-} == cp ]]; then
   [[ ${SCENARIO:-} != copy-fail && ${SCENARIO:-} != fallback ]] || exit 1
 elif [[ " $* " == *' tar -C /work '* ]]; then
@@ -92,11 +95,20 @@ expected=$(printf 'MONGOL_LIB=/src/%s/lib\n' old new old new old new new new new
 [[ $(grep -c '/load.sh ' "$CALLS") == 120 ]]
 [[ $(grep -c 'RUN_BASE=2 .* /src/new/bench/load.sh\|RUN_BASE=2 /src/new/bench/load.sh' "$CALLS") == 24 ]]
 [[ $(grep -c '/load.sh new-9.0 .* 3$' "$CALLS") == 12 ]]
+[[ $(grep -c 'cat /sys/fs/cgroup/cpu.stat' "$CALLS") == 720 ]]
+# Each load has three container snapshots before it and three after it.
+awk '/cat \/sys\/fs\/cgroup\/cpu.stat/ {samples++}
+  /\/load.sh / {if(samples != 3) exit 1; samples=-3}
+  END {if(samples != 0) exit 1}' "$CALLS"
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+grep -q '^sample_time_epoch ' "$result_dir/cpu/old-1-ping-before-nginx.stat"
+grep -q '^usage_usec ' "$result_dir/cpu/new-9.0-connect_nopool-after-mongo.stat"
 grep -q 'resty .*compare.lua --trend' "$CALLS"
 grep -q 'delete namespace mongol-bench' "$CALLS"
 # Collection must precede namespace deletion.
 awk '/ cp / {copied=1} /delete namespace/ {if(!copied) exit 1}' "$CALLS"
 run_case load-fail 1
+[[ $(grep -c 'cat /sys/fs/cgroup/cpu.stat' "$CALLS") == 6 ]]
 grep -q ' cp ' "$CALLS"
 grep -q 'delete namespace mongol-bench' "$CALLS"
 run_case copy-fail 1
@@ -109,6 +121,12 @@ run_case existing 1
 if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
 run_case changed 1
 if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
+run_case diagnostics-unavailable 0
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+grep -q '^unavailable: ' "$result_dir/cpu/old-1-ping-before-nginx.stat"
+grep -q '^unavailable: ' "$result_dir/cpu/new-9.0-connect_nopool-after-mongo.stat"
+[[ $(grep -c '/load.sh ' "$CALLS") == 120 ]]
+grep -q 'delete namespace mongol-bench' "$CALLS"
 unset KUBE_CONTEXT
 rc=0
 "$TEMPORARY/bench/k8s/run-k8s.sh" all > /dev/null 2>&1 || rc=$?

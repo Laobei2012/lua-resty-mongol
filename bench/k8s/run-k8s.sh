@@ -132,15 +132,40 @@ render_mongo() {
   [[ $MONGO_HOST =~ ^[0-9.]+$ || $MONGO_HOST =~ ^[a-fA-F0-9:]+$ ]] \
     || die "Mongo Service did not return a numeric ClusterIP"
 }
+cpu_snapshot() {
+  local label=$1 api=$2 phase=$3 target pod container file
+  mkdir -p -- "$RESULT_DIR/cpu"
+  for target in bench:nginx bench:wrk mongo:mongo; do
+    pod=${target%:*}
+    container=${target#*:}
+    file=$RESULT_DIR/cpu/$label-$api-$phase-$container.stat
+    printf 'sample_time_epoch %s\n' "$(date +%s)" > "$file"
+    if ! kube -n "$NAMESPACE" exec "$pod" -c "$container" -- sh -c '
+      if [ -r /sys/fs/cgroup/cpu.stat ]; then
+        printf "cgroup v2\n"
+        cat /sys/fs/cgroup/cpu.stat
+      else
+        printf "unavailable: cgroup v2 cpu.stat is not readable\n"
+        exit 1
+      fi' >> "$file" 2>&1; then
+      printf 'unavailable: CPU diagnostics command failed\n' >> "$file"
+    fi
+  done
+}
 pass() {
-  local side=$1 label=$2 runs=$3 base=$4 api
+  local side=$1 label=$2 runs=$3 base=$4 api load_rc
   printf 'Starting %s, Mongo %s\n' "$label" "$MONGO_TAG" >&2
   control stop
   ctl MONGOL_LIB="/src/$side/lib" /src/new/bench/ctl.sh start
   for api in "${APIS[@]}"; do
     control seed
+    cpu_snapshot "$label" "$api" before
+    load_rc=0
     kube -n "$NAMESPACE" exec bench -c wrk -- env WORK=/work \
-      RUN_BASE="$base" /src/new/bench/load.sh "$label" "$api" "$runs"
+      RUN_BASE="$base" /src/new/bench/load.sh "$label" "$api" "$runs" \
+      || load_rc=$?
+    cpu_snapshot "$label" "$api" after
+    ((load_rc == 0)) || return "$load_rc"
     control check-log
     control check-conns
     if [[ $api == find_one ]]; then control check-reuse; fi
@@ -178,8 +203,8 @@ main() {
     command -v "$command" > /dev/null || die "$command is required"
   done
   # Absolute node capacity only; existing reservations may still prevent scheduling.
-  check_node_cpu "$MONGO_NODE" 2000 Mongo
-  check_node_cpu "$BENCH_NODE" 3000 bench
+  check_node_cpu "$MONGO_NODE" 400 Mongo
+  check_node_cpu "$BENCH_NODE" 1100 bench
   export OLD_SHA NEW_SHA MONGO_NODE BENCH_NODE MONGO_TAG=4.4
   OLD_SHA=$(resolve_ref "${OLD_REF:-3eb6349db4d30b11aab271fb14a82b8504f6aa8e}")
   NEW_SHA=$(resolve_ref "$NEW_REF")
