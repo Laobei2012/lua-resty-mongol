@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -442,3 +443,154 @@ def test_series_cli_accepts_reuse_paths(
     )
     report.main()
     assert called == [(tmp_path / "fresh", reused)]
+
+
+@pytest.fixture
+def launch_calls(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    calls = []
+
+    class Child:
+        pid = 12345
+
+    def popen(command: list, **options: object) -> Child:
+        calls.append({"command": command, **options})
+        options["stdout"].write("child diagnostic\n")
+        return Child()
+
+    def unexpected(*args: object, **kwargs: object) -> None:
+        pytest.fail("launcher must not run benchmarks or foreground series itself")
+
+    monkeypatch.setattr(report.subprocess, "Popen", popen)
+    monkeypatch.setattr(report, "series", unexpected)
+    monkeypatch.setattr(report, "run_all", unexpected)
+    return calls
+
+
+@pytest.mark.parametrize("reuse_count", [0, 1, 2])
+def test_launch_detaches_exact_series_with_private_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    launch_calls: list[dict],
+    reuse_count: int,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("KUBE_CONTEXT", CANARY)
+    directory = Path("private/series")
+    reused = [Path(f"previous-{n}") for n in range(reuse_count)]
+    previous_umask = os.umask(0o022)
+    try:
+        pid = report.launch(directory, reuse=reused)
+    finally:
+        os.umask(previous_umask)
+    assert pid == 12345
+    assert len(launch_calls) == 1
+    call = launch_calls[0]
+    command = [
+        sys.executable,
+        "-u",
+        str(report.BENCH / "report.py"),
+        "series",
+        str(directory.absolute()),
+    ]
+    if reused:
+        command += ["--reuse", *(str(path.absolute()) for path in reused)]
+    assert call["command"] == command
+    assert call["stdin"] == report.subprocess.DEVNULL
+    assert call["stderr"] == report.subprocess.STDOUT
+    assert call["close_fds"] is True
+    assert call["start_new_session"] is True
+    assert set(call) == {
+        "command",
+        "stdin",
+        "stdout",
+        "stderr",
+        "close_fds",
+        "start_new_session",
+    }
+    assert call["stdout"].closed
+    log = tmp_path / "private/series.controller.log"
+    metadata = tmp_path / "private/series.launch.json"
+    assert report.read_json(metadata) == {"pid": pid, "log": str(log)}
+    assert log.read_text() == "child diagnostic\n"
+    assert CANARY not in metadata.read_text()
+    assert metadata.stat().st_mode & 0o777 == 0o600
+    assert log.stat().st_mode & 0o777 == 0o600
+    assert directory.parent.stat().st_mode & 0o777 == 0o700
+    assert not directory.exists()  # Only the child series may create results.
+    assert not (directory / "public").exists()
+
+
+@pytest.mark.parametrize(
+    "existing",
+    ["series", "log", "metadata", "broken-series", "broken-log", "broken-metadata"],
+)
+def test_launch_refuses_existing_results_or_sidecars(
+    tmp_path: Path, launch_calls: list[dict], existing: str
+) -> None:
+    directory = tmp_path / "series"
+    paths = {
+        "series": directory,
+        "log": tmp_path / "series.controller.log",
+        "metadata": tmp_path / "series.launch.json",
+    }
+    path = paths[existing.removeprefix("broken-")]
+    if existing.startswith("broken-"):
+        path.symlink_to(tmp_path / "missing")
+    elif existing == "series":
+        path.mkdir()
+    else:
+        path.write_text("do not overwrite\n")
+    before = set(tmp_path.iterdir())
+    with pytest.raises(ValueError, match="fresh"):
+        report.launch(directory)
+    assert not launch_calls
+    assert set(tmp_path.iterdir()) == before
+    if path.is_file():
+        assert path.read_text() == "do not overwrite\n"
+
+
+def test_launch_failure_preserves_private_diagnostics_without_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, launch_calls: list[dict]
+) -> None:
+    attempts = []
+
+    def popen(command: list, **options: object) -> None:
+        attempts.append(command)
+        raise OSError("fixture launch failure")
+
+    monkeypatch.setattr(report.subprocess, "Popen", popen)
+    directory = tmp_path / "series"
+    with pytest.raises(OSError, match="fixture launch failure"):
+        report.launch(directory)
+    assert not directory.exists()
+    assert not launch_calls
+    assert len(attempts) == 1
+    metadata = tmp_path / "series.launch.json"
+    log = tmp_path / "series.controller.log"
+    assert metadata.read_text() == ""
+    assert log.read_text() == "Launch failed: fixture launch failure\n"
+    assert metadata.stat().st_mode & 0o777 == log.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(ValueError, match="fresh"):
+        report.launch(directory)
+
+
+def test_launch_cli_prints_pid_and_forwards_reuse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    launch_calls: list[dict],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "report.py",
+            "launch",
+            str(tmp_path / "series"),
+            "--reuse",
+            str(tmp_path / "old"),
+        ],
+    )
+    report.main()
+    assert capsys.readouterr().out == "12345\n"
+    assert launch_calls[0]["command"][-2:] == ["--reuse", str(tmp_path / "old")]

@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -575,18 +576,57 @@ def series(directory: Path, *, reuse: list[Path] | None = None) -> None:
     render(validated, directory / "public")
 
 
+def launch(directory: Path, *, reuse: list[Path] | None = None) -> int:
+    os.umask(0o077)
+    directory = directory.absolute()
+    log_path = directory.with_name(directory.name + ".controller.log")
+    metadata_path = directory.with_name(directory.name + ".launch.json")
+    require(
+        all(
+            not path.exists() and not path.is_symlink()
+            for path in (directory, log_path, metadata_path)
+        ),
+        "series directory, controller log and launch metadata must be fresh",
+    )
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    command = [sys.executable, "-u", str(BENCH / "report.py"), "series", str(directory)]
+    if reuse:
+        command += ["--reuse", *(str(path.absolute()) for path in reuse)]
+    with metadata_path.open("x") as metadata, log_path.open("x") as log:
+        try:
+            child = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                start_new_session=True,
+            )
+        except OSError as error:
+            log.write(f"Launch failed: {error}\n")
+            raise
+        json.dump({"pid": child.pid, "log": str(log_path)}, metadata)
+        metadata.write("\n")
+    return child.pid
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     series_parser = commands.add_parser("series")
     series_parser.add_argument("directory", type=Path)
     series_parser.add_argument("--reuse", type=Path, nargs="+", default=[])
+    launch_parser = commands.add_parser("launch")
+    launch_parser.add_argument("directory", type=Path)
+    launch_parser.add_argument("--reuse", type=Path, nargs="+", default=[])
     report = commands.add_parser("report")
     report.add_argument("output", type=Path)
     report.add_argument("runs", type=Path, nargs=3)
     args = parser.parse_args()
     if args.command == "series":
         series(args.directory.absolute(), reuse=args.reuse)
+    elif args.command == "launch":
+        print(launch(args.directory.absolute(), reuse=args.reuse))
     else:
         render([validate(path) for path in args.runs], args.output.absolute())
 

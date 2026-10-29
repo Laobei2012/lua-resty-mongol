@@ -69,8 +69,29 @@ committed controller checkout with Python 3.9+ and the prerequisites above:
 ```bash
 source bench/k8s/environment.local
 # NEW_REF must resolve locally to the pushed driver/workload commit.
-/usr/bin/python3 bench/report.py series bench/results/first-report
+/usr/bin/python3 bench/report.py launch bench/results/first-report
 ```
+
+`launch` prints the child series PID after recording it and the private log path
+in `bench/results/first-report.launch.json`. The child starts a new POSIX session,
+reads stdin from `/dev/null`, and writes stdout/stderr to the private sibling
+`first-report.controller.log`; it does not retain the launcher's terminal or tool
+session descriptors. Both sidecars must be fresh and are created with mode 600.
+The series directory is created by the child after its existing preflight checks.
+Use the printed PID with `ps -p PID` and monitor the private files:
+
+```bash
+cat bench/results/first-report.launch.json
+tail -f bench/results/first-report.controller.log
+# Per-invocation progress is in run-1.log, then run-2.log and run-3.log.
+tail -f bench/results/first-report/run-1.log
+```
+
+Launch success means the child started; check its logs for preflight or runtime
+errors. A launch OS error is recorded in the controller log without a PID in the
+reserved metadata file. Keep failed-launch artifacts and choose a fresh name.
+Detachment does not renew credentials or retry failed work. `series` remains
+available for running the same workflow in the foreground.
 
 By default this runs three fresh complete `all` invocations sequentially. A
 performance gate failure continues the series only when the invocation is complete and
@@ -118,7 +139,7 @@ complete invocations, renew them, fix the cause and use a fresh series directory
 with those completed directories:
 
 ```bash
-/usr/bin/python3 bench/report.py series bench/results/first-report-recovery \
+/usr/bin/python3 bench/report.py launch bench/results/first-report-recovery \
   --reuse bench/results/first-report/run-1 bench/results/first-report/run-2
 ```
 
