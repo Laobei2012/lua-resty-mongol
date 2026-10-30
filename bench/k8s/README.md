@@ -61,7 +61,10 @@ The runner falls back from kubectl cp to a tar stream before cleanup. If both
 methods fail, shared files cannot be recovered; local pod and container diagnostics
 remain available. Cleanup still deletes the owned namespace and the run fails.
 
-## Reproducible first-report scaffold
+## Three-invocation reports
+
+The [2026-10-29 report](../../docs/perf/perf-2026-10-29.md) contains the first
+three complete invocations, all measured tables, public data and triage issues.
 
 After accepting the initial live A/B validation, run the series from a clean,
 committed controller checkout with Python 3.9+ and the prerequisites above:
@@ -157,10 +160,11 @@ or namespace adoption. Three complete invocations, all 213 HTTP samples and
 eight BSON cases per invocation, the full warm-ups, durations, resources and
 thresholds remain required.
 
-Review only the generated `public/` files for a future `docs/perf/` commit.
-The scaffold neither publishes a report nor creates issues; open failed or
-unstable API issues separately with `needs-triage` after reviewing real data.
-No first performance report is included until three valid full runs exist.
+For later reports, review only the generated `public/` files for a `docs/perf/`
+commit. The controller neither publishes reports nor creates issues; open
+failed or unstable API issues separately with `needs-triage` after reviewing
+real data. The first report and its copied public data are committed under
+[`docs/perf/`](../../docs/perf/README.md).
 
 Fixture checks (pytest is a development dependency):
 

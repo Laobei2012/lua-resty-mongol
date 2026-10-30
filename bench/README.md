@@ -4,6 +4,11 @@ Requires `nginx` from OpenResty, its `resty` CLI, `envsubst`, Git, curl,
 Bash, and wrk 4.1.0. MongoDB must have authentication enabled. Use MongoDB
 4.4 for comparisons with the old driver.
 
+The [first measured report](../docs/perf/perf-2026-10-29.md) records three
+complete invocations, public data, gate failures and interpretation limits.
+See the [Kubernetes instructions](k8s/README.md) for the fixed resource profile,
+detached launch and recovery.
+
 Run a local pass with the driver selected by its library directory:
 
 ```bash
