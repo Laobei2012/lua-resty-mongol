@@ -610,6 +610,14 @@ The builtin rockspec lists every module explicitly. OPM reads `1.0.0` from
 and the [LuaRocks rockspec format](https://github.com/luarocks/luarocks/blob/main/docs/rockspec_format.md)
 describe the packaging fields.
 
+## Performance
+
+The [first performance report](docs/perf/perf-2026-10-29.md) compares old and
+new drivers on MongoDB 4.4 and records new-driver trends on MongoDB 6–9, BSON
+results and public raw metrics. Four APIs miss the A/B gates consistently and
+`count` is unstable under the measured CPU limits; linked issues track triage.
+See the [harness](bench/README.md) for methodology and reproduction.
+
 ## Limitations
 
 - MongoDB 5.0 and earlier, wire compression, SRV discovery, background

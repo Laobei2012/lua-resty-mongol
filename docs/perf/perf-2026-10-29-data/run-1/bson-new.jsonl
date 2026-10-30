@@ -1,0 +1,4 @@
+{"case": "encode_small", "ops_per_s": 93583}
+{"case": "decode_small", "ops_per_s": 3535}
+{"case": "encode_large", "ops_per_s": 647}
+{"case": "decode_large", "ops_per_s": 22.115385426572}

@@ -186,13 +186,13 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 ## Task 5: First run and report
 
 **Files:**
-- Create: `docs/perf/perf-2026-10-27.md` (use the date of the run)
+- Create: `docs/perf/perf-2026-10-29.md` and its public data sibling (run start date)
 
-- [ ] **Step 1: Run `bench/k8s/run-k8s.sh all` three times.** Write down each API that passes in one run and fails in another. The report lists it as unstable.
-- [ ] **Step 2: Write the report.** It has these sections:
-  - Setup: cluster context, node types, Pod resources, SHAs, server versions.
+- [x] **Step 1: Run `bench/k8s/run-k8s.sh all` three times.** Completed 2026-10-29/30: 639 unique HTTP samples and 24 BSON results, zero HTTP/socket errors. `count` is unstable (fail/pass/fail); four APIs fail all three invocations. Initial A/B validation and an incomplete foreground attempt are separate and excluded.
+- [x] **Step 2: Write the [report](../../perf/perf-2026-10-29.md).** It has these sections:
+  - Setup: Pod resources, SHAs and server versions; cluster context, node identities/types and operational details withheld by owner privacy instruction.
   - A/B table, trend table, BSON micro table.
   - A note that the `/auth` gain comes from the cached salted password in the new driver.
   - Failed or unstable APIs, with the cause when a profile shows it.
-- [ ] **Step 3: If an API fails, open a GitHub issue for it with label `needs-triage`.** Do not fix the driver in this plan.
-- [ ] **Step 4: Commit** `docs(bench): add first performance report`.
+- [x] **Step 3: If an API fails, open a GitHub issue for it with label `needs-triage`.** Created [count #90](https://github.com/Laobei2012/lua-resty-mongol/issues/90), [find_and_modify #91](https://github.com/Laobei2012/lua-resty-mongol/issues/91), [find_one #92](https://github.com/Laobei2012/lua-resty-mongol/issues/92), [gridfs_read #93](https://github.com/Laobei2012/lua-resty-mongol/issues/93), and [ping #94](https://github.com/Laobei2012/lua-resty-mongol/issues/94), all with `needs-triage`. No driver fixes in this plan.
+- [x] **Step 4: Commit** `docs(bench): add first performance report` with the actual report and copied public data.
