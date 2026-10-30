@@ -1,14 +1,18 @@
 # Performance reports
 
-- [2026-10-29: first performance report](perf-2026-10-29.md) — three complete
-  invocations, all A/B/trend/BSON/CPU tables and five linked triage issues.
-  Four APIs fail the A/B gates consistently; `count` is unstable. Results use
-  the fixed constrained CPU profile and do not establish a driver cause.
-- [Public measurement data and manifest](perf-2026-10-29-data/) — reconstructed
-  allowlisted metrics, with comparator reproduction instructions in the report.
+1. [Read the 2026-10-29 findings](perf-2026-10-29.md#findings).
+   Four APIs fail the A/B gates consistently. `count` is unstable.
+2. [Check the CPU limits](perf-2026-10-29.md#cpu-interpretation).
+   Quotas affect latency. Full run 1's MongoDB 9.0.4 results are invalid for cross-version comparison.
+   Contention is suspected but unconfirmed.
+3. [Recompute the tables](perf-2026-10-29.md#public-data-and-reproduction)
+   from the [public measurement data and manifest](perf-2026-10-29-data/).
+
+The report covers three full runs and links five triage issues.
+The measurements do not establish a driver cause.
 
 See the [harness](../../bench/README.md),
 [Kubernetes instructions](../../bench/k8s/README.md), and
 [implementation plan](../superpowers/plans/2026-10-27-performance-test.md).
-Reports are named `perf-<start-date>.md`; private operational data is excluded.
+Name reports `perf-<start-date>.md`. Reports exclude private operational data.
 `dist.ini` excludes this directory from the OPM package.
