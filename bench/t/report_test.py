@@ -1,5 +1,6 @@
 """Full synthetic workload fixtures; never use cluster diagnostics in tests."""
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,15 @@ SPEC = importlib.util.spec_from_file_location(
 report = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(report)
 CANARY = "PRIVATE-CONTEXT-NODE-MODEL-IDENTITY-CANARY"
+
+
+def test_bson_source_pin_matches_workload() -> None:
+    content = (report.BENCH / "bson_micro.lua").read_bytes()
+    header = f"blob {len(content)}\0".encode()
+    assert (
+        report.BLOBS["bench/bson_micro.lua"]
+        == hashlib.sha1(header + content).hexdigest()
+    )
 
 
 def fixture(directory: Path) -> Path:
@@ -105,6 +115,8 @@ def save(path: Path, data: list) -> None:
         "version",
         "sha",
         "short",
+        "legacy-bson-profile",
+        "legacy-bson-source",
         "bson",
         "joined",
         "duplicate",
@@ -136,6 +148,18 @@ def test_rejects_invalid_invocations(tmp_path: Path, damage: str) -> None:
     elif damage == "short":
         manifest = report.read_json(directory / "run-manifest.json")
         manifest["profile"]["sample_s"] = 1
+        report.write_json(directory / "run-manifest.json", manifest)
+    elif damage == "legacy-bson-profile":
+        manifest = report.read_json(directory / "run-manifest.json")
+        manifest["profile"]["bson_warmup"] = 100000
+        for key in ("bson_warmup_seconds", "bson_warmup_batch", "bson_measure_batch"):
+            del manifest["profile"][key]
+        report.write_json(directory / "run-manifest.json", manifest)
+    elif damage == "legacy-bson-source":
+        manifest = report.read_json(directory / "run-manifest.json")
+        manifest["source_blobs"]["bench/bson_micro.lua"] = (
+            "ae48a3ade0f915b5171110e3a05570bcc0803b09"
+        )
         report.write_json(directory / "run-manifest.json", manifest)
     elif damage == "bson":
         save(directory / "bson-old.jsonl", [])
@@ -185,6 +209,8 @@ def test_allowlist_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert "| ping | pass | fail | pass | yes |" in exported
     assert "Needs-triage issue candidates: ping" in exported
     assert "unavailable" in exported
+    assert "at most 1,000 warm-up operations, stopping at 1s" in exported
+    assert "measure in batches of 100 operations" in exported
     assert len(report.rows(output / "run-1/new-9.0.jsonl")) == 36
     with pytest.raises(ValueError, match="exactly three"):
         report.render(runs[:2], tmp_path / "partial")
