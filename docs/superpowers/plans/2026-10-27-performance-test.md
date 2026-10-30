@@ -124,7 +124,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - [x] **Step 1: Write the checks in `ctl.sh` as subcommands that exit non-zero.** Case `reuse check`: after the `/find_one` run, `curl /reuse` returns a reused count above 0. Also, `ctl.sh check-conns` (which runs `resty bench/server_status.lua`; no Mongo shell is needed) reports `connections.current` at most 105. Other cases: `reseed between APIs` (the count of `read` is 1,000 before each API), `error log clean` (no `[error]` line in `error.log`).
 - [x] **Step 2: Write `wrk_report.lua`.** It uses `done(summary, latency, requests)` and prints the JSON line to stdout. The latency values come from `latency:percentile(50)` and so on, converted from microseconds to milliseconds.
 - [x] **Step 3: Write `ctl.sh`, `load.sh` and `run.sh`.** For each API: `ctl.sh seed` (drops and re-seeds the `read`, `write`, `fs.files` and `fs.chunks` collections; keeps the database and the `bench` user), `load.sh` (warm up for 10 seconds, `RUNS` wrk runs of 30 seconds, append each line), `ctl.sh check-log`. `run.sh` starts nginx once with `ctl.sh start` and stops it on exit with a `trap`.
-- [ ] **Step 4: Run `bench/run.sh new-local find_one ping` against `mongo:4.4`.** Expected: 6 lines in `results/new-local.jsonl`, `non2xx` is 0, and the script exits 0. The earlier live check passed with `-t2 -c32`; repeat with the current `-t1 -c8 --timeout 10s` profile before marking this step complete.
+- [x] **Step 4: Run `bench/run.sh new-local find_one ping` against `mongo:4.4`.** Expected: 6 lines in `results/new-local.jsonl`, `non2xx` is 0, and the script exits 0. Repeated successfully with the current `-t1 -c8 --timeout 10s` profile: both APIs have runs 1–3, zero HTTP/socket errors, clean logs, and passing connection/reuse checks.
 - [x] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on the scripts, then commit** `test(bench): add wrk runner and JSON report`.
 
 ## Task 3: Compare and report
@@ -174,7 +174,7 @@ Expected in the report: the new driver caches the salted password (`lib/resty/mo
 - [x] **Step 5: Run `shellcheck` and `shfmt -w -i 2 -ci -bn -sr -s` on `run-k8s.sh`.**
 
   Time budget, with about 10 s of warm-up and re-seed per API: `RUNS=3` takes about 100 s per API, so about 20 minutes per pass over 12 APIs. `ab` is 6 passes with `RUNS=1` (about 40 s per API), so about 50 minutes. `trend` is 4 passes with `RUNS=3`, so about 80 minutes. `all` takes about 2 hours 10 minutes, and Task 5's three runs of `all` about 6.5 hours.
-- [ ] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`.
+- [x] **Step 6: Run `bench/k8s/run-k8s.sh ab` with `NEW_REF` set to the pushed branch.** Expected: the script prints the compare table, `bench/results/k8s-<date>/` has `old.jsonl` and `new.jsonl`, and `kubectl --context "$KUBE_CONTEXT" get ns mongol-bench` reports `NotFound`. Verified live with the constrained profile: 33 old and 36 new samples, zero HTTP/socket errors, clean archived logs, four BSON cases per driver, comparison table produced, and namespace absent after cleanup. The comparator exits 1 for measured threshold failures; Task 5 checks their stability and records issues.
   Example, with placeholders for the real names:
   ```bash
   tsh kube login <cluster>
