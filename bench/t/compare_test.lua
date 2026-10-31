@@ -3,6 +3,9 @@ local json = require "cjson.safe"
 local old_path, new_path = "bench/t/old.jsonl", "bench/t/new.jsonl"
 local temporary = {}
 local checks = 0
+local cpu_dir = os.tmpname()
+os.remove(cpu_dir)
+assert(os.execute("mkdir " .. cpu_dir))
 
 local function check(condition, message)
     checks = checks + 1
@@ -114,6 +117,44 @@ local function tests()
     check(code == 0 and output:find("4.4.29 p99 (ms)", 1, true)
         and output:find("9.0.0 p99 (ms)", 1, true), "five-file trend including 4.4")
 
+    -- CPU validity applies to each label/API interval before the median gate.
+    local function counters(container, usage, throttled, periods)
+        for _, path in ipairs({old_path, new_path}) do
+            for _, row in ipairs(read_rows(path)) do
+                for _, phase in ipairs({"before", "after"}) do
+                    local file = assert(io.open(cpu_dir .. "/" .. row.label .. "-" .. row.api .. "-" .. phase .. "-" .. container .. ".stat", "w"))
+                    local after = phase == "after"
+                    file:write(string.format("sample_time_epoch %d\ncgroup v2\nusage_usec %d\nnr_periods %d\nnr_throttled %d\nthrottled_usec 0\n",
+                        after and 140 or 100, after and usage or 0, after and periods or 0, after and throttled or 0))
+                    file:close()
+                end
+            end
+        end
+    end
+    counters("nginx", 36000000, 0, 400)
+    counters("mongo", 10000000, 3, 400)
+    counters("wrk", 10000000, 3, 400)
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 0 and output:find("| pass |", 1, true), "valid CPU boundaries")
+    counters("nginx", 35900000, 0, 400)
+    code, output = run({"--cpu-dir", cpu_dir, old_path, slow})
+    check(code == 0 and output:find("| invalid |", 1, true), "invalid is neither gate pass nor fail")
+    check(output:find("nginx usage", 1, true) and output:find("0.897", 1, true), "nginx condition and value")
+    counters("nginx", 36000000, 0, 400)
+    for _, container in ipairs({"mongo", "wrk"}) do
+        counters(container, 10000000, 4, 400)
+        code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+        check(code == 0 and output:find("| invalid |", 1, true), container .. " one percent inclusive")
+        check(output:find(container .. " throttled", 1, true) and output:find("1.000%", 1, true), "throttle condition and value")
+        counters(container, 10000000, 3, 400)
+    end
+    counters("wrk", 10000000, 0, 0)
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 0 and output:find("| invalid |", 1, true), "unavailable periods cannot pass")
+    local one_old, one_new = {read_rows(old_path)[1]}, {read_rows(new_path)[1]}
+    code, output = run({"--single", fixture(one_old), fixture(one_new)})
+    check(code == 0 and output:find("| pass |", 1, true), "calibration single sample")
+
     rejected({}, "usage")
     rejected({ "--trend" }, "usage")
     local absent = os.tmpname()
@@ -148,5 +189,6 @@ end
 
 local ok, err = pcall(tests)
 for _, path in ipairs(temporary) do os.remove(path) end
+os.execute("rm -rf " .. cpu_dir)
 assert(ok, err)
 print("compare: " .. checks .. " checks passed")

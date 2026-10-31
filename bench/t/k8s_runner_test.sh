@@ -18,22 +18,32 @@ if [[ ${1:-} == get && ${2:-} == nodes ]]; then
   case ${SCENARIO:-} in
     missing-node) exit 1 ;;
     no-match) exit 0 ;;
-    multiple-matches) printf '[400m][400m]' ;;
-    multiple-missing-cpu) printf '[400m][]' ;;
+    multiple-matches) printf '[1000m][1000m]' ;;
+    multiple-missing-cpu) printf '[1000m][]' ;;
     missing-cpu) printf '[]' ;;
     invalid-cpu) printf '[1500u]' ;;
     bench-low)
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1099m]'; else printf '[400m]'; fi ;;
-    mongo-low) printf '[399m]' ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1099m]'; else printf '[1000m]'; fi ;;
+    mongo-low) printf '[999m]' ;;
     integer-low) printf '[0]' ;;
     capacity-units)
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[2]'; else printf '[400m]'; fi ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[2]'; else printf '[1000m]'; fi ;;
     hostname-diff)
       # The matching objects have metadata.name values unrelated to these labels.
       if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1100m]'; else printf '[1]'; fi ;;
     *)
-      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1100m]'; else printf '[400m]'; fi ;;
+      if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then printf '[1100m]'; else printf '[1000m]'; fi ;;
   esac
+elif [[ ${1:-} == describe ]]; then
+  [[ $2 == nodes && $3 == -l && $4 == kubernetes.io/hostname=*-fixture ]]
+  case ${SCENARIO:-} in
+    reservations-unreadable) exit 1 ;;
+    reservations-missing) printf 'Allocated resources:\n'; exit 0 ;;
+    mongo-reserved) reserved=1m ;;
+    bench-reserved) if [[ $4 == kubernetes.io/hostname=bench-fixture ]]; then reserved=1m; else reserved=0m; fi ;;
+    *) reserved=0m ;;
+  esac
+  printf 'Allocated resources:\n  Resource  Requests  Limits\n  cpu  %s (0%%)  2 (100%%)\nEvents:\n' "$reserved"
 elif [[ ${1:-} == create ]]; then
   [[ ${SCENARIO:-} != existing ]] || exit 1
   printf 'owned-uid'
@@ -99,7 +109,7 @@ run_case() {
   SCENARIO=$1
   : > "$CALLS"
   local expected=$2 rc=0
-  "$TEMPORARY/bench/k8s/run-k8s.sh" all > "$TEMPORARY/output" 2>&1 || rc=$?
+  "$TEMPORARY/bench/k8s/run-k8s.sh" "${TEST_MODE:-all}" > "$TEMPORARY/output" 2>&1 || rc=$?
   [[ $rc == "$expected" ]] || {
     printf 'Scenario %s: expected exit %s, got %s\n' "$SCENARIO" "$expected" "$rc" >&2
     cat -- "$TEMPORARY/output"
@@ -107,7 +117,8 @@ run_case() {
   }
 }
 for scenario in bench-low mongo-low integer-low missing-node missing-cpu \
-  invalid-cpu no-match multiple-matches multiple-missing-cpu; do
+  invalid-cpu no-match multiple-matches multiple-missing-cpu mongo-reserved bench-reserved \
+  reservations-unreadable reservations-missing; do
   run_case "$scenario" 1
   if grep -q 'create namespace' "$CALLS"; then exit 1; fi
 done
@@ -196,4 +207,24 @@ unset KUBE_CONTEXT
 rc=0
 "$TEMPORARY/bench/k8s/run-k8s.sh" all > /dev/null 2>&1 || rc=$?
 [[ $rc == 2 ]]
+export KUBE_CONTEXT=fixture-context TEST_MODE=calibrate WRK_THREADS=2 WRK_CONNECTIONS=16
+run_case calibration 0
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ $(cat -- "$result_dir/COMPLETE") == calibrate ]]
+[[ $(grep -c '/load.sh ' "$CALLS") == 12 ]]
+actual=$(awk '/\/ctl.sh start/ {for(i=1;i<=NF;i++) if($i ~ /^MONGOL_LIB=/) print $i}' "$CALLS")
+[[ $actual == "$(printf 'MONGOL_LIB=/src/%s/lib\n' old new old new old new)" ]]
+for connections in 8 16 32; do
+  [[ $(grep -c "WRK_CONNECTIONS=$connections .*load.sh" "$CALLS") == 4 ]]
+  grep -q "compare.lua .*--single.*old-c$connections.jsonl.*new-c$connections.jsonl" "$CALLS"
+done
+if grep -qE 'bson_micro|compare.lua --trend|delete pod mongo' "$CALLS"; then exit 1; fi
+grep -q 'delete namespace mongol-bench' "$CALLS"
+unset TEST_MODE
+for setting in WRK_CONNECTIONS=0 WRK_THREADS=17 WRK_THREADS=abc; do
+  : > "$CALLS"
+  rc=0
+  env "$setting" "$TEMPORARY/bench/k8s/run-k8s.sh" ab > "$TEMPORARY/output" 2>&1 || rc=$?
+  [[ $rc == 2 && ! -s $CALLS ]]
+done
 printf 'Kubernetes runner mock tests passed\n'

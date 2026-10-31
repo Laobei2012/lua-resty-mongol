@@ -620,3 +620,15 @@ def test_launch_cli_prints_pid_and_forwards_reuse(
     report.main()
     assert capsys.readouterr().out == "12345\n"
     assert launch_calls[0]["command"][-2:] == ["--reuse", str(tmp_path / "old")]
+
+
+@pytest.mark.parametrize("path", ["bench/load.sh", "bench/k8s/bench.yaml", "bench/k8s/mongo.yaml"])
+def test_calibrated_source_pins(path: str) -> None:
+    content = (report.BENCH.parent / path).read_bytes()
+    assert report.BLOBS[path] == hashlib.sha1(f"blob {len(content)}\0".encode() + content).hexdigest()
+
+
+def test_calibrated_profile() -> None:
+    assert report.PROFILE["threads"] == 2
+    assert report.PROFILE["connections"] == 32
+    assert report.PROFILE["warmup_s"] == 10
