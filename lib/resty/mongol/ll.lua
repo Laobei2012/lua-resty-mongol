@@ -11,6 +11,10 @@ local ffi_new , ffi_string , ffi_copy = ffi.new , ffi.string , ffi.copy
 
 local le_uint_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
+	if j - i == 3 and i >= 1 and j <= #s then
+		local a , b , c , d = strbyte ( s , i , j )
+		return a + b * 256 + c * 65536 + d * 16777216
+	end
 	local b = { strbyte ( s , i , j ) }
 	local n = 0
 	for k=#b , 1 , -1 do
