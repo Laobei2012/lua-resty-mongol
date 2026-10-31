@@ -6,3 +6,8 @@ export BENCH_NODE='<different-bench-node>'
 # Push the complete benchmark implementation first; use its full commit SHA.
 export NEW_REF='<pushed-40-character-commit-sha>'
 export OLD_REF='3eb6349db4d30b11aab271fb14a82b8504f6aa8e'
+
+# Optional load profile (both warm-up and measurement); positive integers,
+# threads <= connections. calibrate overrides connections with 8, 16, 32.
+export WRK_THREADS=2
+export WRK_CONNECTIONS=16

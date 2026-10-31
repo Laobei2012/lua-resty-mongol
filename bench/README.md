@@ -18,7 +18,12 @@ MONGOL_LIB=/path/to/new/lib MONGO_HOST=127.0.0.1 \
 
 With no API arguments, `run.sh` measures all twelve APIs. Each API gets
 fresh fixtures, a ten second warm-up, and three thirty second runs with
-`wrk -t1 -c8 --timeout 10s --latency`. `RUNS` changes the number of measured runs.
+`wrk -t2 -c16 --timeout 10s --latency`. `RUNS` changes the number of measured runs.
+`WRK_THREADS` (default 2) and `WRK_CONNECTIONS` (default 16) apply to both
+warm-up (`-d10s`) and measurement (`-d30s`). Both must be positive integers,
+and threads must not exceed connections; invalid values exit 2. The Kubernetes
+runner forwards them. Its `calibrate` mode compares 8, 16 and 32 connections
+on Mongo 4.4. The full report profile uses 16 connections.
 The ten second request timeout accommodates the constrained CPU profile;
 any timeout still invalidates the run.
 The coordinator checks socket reuse after `find_one`, the Mongo connection
@@ -65,6 +70,10 @@ JSON line. Any other non-2xx response, socket error, empty run or nginx
 error invalidates the load and returns nonzero. A failed API does not
 append partial results; earlier successful APIs may remain in the file,
 so only use result files from passes that exited successfully.
+Each measured JSON line includes its completed `requests` count and an
+`interval_requests` count shared by all samples in that API/pass. The latter
+sums the successful preflight request, warm-up requests and all measured requests
+to match the CPU snapshot interval.
 
 Run the BSON micro benchmark with
 `resty -I /path/to/driver/lib bench/bson_micro.lua`. It measures small- and
@@ -92,3 +101,36 @@ unsupported API skips, fixture counts, reuse/connection limits, reseeding
 between APIs, and coordinator cleanup. `bench/smoke.sh` remains the live
 handler check; it uses `ctl.sh` to manage nginx and fixtures and expects
 one error from its intentionally empty read collection.
+
+The owner-approved CPU requests/limits (2026-10-30) are Mongo 1000m/2000m,
+nginx 900m/1000m, wrk 200m/300m and clone init 200m/200m; memory is unchanged.
+Mongo, nginx and wrk have CPU requests below limits and are Burstable by owner decision. The earlier limits throttled
+nginx and Mongo while wrk was lightly used. The new requests fit the available
+1100m on the Mongo node and 1110m on the bench node (1100m combined request).
+
+Kubernetes comparisons always check CPU validity per API and pass. Nginx,
+Mongo and wrk must each be throttled in less than 1% of
+periods. Missing or unusable counters invalidate the API. An invalid interval
+makes that API `invalid` in the comparison, counting as neither gate pass nor
+gate fail; other APIs still gate at 0.90 rps and 1.20 p99 ratios. Reports include
+conditions and values for every interval. Snapshots cover preflight, warm-up,
+measurement and sequential snapshot overhead. Nginx CPU/request (microseconds)
+divides its `usage_usec` delta by `interval_requests`; it is informational and
+does not change the throughput/p99 gates. A/B CPU/request tables pool CPU usage
+and requests across distinct passes, counting each interval once. Missing
+request counts or unusable nginx counters show `unavailable` for CPU/request.
+
+For standalone saved results, use `resty bench/compare.lua --cpu-dir <cpu-dir>
+<old.jsonl> <new.jsonl>`. Without CPU arguments, legacy/local JSONL comparisons
+retain their existing threshold-only behavior. `--single` accepts one measured
+sample per API for calibration; full comparisons still require three.
+
+Owner decision (2026-10-30): wrk requests 200m. The bench node has 1110m
+free to reserve, so nginx requests 900m and keeps its 1000m limit; nginx used
+at most 0.67 cores in calibration. The combined request stays 1100m, preserving
+the preflight minimum. Mongo stays at 1000m/2000m and clone at 200m/200m.
+All three runtime containers have requests below limits; clone remains equal.
+Memory is unchanged. The owner removed the minimum nginx CPU usage rule:
+nginx did not saturate in calibration (0.34–0.67 cores), and throttling is the
+check for whether the setup distorts a result. Throughput stopped rising at
+16 connections, so the default is `-t2 -c16`, including warm-up.

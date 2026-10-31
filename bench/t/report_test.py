@@ -92,6 +92,7 @@ def samples(*, label: str, side: str, version: str, runs: list, manifest: dict) 
             "p99_ms": 3,
             "non2xx": 0,
             "socket_errors": 0,
+            "interval_requests": 1001 + 3000 * len(runs),
             "private": CANARY,
         }
         for api in report.APIS
@@ -198,7 +199,12 @@ def test_allowlist_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         if trend:
             return "| API | 4.4.29 rps |\n| --- | --- |\n| ping | 100 |\n"
         state = "fail" if paths[0].parent.name == "run-2" else "pass"
-        return f"| API | Result |\n| --- | --- |\n| ping | {state} |\n"
+        return (
+            f"| API | Result |\n| --- | --- |\n| ping | {state} |\n"
+            "\nCPU validity per pass/API (warm-up, measurement and snapshot overhead):\n\n"
+            "| Pass | API | Validity | Conditions |\n| --- | --- | --- | --- |\n"
+            "| old-1 | ping | valid | nginx usage 0.95 cores |\n"
+        )
 
     monkeypatch.setattr(report, "compare", compare)
     output = tmp_path / "public"
@@ -620,3 +626,99 @@ def test_launch_cli_prints_pid_and_forwards_reuse(
     report.main()
     assert capsys.readouterr().out == "12345\n"
     assert launch_calls[0]["command"][-2:] == ["--reuse", str(tmp_path / "old")]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "bench/load.sh",
+        "bench/wrk_report.lua",
+        "bench/k8s/bench.yaml",
+        "bench/k8s/mongo.yaml",
+    ],
+)
+def test_calibrated_source_pins(path: str) -> None:
+    content = (report.BENCH.parent / path).read_bytes()
+    assert (
+        report.BLOBS[path]
+        == hashlib.sha1(f"blob {len(content)}\0".encode() + content).hexdigest()
+    )
+
+
+def test_calibrated_profile() -> None:
+    assert report.PROFILE["threads"] == 2
+    assert report.PROFILE["connections"] == 16
+    assert report.PROFILE["warmup_s"] == 10
+
+
+@pytest.mark.parametrize("setting", [{"WRK_THREADS": "1"}, {"WRK_CONNECTIONS": "32"}])
+def test_series_rejects_unapproved_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: dict
+) -> None:
+    for key in ("NEW_REF", "KUBE_CONTEXT", "MONGO_NODE", "BENCH_NODE"):
+        monkeypatch.setenv(key, "fixture")
+    for key, value in setting.items():
+        monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError, match="approved two-thread"):
+        report.series(tmp_path / "series")
+
+
+def test_compare_uses_public_cpu_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    (tmp_path / "cpu.jsonl").write_text("")
+    calls = []
+
+    def run(command: list, **kwargs: object) -> object:
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="table")
+
+    monkeypatch.setattr(report.subprocess, "run", run)
+    assert (
+        report.compare([tmp_path / "old.jsonl", tmp_path / "new.jsonl"], trend=False)
+        == "table"
+    )
+    assert calls[0][2:4] == ["--cpu-file", str(tmp_path / "cpu.jsonl")]
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, None, True, "400"])
+def test_rejects_invalid_interval_request_count(tmp_path: Path, value: object) -> None:
+    directory = fixture(tmp_path / "source")
+    path = directory / "work/results/new-9.0.jsonl"
+    data = report.rows(path)
+    data[0]["interval_requests"] = value
+    save(path, data)
+    with pytest.raises(ValueError):
+        report.validate(directory)
+
+
+def test_exports_request_count_and_upstream_bson_case(tmp_path: Path) -> None:
+    data = report.validate(fixture(tmp_path / "source"))
+    assert data["files"]["new"][0]["interval_requests"] == 4001
+    assert "decode_reply" in report.CASES
+
+
+def test_rejects_inconsistent_interval_request_count(tmp_path: Path) -> None:
+    directory = fixture(tmp_path / "source")
+    path = directory / "work/results/new-9.0.jsonl"
+    data = report.rows(path)
+    data[0]["interval_requests"] += 1
+    save(path, data)
+    with pytest.raises(ValueError, match="inconsistent interval request counts"):
+        report.validate(directory)
+
+
+def test_approved_cpu_requests_and_limits() -> None:
+    import re
+
+    content = (report.BENCH / "k8s/bench.yaml").read_text()
+    assert re.findall(r"cpu: (\d+m)", content) == [
+        "200m",
+        "200m",
+        "900m",
+        "1000m",
+        "200m",
+        "300m",
+    ]

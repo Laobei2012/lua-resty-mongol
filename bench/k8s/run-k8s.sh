@@ -6,7 +6,7 @@ BENCH_DIR=$(cd -- "$(dirname -- "$0")/.." && pwd)
 readonly BENCH_DIR
 readonly REPOSITORY=https://github.com/Laobei2012/lua-resty-mongol
 readonly NAMESPACE=mongol-bench
-readonly APIS=(ping find_one find_100 count insert_1 insert_100 update
+APIS=(ping find_one find_100 count insert_1 insert_100 update
   delete_insert find_and_modify gridfs_read auth connect_nopool)
 OWNED_UID=
 RESULT_DIR=
@@ -19,11 +19,11 @@ die() {
   exit 1
 }
 usage() {
-  printf 'Usage: KUBE_CONTEXT=... MONGO_NODE=... BENCH_NODE=... NEW_REF=... %s <ab|trend|all>\n' "$0" >&2
+  printf 'Usage: KUBE_CONTEXT=... MONGO_NODE=... BENCH_NODE=... NEW_REF=... %s <ab|trend|all|calibrate>\n' "$0" >&2
 }
 kube() { kubectl --context "$KUBE_CONTEXT" "$@"; }
 check_node_cpu() {
-  local node=$1 minimum=$2 role=$3 quantity millicores
+  local node=$1 minimum=$2 role=$3 quantity millicores reservations reserved
   quantity=$(kube get nodes -l "kubernetes.io/hostname=$node" \
     -o 'jsonpath={range .items[*]}{"["}{.status.allocatable.cpu}{"]"}{end}') \
     || die "cannot read allocatable CPU for $role hostname $node"
@@ -40,6 +40,22 @@ check_node_cpu() {
   fi
   ((millicores >= minimum)) \
     || die "$role node $node has ${millicores}m allocatable CPU; needs at least ${minimum}m"
+  # describe reports scheduler-effective requests, including init containers and
+  # pod overhead. Select by hostname label, not metadata.name.
+  reservations=$(kube describe nodes -l "kubernetes.io/hostname=$node") \
+    || die "cannot read current CPU reservations for $role node $node"
+  reserved=$(printf '%s\n' "$reservations" | awk '
+    /^Allocated resources:/ {allocated=1; next}
+    allocated && $1 == "cpu" {print $2; exit}')
+  if [[ $reserved =~ ^([0-9]+)m$ ]]; then
+    reserved=$((10#${BASH_REMATCH[1]}))
+  elif [[ $reserved =~ ^[0-9]+$ ]]; then
+    reserved=$((10#$reserved * 1000))
+  else
+    die "cannot parse current CPU reservations for $role node $node"
+  fi
+  ((millicores - reserved >= minimum)) \
+    || die "$role node $node has $((millicores - reserved))m free CPU after ${reserved}m reserved; pod requests ${minimum}m and would stay Pending"
 }
 ctl() {
   kube -n "$NAMESPACE" exec bench -c nginx -- env WORK=/work \
@@ -143,7 +159,10 @@ render_mongo() {
 cpu_snapshot() {
   local label=$1 api=$2 phase=$3 target pod container file
   mkdir -p -- "$RESULT_DIR/cpu"
-  for target in bench:nginx bench:wrk mongo:mongo; do
+  local targets=(bench:nginx bench:wrk mongo:mongo)
+  # Nginx brackets load closely: no other container snapshots in its interval.
+  if [[ $phase == before ]]; then targets=(mongo:mongo bench:wrk bench:nginx); fi
+  for target in "${targets[@]}"; do
     pod=${target%:*}
     container=${target#*:}
     file=$RESULT_DIR/cpu/$label-$api-$phase-$container.stat
@@ -170,7 +189,7 @@ pass() {
     cpu_snapshot "$label" "$api" before
     load_rc=0
     kube -n "$NAMESPACE" exec bench -c wrk -- env WORK=/work \
-      RUN_BASE="$base" /src/new/bench/load.sh "$label" "$api" "$runs" \
+      RUN_BASE="$base" WRK_THREADS="$WRK_THREADS" WRK_CONNECTIONS="$WRK_CONNECTIONS" /src/new/bench/load.sh "$label" "$api" "$runs" \
       || load_rc=$?
     cpu_snapshot "$label" "$api" after
     ((load_rc == 0)) || return "$load_rc"
@@ -185,7 +204,7 @@ pass() {
 }
 compare() {
   local rc=0
-  resty "$BENCH_DIR/compare.lua" "$RESULT_DIR/work/results/old.jsonl" \
+  resty "$BENCH_DIR/compare.lua" --cpu-dir "$RESULT_DIR/cpu" "$RESULT_DIR/work/results/old.jsonl" \
     "$RESULT_DIR/work/results/new.jsonl" > "$RESULT_DIR/ab.md" || rc=$?
   cat -- "$RESULT_DIR/ab.md"
   return "$rc"
@@ -200,19 +219,35 @@ main() {
     usage
     exit 2
   fi
-  local mode=$1 command replicate side tag
+  local mode=$1 command replicate side tag namespace_error
   MODE=$mode
-  case $mode in ab | trend | all) ;; *)
+  case $mode in ab | trend | all | calibrate) ;; *)
     usage
     exit 2
     ;;
   esac
+  WRK_THREADS=${WRK_THREADS-2}
+  WRK_CONNECTIONS=${WRK_CONNECTIONS-16}
+  if [[ ! $WRK_THREADS =~ ^[1-9][0-9]*$ || ! $WRK_CONNECTIONS =~ ^[1-9][0-9]*$ ]] \
+    || ! awk -v threads="$WRK_THREADS" -v connections="$WRK_CONNECTIONS" 'BEGIN {exit !(threads <= connections)}'; then
+    printf 'Error: WRK_THREADS and WRK_CONNECTIONS must be positive integers; threads must not exceed connections\n' >&2
+    exit 2
+  fi
+  if [[ $mode == calibrate ]] && ((WRK_THREADS > 8)); then
+    printf 'Error: calibration requires WRK_THREADS <= 8\n' >&2
+    exit 2
+  fi
   [[ $MONGO_NODE != "$BENCH_NODE" ]] || die "Mongo and bench nodes must differ"
   for command in kubectl envsubst git resty; do
     command -v "$command" > /dev/null || die "$command is required"
   done
-  # Absolute node capacity only; existing reservations may still prevent scheduling.
-  check_node_cpu "$MONGO_NODE" 400 Mongo
+  if namespace_error=$(kube get namespace "$NAMESPACE" 2>&1); then
+    die "namespace $NAMESPACE already exists; refusing to reuse or delete it"
+  elif [[ $namespace_error != *'(NotFound)'* ]]; then
+    die "cannot check namespace $NAMESPACE: $namespace_error"
+  fi
+  # Check both capacity and current reservations before creating any resources.
+  check_node_cpu "$MONGO_NODE" 1000 Mongo
   check_node_cpu "$BENCH_NODE" 1100 bench
   export OLD_SHA NEW_SHA MONGO_NODE BENCH_NODE MONGO_TAG=4.4
   OLD_SHA=$(resolve_ref "${OLD_REF:-3eb6349db4d30b11aab271fb14a82b8504f6aa8e}")
@@ -256,6 +291,12 @@ main() {
   [[ $openresty_version =~ ^[0-9]+(\.[0-9]+){3}$ ]] || die "cannot identify benchmark tools"
   printf '{"openresty":"%s","wrk":"%s"}\n' "$openresty_version" "$wrk_version" \
     > "$RESULT_DIR/tool-versions.json"
+  if [[ $mode == calibrate ]]; then
+    APIS=(ping find_one)
+    for WRK_CONNECTIONS in 8 16 32; do
+      for side in old new; do pass "$side" "$side-c$WRK_CONNECTIONS" 1 0; done
+    done
+  fi
   if [[ $mode == ab || $mode == all ]]; then
     for replicate in 1 2 3; do
       for side in old new; do pass "$side" "$side-$replicate" 1 "$((replicate - 1))"; done
@@ -274,6 +315,19 @@ main() {
     done
   fi
   collect
+  if [[ $mode == calibrate ]]; then
+    local connections calibration_rc
+    for connections in 8 16 32; do
+      calibration_rc=0
+      resty "$BENCH_DIR/compare.lua" --cpu-dir "$RESULT_DIR/cpu" --single \
+        "$RESULT_DIR/work/results/old-c$connections.jsonl" \
+        "$RESULT_DIR/work/results/new-c$connections.jsonl" \
+        > "$RESULT_DIR/calibrate-c$connections.md" || calibration_rc=$?
+      cat -- "$RESULT_DIR/calibrate-c$connections.md"
+      ((calibration_rc <= 1)) || return "$calibration_rc"
+      if ((calibration_rc == 1)); then STATUS=1; fi
+    done
+  fi
   # Compare only after collecting every pass: threshold failures do not abort trends.
   if [[ $mode == ab || $mode == all ]]; then
     local compare_rc=0
@@ -285,7 +339,7 @@ main() {
     local files=()
     if [[ $mode == all ]]; then files+=("$RESULT_DIR/work/results/new.jsonl"); fi
     for tag in 6.0 7.0 8.0 9.0; do files+=("$RESULT_DIR/work/results/new-$tag.jsonl"); done
-    resty "$BENCH_DIR/compare.lua" --trend "${files[@]}" > "$RESULT_DIR/trend.md"
+    resty "$BENCH_DIR/compare.lua" --trend --cpu-dir "$RESULT_DIR/cpu" "${files[@]}" > "$RESULT_DIR/trend.md"
     cat -- "$RESULT_DIR/trend.md"
   fi
   FINISHED=1

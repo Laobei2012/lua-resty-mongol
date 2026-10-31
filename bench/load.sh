@@ -6,6 +6,8 @@ BENCH_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 WORK=${WORK:-$BENCH_DIR}
 URL=${URL:-http://127.0.0.1:8090}
 RUN_BASE=${RUN_BASE:-0}
+WRK_THREADS=${WRK_THREADS-2}
+WRK_CONNECTIONS=${WRK_CONNECTIONS-16}
 
 die() {
   printf 'Error: %s\n' "$*" >&2
@@ -29,6 +31,11 @@ main() {
     usage
     exit 2
   }
+  if [[ ! $WRK_THREADS =~ ^[1-9][0-9]*$ || ! $WRK_CONNECTIONS =~ ^[1-9][0-9]*$ ]] \
+    || ! awk -v threads="$WRK_THREADS" -v connections="$WRK_CONNECTIONS" 'BEGIN {exit !(threads <= connections)}'; then
+    printf 'Error: WRK_THREADS and WRK_CONNECTIONS must be positive integers; threads must not exceed connections\n' >&2
+    exit 2
+  fi
   local label=$1 api=$2 runs=$3
   [[ $label =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || die "invalid label"
   case $api in
@@ -62,21 +69,36 @@ main() {
   trap 'rm -rf -- "${TEMPORARY:?}"' EXIT
   # Warm-up uses the same response/error validation as a measured run.
   export BENCH_RUN=0
-  wrk -t1 -c8 --timeout 10s -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
+  wrk "-t$WRK_THREADS" "-c$WRK_CONNECTIONS" --timeout 10s -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
     "$URL/$api" > "$WORK/logs/$label-$api-warmup.log" 2>&1
   check_log
+  local reports=("$WORK/logs/$label-$api-warmup.log")
   local i report
   for ((i = 1; i <= runs; i++)); do
     export BENCH_RUN=$((RUN_BASE + i))
     report=$WORK/logs/$label-$api-$BENCH_RUN.log
-    wrk -t1 -c8 --timeout 10s -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
+    wrk "-t$WRK_THREADS" "-c$WRK_CONNECTIONS" --timeout 10s -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
       "$URL/$api" > "$report" 2>&1
     check_log
+    reports+=("$report")
     # wrk's human summary shares stdout with done(); only keep its JSON.
     [[ $(grep -c '^{' "$report") == 1 ]] || die "missing wrk JSON: $report"
     grep '^{' "$report" >> "$TEMPORARY/results.jsonl"
   done
   check_log
-  cat -- "$TEMPORARY/results.jsonl" >> "$WORK/results/$label.jsonl"
+  # The CPU interval includes preflight, warm-up and every measured run.
+  local interval_requests
+  interval_requests=$(awk -F '"requests":' '
+    BEGIN { total = 1 }
+    /^\{/ {
+      split($2, count, /[,}]/)
+      if (NF != 2 || count[1] !~ /^[1-9][0-9]*$/) exit 1
+      total += count[1]
+      rows++
+    }
+    END { if (rows != ARGC - 1) exit 1; printf "%.0f\n", total }
+  ' "${reports[@]}") || die "missing or invalid wrk request counts"
+  awk -v count="$interval_requests" '{sub(/}$/, ",\"interval_requests\":" count "}"); print}' \
+    "$TEMPORARY/results.jsonl" >> "$WORK/results/$label.jsonl"
 }
 main "$@"

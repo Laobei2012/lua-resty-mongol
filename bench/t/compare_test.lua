@@ -3,6 +3,9 @@ local json = require "cjson.safe"
 local old_path, new_path = "bench/t/old.jsonl", "bench/t/new.jsonl"
 local temporary = {}
 local checks = 0
+local cpu_dir = os.tmpname()
+os.remove(cpu_dir)
+assert(os.execute("mkdir " .. cpu_dir))
 
 local function check(condition, message)
     checks = checks + 1
@@ -114,6 +117,134 @@ local function tests()
     check(code == 0 and output:find("4.4.29 p99 (ms)", 1, true)
         and output:find("9.0.0 p99 (ms)", 1, true), "five-file trend including 4.4")
 
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 1 and output:find("| invalid |", 1, true), "empty CPU directory cannot pass")
+    check(output:find("No API was gated", 1, true), "zero-gate explanation")
+
+    for _, path in ipairs({old_path, new_path}) do
+        for _, row in ipairs(read_rows(path)) do
+            for _, container in ipairs({"nginx", "wrk", "mongo"}) do
+                for _, phase in ipairs({"before", "after"}) do
+                    local file = assert(io.open(cpu_dir .. "/" .. row.label .. "-" .. row.api .. "-" .. phase .. "-" .. container .. ".stat", "w"))
+                    file:write("unavailable: cgroup v2 cpu.stat is not readable\n")
+                    file:close()
+                end
+            end
+        end
+    end
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 1 and output:find("No API was gated", 1, true), "cgroup v1 counters cannot pass")
+    check(output:find("counters unavailable", 1, true), "unavailable remains invalid")
+
+    -- CPU validity applies to each label/API interval before the median gate.
+    local function counters(container, usage, throttled, periods)
+        for _, path in ipairs({old_path, new_path}) do
+            for _, row in ipairs(read_rows(path)) do
+                for _, phase in ipairs({"before", "after"}) do
+                    local file = assert(io.open(cpu_dir .. "/" .. row.label .. "-" .. row.api .. "-" .. phase .. "-" .. container .. ".stat", "w"))
+                    local after = phase == "after"
+                    file:write(string.format("sample_time_epoch %d\ncgroup v2\nusage_usec %d\nnr_periods %d\nnr_throttled %d\nthrottled_usec 0\n",
+                        after and 140 or 100, after and usage or 0, after and periods or 0, after and throttled or 0))
+                    file:close()
+                end
+            end
+        end
+    end
+    counters("nginx", 36000000, 0, 400)
+    counters("mongo", 10000000, 3, 400)
+    counters("wrk", 10000000, 3, 400)
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 0 and output:find("| pass |", 1, true), "valid CPU boundaries")
+    counters("nginx", 12000000, 0, 400)
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 0 and output:find("| pass |", 1, true), "nginx at 0.3 cores without throttling is valid and gated")
+    check(not output:find("CPU s /", 1, true) and not output:find("requires >= 0.9", 1, true), "old core rule and message removed")
+    for _, container in ipairs({"nginx", "mongo", "wrk"}) do
+        counters(container, 12000000, 4, 400)
+        code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+        check(code == 1 and output:find("| invalid |", 1, true), container .. " one percent inclusive")
+        check(output:find(container .. " throttled", 1, true) and output:find("1.000%", 1, true), "throttle condition and value")
+        counters(container, 12000000, 0, 400)
+    end
+    local counted_old = changed(old_path, function(row) row.interval_requests = 400 end)
+    local counted_new = changed(new_path, function(row) row.interval_requests = 800 end)
+    code, output = run({"--cpu-dir", cpu_dir, counted_old, counted_new})
+    check(code == 0 and output:find("| pass |", 1, true), "CPU/request does not gate")
+    check(output:find("| old | ping | valid | 30000.000 |", 1, true), "per-pass CPU/request uses exact interval count")
+    check(output:find("| ping | 30000.000 | 15000.000 |", 1, true), "old/new CPU per request side by side")
+    local inconsistent = changed(counted_new, function(row) row.interval_requests = row.run * 100 end)
+    rejected({"--cpu-dir", cpu_dir, counted_old, inconsistent}, "inconsistent interval_requests")
+    for _, value in ipairs({0, -1, 1.5, false, "400"}) do
+        local invalid_count = changed(new_path, function(row) row.interval_requests = value end)
+        rejected({"--cpu-dir", cpu_dir, counted_old, invalid_count}, "invalid interval_requests")
+    end
+    local costly = changed(new_path, function(row) row.interval_requests = 1 end)
+    code, output = run({"--cpu-dir", cpu_dir, counted_old, costly})
+    check(code == 0 and output:find("| pass |", 1, true), "arbitrarily large CPU/request leaves pass unchanged")
+    local slow_counted = changed(slow, function(row) row.interval_requests = 400 end)
+    code, output = run({"--cpu-dir", cpu_dir, counted_old, slow_counted})
+    check(code == 1 and output:find("| fail |", 1, true), "CPU/request leaves threshold failure unchanged")
+    counters("nginx", 12000000, 0, 0)
+    code, output = run({"--cpu-dir", cpu_dir, counted_old, counted_new})
+    check(code == 1 and output:find("nginx counters unavailable", 1, true), "nginx zero periods unavailable")
+    check(not output:find("30000.000", 1, true) and not output:find("15000.000", 1, true), "no CPU/request when nginx counters unavailable")
+    counters("nginx", 12000000, 0, 400)
+    counters("wrk", 10000000, 0, 0)
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 1 and output:find("| invalid |", 1, true), "unavailable periods cannot pass")
+    counters("wrk", 10000000, 3, 400)
+    local cpu_old_path = changed(old_path, function(row) row.label = row.label .. "-" .. row.run end)
+    local cpu_new_path = changed(new_path, function(row) row.label = row.label .. "-" .. row.run end)
+    -- Only one pass is bad: do not average it away with valid passes.
+    local old_rows, new_rows = read_rows(cpu_old_path), read_rows(cpu_new_path)
+    local all_cpu = {}
+    for _, path in ipairs({cpu_old_path, cpu_new_path}) do
+        for _, row in ipairs(read_rows(path)) do
+            for _, container in ipairs({"nginx", "mongo", "wrk"}) do
+                all_cpu[#all_cpu + 1] = {label=row.label, api=row.api, container=container,
+                    available=true, sample_time_epoch=40, usage_usec=36000000,
+                    nr_periods=400, nr_throttled=0, throttled_usec=0}
+            end
+        end
+    end
+    code, output = run({"--cpu-file", fixture(all_cpu), cpu_old_path, cpu_new_path})
+    check(code == 0 and output:find("| pass |", 1, true), "public CPU delta format")
+    local pooled_old = changed(cpu_old_path, function(row) row.interval_requests = row.run * 100 end)
+    local pooled_new = changed(cpu_new_path, function(row) row.interval_requests = row.run * 200 end)
+    code, output = run({"--cpu-file", fixture(all_cpu), pooled_old, pooled_new})
+    check(code == 0 and output:find("| ping | 180000.000 | 90000.000 |", 1, true), "CPU/request pools distinct passes by request count")
+    all_cpu[1].nr_throttled = 4
+    code, output = run({"--cpu-file", fixture(all_cpu), cpu_old_path, cpu_new_path})
+    check(code == 1 and output:find("| invalid |", 1, true), "one invalid pass invalidates API")
+    for _, rows in ipairs({old_rows, new_rows}) do
+        for _, row in ipairs(rows) do row.api = "find_one" end
+    end
+    for _, rows in ipairs({read_rows(cpu_old_path), read_rows(cpu_new_path)}) do
+        for _, row in ipairs(rows) do
+            for _, container in ipairs({"nginx", "mongo", "wrk"}) do
+                all_cpu[#all_cpu + 1] = {label=row.label, api="find_one", container=container,
+                    available=true, sample_time_epoch=40, usage_usec=36000000,
+                    nr_periods=400, nr_throttled=0, throttled_usec=0}
+            end
+        end
+    end
+    for _, row in ipairs(read_rows(cpu_old_path)) do old_rows[#old_rows+1] = row end
+    for _, row in ipairs(read_rows(cpu_new_path)) do row.rps=85; new_rows[#new_rows+1] = row end
+    code, output = run({"--cpu-file", fixture(all_cpu), fixture(old_rows), fixture(new_rows)})
+    check(code == 0 and output:find("| pass |", 1, true) and output:find("| invalid |", 1, true), "valid API gates independently of invalid API")
+    check(not output:find("No API was gated", 1, true), "mixed valid/invalid run actually gates APIs")
+    code, output = run({"--cpu-file", fixture({}), cpu_old_path, cpu_new_path})
+    check(code == 1 and output:find("| invalid |", 1, true), "missing public counters invalidate")
+    check(output:find("counters unavailable", 1, true), "unavailable explanation")
+
+    local one_old, one_new = {read_rows(old_path)[1]}, {read_rows(new_path)[1]}
+    code, output = run({"--single", fixture(one_old), fixture(one_new)})
+    check(code == 0 and output:find("| pass |", 1, true), "calibration single sample")
+
+    code, output = run({"--cpu-file", fixture({}), "--single", fixture(one_old), fixture(one_new)})
+    check(code == 1 and output:find("No API was gated", 1, true), "calibration with zero gates cannot pass")
+
+    rejected({"--single", old_path, new_path}, "--single")
     rejected({}, "usage")
     rejected({ "--trend" }, "usage")
     local absent = os.tmpname()
@@ -148,5 +279,6 @@ end
 
 local ok, err = pcall(tests)
 for _, path in ipairs(temporary) do os.remove(path) end
+os.execute("rm -rf " .. cpu_dir)
 assert(ok, err)
 print("compare: " .. checks .. " checks passed")

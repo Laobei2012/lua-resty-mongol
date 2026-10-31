@@ -48,10 +48,10 @@ spec:
           exec sleep infinity
       resources:
         requests:
-          cpu: 300m
+          cpu: 900m
           memory: 512Mi
         limits:
-          cpu: 300m
+          cpu: 1000m
           memory: 512Mi
       readinessProbe:
         exec:
@@ -73,10 +73,10 @@ spec:
           exec sleep infinity
       resources:
         requests:
-          cpu: 800m
+          cpu: 200m
           memory: 512Mi
         limits:
-          cpu: 800m
+          cpu: 300m
           memory: 512Mi
       readinessProbe:
         exec:

@@ -41,12 +41,13 @@ HTTP_KEYS = [
     "p99_ms",
     "non2xx",
     "socket_errors",
+    "interval_requests",
 ]
-CASES = {"encode_small", "decode_small", "encode_large", "decode_large"}
+CASES = {"encode_small", "decode_small", "encode_large", "decode_large", "decode_reply"}
 PLACEMENT_KEYS = ("kube_context", "mongo_node", "bench_node")
 PROFILE = {
-    "threads": 1,
-    "connections": 8,
+    "threads": 2,
+    "connections": 16,
     "timeout_s": 10,
     "warmup_s": 10,
     "sample_s": 30,
@@ -68,11 +69,11 @@ BLOBS = dict(
             "bench/k8s/mongo.yaml",
         ],
         [
-            "57d0d88491f9cf7c085b2dbacf7fe186a2fd6168",
-            "a350923b805c945ad67b92611882a80270dded61",
-            "4695c45fce8bdc164e23837b5a1fefffee46754d",
-            "6b9342ff998a3c05ff1b7b9c9160dcc94c85f48d",
-            "09bcd0e11f49a79609218d1acf2ccea3d6bde80e",
+            "d48ad9579fc7fc58ff62cb6d4bde4b0216448d41",
+            "bebf6354c6b13e4217048acbc14f3ac0cfd38b49",
+            "6a75cd693cb6f83ae88fb3af2510ffa35ab58241",
+            "a0b7756a50c85d716f49f455f9ee6188f62cddc6",
+            "7c87be1096f958d8f92d8b10a12e578f78e6a6c4",
         ],
     )
 )
@@ -174,6 +175,10 @@ def validate_http(
         )
         require(all(number(row[k]) for k in HTTP_KEYS[4:]), "invalid HTTP metric")
         require(
+            type(row["interval_requests"]) is int and row["interval_requests"] > 0,
+            "invalid interval request count",
+        )
+        require(
             row["rps"] > 0
             and 0 <= row["p50_ms"] <= row["p90_ms"] <= row["p99_ms"]
             and row["p99_ms"] > 0,
@@ -183,6 +188,11 @@ def validate_http(
             row["non2xx"] == row["socket_errors"] == 0, "invalid HTTP/socket errors"
         )
     require(seen == expected, "incomplete HTTP API/run coverage")
+    for api in {row["api"] for row in data}:
+        require(
+            len({row["interval_requests"] for row in data if row["api"] == api}) == 1,
+            "inconsistent interval request counts",
+        )
     return [{key: row[key] for key in HTTP_KEYS} for row in data]
 
 
@@ -241,7 +251,7 @@ def validate(directory: Path) -> dict:
         files[side] = joined
         bson = rows(directory / f"bson-{side}.jsonl")
         require(
-            len(bson) == 4 and {row.get("case") for row in bson} == CASES,
+            len(bson) == len(CASES) and {row.get("case") for row in bson} == CASES,
             "incomplete BSON cases",
         )
         require(
@@ -302,6 +312,9 @@ def validate(directory: Path) -> dict:
 
 def compare(paths: list[Path], *, trend: bool) -> str:
     command = ["resty", str(BENCH / "compare.lua")]
+    cpu_file = paths[0].parent / "cpu.jsonl"
+    if cpu_file.is_file():
+        command += ["--cpu-file", str(cpu_file)]
     result = subprocess.run(
         command + (["--trend"] if trend else []) + [str(path) for path in paths],
         text=True,
@@ -337,12 +350,12 @@ def render(runs: list[dict], output: Path) -> None:
         "",
         (
             "Three complete all invocations; each API uses the median of three measured samples. "
-            "Only Mongo 4.4 A/B gates: rps ratio >= 0.90 and p99 ratio <= 1.20. Trends do not gate."
+            "Only valid Mongo 4.4 A/B APIs gate: rps ratio >= 0.90 and p99 ratio <= 1.20. Invalid APIs count as neither pass nor fail. Trends do not gate."
         ),
         "",
         (
-            "Cluster context, node identities and node types are private. The configured containers use equal requests and limits: "
-            "Mongo 400m/4Gi, nginx 300m/512Mi, wrk 800m/512Mi, clone 200m/128Mi. "
+            "Cluster context, node identities and node types are private. CPU request/limit and memory: "
+            "Mongo 1000m/2000m and 4Gi, nginx 900m/1000m and 512Mi, wrk 200m/300m and 512Mi, clone 200m/200m and 128Mi. Mongo, nginx and wrk have CPU requests below limits and are Burstable; clone has equal requests and limits by owner decision (2026-10-30). "
             "Mongo cache is 1.5GiB; data emptyDir is 10Gi and ephemeral storage limit 12Gi."
         ),
         "",
@@ -352,7 +365,7 @@ def render(runs: list[dict], output: Path) -> None:
         ),
         "",
         (
-            "One thread, eight connections, 10s socket timeout, 10s warm-up and 30s samples. "
+            "Two threads, 16 connections, 10s socket timeout, 10s warm-up and 30s samples. "
             "BSON: at most 1,000 warm-up operations, stopping at 1s (checked every 50 operations); "
             "measure in batches of 100 operations until the first batch ends at or after 2s per case. "
             "Authentication is enabled; a gain on /auth includes the new driver's cached salted password optimization."
@@ -373,7 +386,7 @@ def render(runs: list[dict], output: Path) -> None:
                 "".join(json.dumps(row, sort_keys=True) + "\n" for row in run["cpu"])
             )
             table = compare([target / "old.jsonl", target / "new.jsonl"], trend=False)
-            for line in table.splitlines()[2:]:
+            for line in table.split("\nCPU validity", 1)[0].strip().splitlines()[2:]:
                 cells = [cell.strip() for cell in line.split("|")[1:-1]]
                 outcomes.setdefault(cells[0], []).append(cells[-1])
             lines += [
@@ -443,7 +456,10 @@ def render(runs: list[dict], output: Path) -> None:
                 "",
                 (
                     "CPU intervals include warm-up and measurement and sequential snapshot overhead; these are approximate cgroup deltas, "
-                    "not isolated per-request CPU costs. Missing counters are unavailable. CPU caps and throttling can limit these measurements; "
+                    "nginx CPU/request divides usage_usec by completed preflight, warm-up and measured requests in the same interval. "
+                    "It is informational and does not gate; A/B costs pool CPU and request counts across distinct passes. "
+                    "Every container must have less than 1% throttled periods for an API/pass to be valid. "
+                    "Missing counters are unavailable. CPU caps and throttling can limit these measurements; "
                     "missing diagnostics cannot establish absence of saturation."
                 ),
                 "",
@@ -503,6 +519,11 @@ def series(directory: Path, *, reuse: list[Path] | None = None) -> None:
         ),
         "required runner environment is missing",
     )
+    require(
+        os.environ.get("WRK_THREADS", "2") == "2"
+        and os.environ.get("WRK_CONNECTIONS", "16") == "16",
+        "series requires the approved two-thread, 16-connection profile",
+    )
     new_sha = git("rev-parse", os.environ["NEW_REF"] + "^{commit}")
     old_sha = git("rev-parse", os.environ.get("OLD_REF", "3eb6349") + "^{commit}")
     source = {path: git("rev-parse", f"{new_sha}:{path}") for path in BLOBS}
@@ -561,6 +582,8 @@ def series(directory: Path, *, reuse: list[Path] | None = None) -> None:
             "NEW_REF": new_sha,
             "OLD_REF": old_sha,
             "RUN_RESULT_DIR": str(result_dir),
+            "WRK_THREADS": "2",
+            "WRK_CONNECTIONS": "16",
         }
         returncode = run_all(result_dir, environment=environment)
         require(returncode in (0, 1), "all runner failed; inspect private series log")
