@@ -66,6 +66,14 @@ error invalidates the load and returns nonzero. A failed API does not
 append partial results; earlier successful APIs may remain in the file,
 so only use result files from passes that exited successfully.
 
+Run the BSON micro benchmark with
+`resty -I /path/to/driver/lib bench/bson_micro.lua`. Each of its four cases
+collects garbage, then warms up for at most 1,000 operations, stopping when
+one second has elapsed (checked every 50 operations). Measurement uses batches
+of 100 operations and checks the clock once per batch, stopping after the first
+batch that ends at or after two seconds. Each JSON line reports `case` and
+`ops_per_s`, calculated as the measured operation count divided by elapsed time.
+
 Deterministic scaffold checks require Bash and a `lua` interpreter:
 
 ```bash

@@ -51,7 +51,10 @@ PROFILE = {
     "warmup_s": 10,
     "sample_s": 30,
     "samples": 3,
-    "bson_warmup": 100000,
+    "bson_warmup": 1000,
+    "bson_warmup_seconds": 1,
+    "bson_warmup_batch": 50,
+    "bson_measure_batch": 100,
     "bson_seconds": 2,
 }
 # Git blobs pin the approved workload and configured resource limits, not refs or identities.
@@ -66,7 +69,7 @@ BLOBS = dict(
         ],
         [
             "57d0d88491f9cf7c085b2dbacf7fe186a2fd6168",
-            "ae48a3ade0f915b5171110e3a05570bcc0803b09",
+            "a350923b805c945ad67b92611882a80270dded61",
             "4695c45fce8bdc164e23837b5a1fefffee46754d",
             "6b9342ff998a3c05ff1b7b9c9160dcc94c85f48d",
             "09bcd0e11f49a79609218d1acf2ccea3d6bde80e",
@@ -350,7 +353,8 @@ def render(runs: list[dict], output: Path) -> None:
         "",
         (
             "One thread, eight connections, 10s socket timeout, 10s warm-up and 30s samples. "
-            "BSON: 100,000 warm-up operations and 2s measurements per case. "
+            "BSON: at most 1,000 warm-up operations, stopping at 1s (checked every 50 operations); "
+            "measure in batches of 100 operations until the first batch ends at or after 2s per case. "
             "Authentication is enabled; a gain on /auth includes the new driver's cached salted password optimization."
         ),
         "",

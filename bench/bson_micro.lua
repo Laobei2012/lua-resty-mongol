@@ -16,13 +16,19 @@ for i = 1, 1000 do
 end
 local function measure(name, operation, value)
     collectgarbage("collect")
-    for _ = 1, 100000 do operation(value) end
+    ngx.update_time()
+    local warmup_start = ngx.now()
+    for _ = 1, 20 do
+        for _ = 1, 50 do operation(value) end
+        ngx.update_time()
+        if ngx.now() - warmup_start >= 1 then break end
+    end
     ngx.update_time()
     local start = ngx.now()
     local count, elapsed = 0, 0
     repeat
-        operation(value)
-        count = count + 1
+        for _ = 1, 100 do operation(value) end
+        count = count + 100
         ngx.update_time()
         elapsed = ngx.now() - start
     until elapsed >= 2

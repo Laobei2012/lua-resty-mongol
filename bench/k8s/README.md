@@ -31,7 +31,8 @@ nginx at 300m and wrk at 800m CPU, on a fixed pair of nodes in the same region.
 Requests equal limits for every container, including the 200m clone init
 container, preserving Guaranteed QoS. Memory, Mongo cache and storage are
 unchanged. The throughput and p99 thresholds, interleaved runs, three complete
-`all` invocations, and BSON warm-ups and measurement durations remain unchanged.
+`all` invocations remain unchanged. BSON warm-up and measurement timing are
+described below.
 
 Each API saves before/after cgroup v2 `cpu.stat` for nginx, wrk and Mongo in the
 local result directory's `cpu/` folder, with sample timestamps. The interval
@@ -54,8 +55,10 @@ the resource capacity specified in the manifests. No custom image is needed.
 
 `bson_micro.lua` also runs directly with
 `resty -I /path/to/driver/lib bench/bson_micro.lua`. Its four cases each warm up
-for 100,000 operations and then measure for two seconds. Large-case warm-up can
-take several minutes on the old driver.
+for at most 1,000 operations, stopping when one second has elapsed (checked every
+50 operations). Measurement runs in batches of 100 operations, checking the
+clock once per batch and stopping after the first batch that ends at or after
+two seconds. `ops_per_s` is the measured operation count divided by elapsed time.
 
 The runner falls back from kubectl cp to a tar stream before cleanup. If both
 methods fail, shared files cannot be recovered; local pod and container diagnostics
