@@ -59,6 +59,18 @@ end
 
 local be_uint_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
+	if type ( i ) == "number" and type ( j ) == "number" and i >= 1 and j <= #s then
+		if j - i == 3 then
+			local a , b , c , d = strbyte ( s , i , j )
+			return a * 16777216 + b * 65536 + c * 256 + d
+		elseif j - i == 2 then
+			local a , b , c = strbyte ( s , i , j )
+			return a * 65536 + b * 256 + c
+		elseif j - i == 1 then
+			local a , b = strbyte ( s , i , j )
+			return a * 256 + b
+		end
+	end
 	local b = { strbyte ( s , i , j ) }
 	local n = 0
 	for k=1 , #b do
@@ -70,6 +82,16 @@ local num_to_be_uint = function ( n , bytes )
 	bytes = bytes or 4
 	if n < 0 or n >= 2^(8*bytes) or n ~= floor ( n ) then
 		return nil , "number out of range"
+	end
+	if type ( bytes ) == "number" then
+		if bytes == 4 then
+			return strchar ( floor ( n / 16777216 ) , floor ( n / 65536 ) % 256 ,
+			                 floor ( n / 256 ) % 256 , n % 256 )
+		elseif bytes == 3 then
+			return strchar ( floor ( n / 65536 ) , floor ( n / 256 ) % 256 , n % 256 )
+		elseif bytes == 2 then
+			return strchar ( floor ( n / 256 ) , n % 256 )
+		end
 	end
 	local b = { }
 	for i=bytes , 1 , -1 do

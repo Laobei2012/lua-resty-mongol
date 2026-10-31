@@ -1,0 +1,4 @@
+t/ll.t .. ok
+All tests successful.
+Files=1, Tests=21,  1 wallclock secs ( 0.01 usr  0.00 sys +  0.09 cusr  0.09 csys =  0.19 CPU)
+Result: PASS

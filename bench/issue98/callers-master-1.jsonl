@@ -1,0 +1,9 @@
+{"case":"wire_ping","wall_seconds":2,"cpu_seconds":1.967324,"ops_per_s":968150,"cpu_ns_per_op":1016.0223105924,"count":1936300}
+{"ops_per_s":436400,"case":"wire_insert","wall_seconds":2,"cpu_seconds":1.997904,"count":872800,"cpu_ns_per_op":2289.074243813}
+{"count":3365700,"cpu_ns_per_op":593.48783314021,"ops_per_s":1682850,"case":"encode_small","wall_seconds":2,"cpu_seconds":1.997502}
+{"case":"encode_large","wall_seconds":2.0030000209808,"cpu_seconds":2.000227,"ops_per_s":15676.485107885,"cpu_ns_per_op":63701.496815287,"count":31400}
+{"count":1373800,"cpu_ns_per_op":1452.5855291891,"ops_per_s":686900,"case":"decode_small","wall_seconds":2,"cpu_seconds":1.995562}
+{"ops_per_s":6667000,"count":13334000,"cpu_ns_per_op":149.81325933703,"case":"encode_typed","wall_seconds":2,"cpu_seconds":1.99761}
+{"case":"decode_typed","wall_seconds":2,"cpu_seconds":1.997087,"ops_per_s":10402050,"count":20804100,"cpu_ns_per_op":95.994876010017}
+{"count":3722500,"cpu_ns_per_op":536.85668233714,"case":"objectid_generate","wall_seconds":2,"cpu_seconds":1.998449,"ops_per_s":1861250}
+{"wall_seconds":2,"cpu_seconds":1.997802,"case":"objectid_access","cpu_ns_per_op":4816.3018322083,"ops_per_s":207400,"count":414800}

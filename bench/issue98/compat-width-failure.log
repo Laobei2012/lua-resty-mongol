@@ -1,0 +1,37 @@
+
+#   Failed test 't/ll_be.t TEST 1: big-endian widths, byte order, boundaries and validation - status code ok'
+#   at /usr/local/share/perl/5.36.0/Test/Nginx/Socket.pm line 952.
+#          got: '500'
+#     expected: '200'
+
+#   Failed test 't/ll_be.t TEST 1: big-endian widths, byte order, boundaries and validation - response_body - response is expected (repeated req 0, req 0)'
+#   at /usr/local/share/perl/5.36.0/Test/Nginx/Socket.pm line 1685.
+#          got: '<html>
+# <head><title>500 Internal Server Error</title></head>
+# <body>
+# <center><h1>500 Internal Server Error</h1></center>
+# <hr><center>openresty/1.31.1.1</center>
+# </body>
+# </html>
+# '
+#     expected: 'big-endian bytes and validation ok
+# '
+
+#   Failed test 't/ll_be.t TEST 1: big-endian widths, byte order, boundaries and validation - pattern "[error]" should not match any line in error.log but matches line "2026/10/31 03:04:46 [error] 18#18: *1 lua entry thread aborted: runtime error: content_by_lua(nginx.conf:42):32: assertion failed!" (req 0)
+# stack traceback:
+# coroutine 0:
+# 	[C]: in function 'assert'
+# '
+#   at /usr/local/share/perl/5.36.0/Test/Nginx/Socket.pm line 1356.
+# Looks like you failed 3 tests of 12.
+t/ll_be.t ..
+Dubious, test returned 3 (wstat 768, 0x300)
+Failed 3/12 subtests
+
+Test Summary Report
+-------------------
+t/ll_be.t (Wstat: 768 (exited 3) Tests: 12 Failed: 3)
+  Failed tests:  4-6
+  Non-zero exit status: 3
+Files=1, Tests=12,  1 wallclock secs ( 0.01 usr  0.00 sys +  0.08 cusr  0.04 csys =  0.13 CPU)
+Result: FAIL

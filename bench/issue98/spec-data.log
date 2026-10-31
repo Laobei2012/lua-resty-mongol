@@ -1,0 +1,5 @@
+mkdir -p t/spec/bson-corpus
+curl -sSfL https://codeload.github.com/mongodb/specifications/tar.gz/9ea18a92308ed437e16dd95e6ff9c496daa61ecd \
+	| tar xz -C t/spec/bson-corpus --strip-components=4 \
+		specifications-9ea18a92308ed437e16dd95e6ff9c496daa61ecd/source/bson-corpus/tests
+touch t/spec/bson-corpus/.done

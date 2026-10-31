@@ -1,0 +1,9 @@
+{"case":"wire_ping","wall_seconds":2,"cpu_seconds":1.997556,"count":2030500,"cpu_ns_per_op":983.77542477222,"ops_per_s":1015250}
+{"count":882500,"cpu_ns_per_op":2264.4815864023,"wall_seconds":2,"cpu_seconds":1.998405,"ops_per_s":441250,"case":"wire_insert"}
+{"count":3870200,"case":"encode_small","wall_seconds":2,"cpu_seconds":1.997047,"ops_per_s":1935100,"cpu_ns_per_op":516.00614955299}
+{"count":31500,"case":"encode_large","wall_seconds":2.0010001659393,"cpu_seconds":1.999407,"ops_per_s":15742.127630066,"cpu_ns_per_op":63473.238095238}
+{"count":1379700,"case":"decode_small","wall_seconds":2,"cpu_seconds":1.997285,"ops_per_s":689850,"cpu_ns_per_op":1447.6226715953}
+{"ops_per_s":6964250,"case":"encode_typed","wall_seconds":2,"cpu_seconds":1.997523,"count":13928500,"cpu_ns_per_op":143.41264314176}
+{"count":20839100,"cpu_ns_per_op":95.807736418559,"case":"decode_typed","wall_seconds":2,"cpu_seconds":1.996547,"ops_per_s":10419550}
+{"count":3707800,"cpu_ns_per_op":538.92847510653,"case":"objectid_generate","wall_seconds":2,"cpu_seconds":1.998239,"ops_per_s":1853900}
+{"cpu_ns_per_op":4865.8183146615,"count":410600,"case":"objectid_access","wall_seconds":2,"cpu_seconds":1.997905,"ops_per_s":205300}
