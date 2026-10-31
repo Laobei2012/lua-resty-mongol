@@ -1,0 +1,4 @@
+t/wire.t .. ok
+All tests successful.
+Files=1, Tests=42,  3 wallclock secs ( 0.01 usr  0.01 sys +  0.19 cusr  0.27 csys =  0.48 CPU)
+Result: PASS

@@ -1,0 +1,17 @@
+{"case":"num_to_le_uint","wall_seconds":2,"cpu_seconds":1.995352,"ops_per_s":103571450,"count":207142900,"cpu_ns_per_op":9.6327318001245}
+{"cpu_ns_per_op":9.8464386296494,"count":202961200,"case":"num_to_le_int","wall_seconds":2,"cpu_seconds":1.998445,"ops_per_s":101480600}
+{"case":"le_int_to_num","wall_seconds":2,"cpu_seconds":1.997429,"ops_per_s":590468600,"cpu_ns_per_op":1.6913930732303,"count":1180937200}
+{"count":34803600,"case":"num_to_be_uint_2","wall_seconds":2,"cpu_seconds":1.998252,"ops_per_s":17401800,"cpu_ns_per_op":57.415094990173}
+{"wall_seconds":2,"cpu_seconds":1.998281,"ops_per_s":44694150,"cpu_ns_per_op":22.355062127818,"count":89388300,"case":"be_uint_to_num_2"}
+{"case":"num_to_be_uint_3","wall_seconds":2,"cpu_seconds":1.99738,"ops_per_s":8032050,"cpu_ns_per_op":124.33812040513,"count":16064100}
+{"wall_seconds":2,"count":42102900,"ops_per_s":21051450,"cpu_ns_per_op":47.467086590235,"cpu_seconds":1.998502,"case":"be_uint_to_num_3"}
+{"wall_seconds":2,"case":"num_to_be_uint_4","count":15911200,"cpu_seconds":1.998947,"ops_per_s":7955600,"cpu_ns_per_op":125.63144200312}
+{"count":393900,"cpu_ns_per_op":5071.0764153338,"ops_per_s":196950,"case":"be_uint_to_num_4","wall_seconds":2,"cpu_seconds":1.997497}
+{"ops_per_s":187923200,"cpu_ns_per_op":5.3137558321697,"count":375846400,"case":"to_double","wall_seconds":2,"cpu_seconds":1.997156}
+{"cpu_seconds":1.996902,"ops_per_s":209878400,"cpu_ns_per_op":4.7572832649763,"count":419756800,"case":"from_double","wall_seconds":2}
+{"wall_seconds":2,"cpu_seconds":1.997072,"ops_per_s":203055250,"cpu_ns_per_op":4.9175581522763,"count":406110500,"case":"int64_to_le"}
+{"count":112791700,"cpu_ns_per_op":17.591294394889,"case":"le_to_int64","wall_seconds":2,"cpu_seconds":1.984152,"ops_per_s":56395850}
+{"case":"is_int64","cpu_seconds":1.998465,"ops_per_s":498795400,"cpu_ns_per_op":2.003291329471,"wall_seconds":2,"count":997590800}
+{"wall_seconds":2,"cpu_seconds":1.99896,"ops_per_s":44211300,"cpu_ns_per_op":22.606890093709,"count":88422600,"case":"extract_bits"}
+{"cpu_seconds":1.998434,"ops_per_s":142534000,"cpu_ns_per_op":7.0103764715787,"count":285068000,"case":"le_bpeek","wall_seconds":2}
+{"count":289163400,"cpu_seconds":1.996325,"ops_per_s":144581700,"cpu_ns_per_op":6.9037955702554,"wall_seconds":2,"case":"be_bpeek"}

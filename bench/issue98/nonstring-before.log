@@ -1,0 +1,37 @@
+
+#   Failed test 't/ll_be.t TEST 5: non-string big-endian inputs retain coercion and errors - status code ok'
+#   at /usr/local/share/perl/5.36.0/Test/Nginx/Socket.pm line 952.
+#          got: '500'
+#     expected: '200'
+
+#   Failed test 't/ll_be.t TEST 5: non-string big-endian inputs retain coercion and errors - response_body - response is expected (repeated req 0, req 0)'
+#   at /usr/local/share/perl/5.36.0/Test/Nginx/Socket.pm line 1685.
+#          got: '<html>
+# <head><title>500 Internal Server Error</title></head>
+# <body>
+# <center><h1>500 Internal Server Error</h1></center>
+# <hr><center>openresty/1.31.1.1</center>
+# </body>
+# </html>
+# '
+#     expected: 'non-string compatibility ok
+# '
+
+#   Failed test 't/ll_be.t TEST 5: non-string big-endian inputs retain coercion and errors - pattern "[error]" should not match any line in error.log but matches line "2026/10/31 03:22:05 [error] 14#14: *1 lua entry thread aborted: runtime error: /work/lib/resty/mongol/ll.lua:62: attempt to get length of local 's' (a number value)" (req 0)
+# stack traceback:
+# coroutine 0:
+# 	/work/lib/resty/mongol/ll.lua: in function 'be_uint_to_num'
+# '
+#   at /usr/local/share/perl/5.36.0/Test/Nginx/Socket.pm line 1356.
+# Looks like you failed 3 tests of 15.
+t/ll_be.t ..
+Dubious, test returned 3 (wstat 768, 0x300)
+Failed 3/15 subtests
+
+Test Summary Report
+-------------------
+t/ll_be.t (Wstat: 768 (exited 3) Tests: 15 Failed: 3)
+  Failed tests:  1-3
+  Non-zero exit status: 3
+Files=1, Tests=15,  1 wallclock secs ( 0.01 usr  0.00 sys +  0.07 cusr  0.05 csys =  0.13 CPU)
+Result: FAIL

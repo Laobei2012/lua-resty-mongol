@@ -1,0 +1,2 @@
+{"ops_per_s":2132450,"cpu_ns_per_op":468.40183826116,"count":4264900,"case":"objectid_generate","wall_seconds":2,"cpu_seconds":1.997687}
+{"case":"objectid_access","count":413600,"cpu_seconds":1.997082,"ops_per_s":206800,"cpu_ns_per_op":4828.5348162476,"wall_seconds":2}
