@@ -6,15 +6,36 @@ Baseline: `d38bc7e034fa6643d58fad4f94a8f5775e94b0e0`, fetched from
 `5696ad09b6912ddf01134c69d21bd5e74cba1e4b` (#99).
 
 Harness and compatibility-test commit: `3319e14`.
-`bench/bson_micro.lua` is unchanged from #99. Candidate library source blob:
+`bench/bson_micro.lua` is unchanged from #99. Original candidate (`018b55a`) source blob:
 `c90313436023b9659a886c05b02530f80f4b246b`; SHA-256 of the library patch
 against master: `bb7d2a97a33cec4033c4314e187898f8f289183b95c06bfa4a202ea7bf990699`.
-The candidate adds 22 lines to `ll.lua`; all other library files are unchanged.
+That candidate adds 22 lines to `ll.lua`; all other library files are unchanged.
 
 Timing environment: native macOS/Darwin 25.5.0, arm64, OpenResty 1.31.8.1,
 resty CLI 0.29, LuaJIT 2.1.ROLLING. These are local, uncapped measurements.
 Test environment: Docker Linux/aarch64, OpenResty 1.31.1.1,
 Test::Nginx 0.32, MongoDB 8.0.34 where a server is needed.
+
+## Review follow-up: non-string inputs
+
+Regression-test commit: `7c5549f`. The reader fast path now also requires
+`type(s) == "string"`, so numeric inputs retain string.byte coercion and nil,
+boolean and cdata inputs retain their original error messages. The new test
+passes on `d38bc7e`, fails on `018b55a`, and passes with the guard. It checks
+`be_uint_to_num(12345678, 1, 4) == 825373492` and exact error text, excluding
+checkout-dependent source paths and line numbers.
+
+Final library blob: `3b61fcf4f0e0d64b7d99704962dd586eb4085dcd`;
+SHA-256 of the final library patch against `d38bc7e`:
+`7354aa37eeae3468683cf1d5951f6f8aba8d60799423b93c4dee01c1290977f1`.
+The original helper/control files below remain historical measurements of
+`018b55a`. For the final guard, three new interleaved baseline/candidate pairs
+are recorded in [objectid-nonstring-results.md](objectid-nonstring-results.md),
+with all CPU/wall samples and medians. Reproduce using
+`git worktree add /tmp/mongol-i98-baseline d38bc7e`, then
+`ruby bench/issue98/measure_objectid.rb`. The existing batched Lua harness and
+runtime are unchanged. Each case runs in a fresh process; all 12 measurements
+completed successfully before starting MongoDB or running other suites.
 
 ## Method and scope
 
@@ -55,8 +76,9 @@ Initial exploratory timings were superseded when an extra compatibility probe
 found that a cdata width could enter the candidate's fast path. The baseline
 throws for these widths. The added regression check failed on that exploratory
 implementation (9/12 TAP checks passed), then passed after adding a numeric-width
-guard. All accepted timing files were regenerated against the final guarded
-library. No exploratory timing is used in the conclusions.
+guard. The original timing files were regenerated after that numeric-width
+fix. The review follow-up above repeats ObjectID timings after the additional
+string-input guard. No exploratory timing is used in the conclusions.
 
 ## Compatibility and validation
 
@@ -78,19 +100,22 @@ at `/work`. Mongo-dependent suites shared the network namespace of the local
 
 | Command inside test container | Passed |
 | --- | --- |
-| `prove -I t/lib t/ll_be.t` on baseline | 12/12 |
-| `prove -I t/lib t/ll_be.t` on final candidate | 12/12 |
+| `prove -I t/lib t/ll_be.t` on baseline | 15/15 |
+| `prove -I t/lib t/ll_be.t` on final candidate | 15/15 |
 | `luacheck -q lib` | clean, exit 0 |
 | `prove -I t/lib t/bson.t` | 78/78 |
 | `prove -I t/lib t/ll.t` | 21/21 |
 | `prove -I t/lib t/objid.t` | 15/15 |
 | `prove -I t/lib t/wire.t` | 42/42 |
-| `prove -I t/lib t/bson_corpus.t` | 3/3 TAP checks, full corpus loop |
+| `prove -I t/lib t/bson_corpus.t` on `018b55a` | 3/3 TAP checks, full corpus loop; not rerun for this guard |
 
-Final candidate total: 171 TAP checks. `make spec-data` fetched the repository's
-pinned BSON corpus. No Kubernetes cluster, quota, validity rule, historical
-`docs/perf/` data, or `bench/k8s/` file was touched. The local MongoDB container
-was removed before the final timings. No `mongol-i98-` containers remain.
+Review follow-up total: 171 TAP checks across the five requested suites.
+Logs for this follow-up use the `nonstring-` prefix. Before the fix, the extended
+suite passed 12/15 checks on `018b55a`, failing the new regression block.
+The earlier `make spec-data` fetched the repository's pinned BSON corpus.
+No Kubernetes cluster, quota, validity rule, historical `docs/perf/` data, or
+`bench/k8s/` file was touched. Local MongoDB containers were removed after use.
+No `mongol-i98-` containers remain.
 
 Not run: full MongoDB 6–9 CI, authentication, TLS and replica-set configurations.
 These remain required acceptance checks; this report does not claim they passed.
@@ -99,14 +124,14 @@ owner's live run, as explicitly instructed. There is no live `/ping` claim.
 
 ## Samples and profile
 
-See [results.md](results.md) for every individual CPU/wall sample, medians,
+See [results.md](results.md) for the original individual CPU/wall samples, medians,
 relative wall changes, and the baseline profile table. Rebuild that table with
 `ruby bench/issue98/summarize.rb > bench/issue98/results.md`. The JSONL files
 are the raw measurement evidence.
 
 ## Disposition of every issue candidate
 
-CPU values below are median ns/op, master → candidate. Width lists are 2/3/4
+CPU values below are original median ns/op, master → `018b55a`. Width lists are 2/3/4
 bytes respectively. Only the two big-endian helpers were edited.
 
 | Candidate | CPU measurements | Disposition and caller evidence |
@@ -130,28 +155,28 @@ profile samples. Typed caller CPU medians are 146.68 → 146.14 ns for encoding
 and 95.81 → 96.26 ns for decoding. This is no evidence for changing any FFI
 implementation, removing substring copies, or weakening input handling.
 
-ObjectID generation wall samples are **1.86125, 2.14515, 1.85390 M ops/s**
-on master and **5.22345, 5.29930, 5.36415 M ops/s** on the candidate.
-Medians are **1.86125 → 5.29930 M ops/s (+184.7%)**. CPU samples are
-536.86, 465.36, 538.93 → 191.28, 188.54, 186.17 ns/op;
-medians **536.86 → 188.54 ns/op**.
+With the final string-input guard, ObjectID generation wall samples are
+**1.90155, 2.08785, 2.13245 M ops/s** on master and
+**4.99500, 5.26120, 5.29790 M ops/s** on the candidate.
+Medians are **2.08785 → 5.26120 M ops/s (2.52x)**. CPU samples are
+525.44, 476.43, 468.40 → 197.42, 189.55, 188.50 ns/op;
+medians **476.43 → 189.55 ns/op**.
 
-ObjectID access wall samples are **0.20740, 0.20740, 0.20530 M ops/s** and
-**231.58175, 226.67530, 227.90455 M ops/s**, respectively. Medians are
-**0.20740 → 227.90455 M ops/s**. CPU samples are
-4816.30, 4815.63, 4865.82 → 4.31, 4.40, 4.38 ns/op;
-medians **4816.30 → 4.38 ns/op**. The very large read ratio is specific to
+ObjectID access wall samples are **0.20540, 0.21120, 0.20680 M ops/s** and
+**232.04065, 230.63190, 225.35310 M ops/s**, respectively. Medians are
+**0.20680 → 230.63190 M ops/s**. CPU samples are
+4841.76, 4728.19, 4828.53 → 4.30, 4.33, 4.41 ns/op;
+medians **4828.53 → 4.33 ns/op**. The very large read ratio is specific to
 this warm arm64 LuaJIT workload and its slow generic four-byte read; it must
 not be extrapolated to live requests, x86, or other runtimes.
 
-No regression was measured in either relevant ObjectID caller. Broader controls
-are mixed: wire ping median −1.8%, wire insert −6.1%; CPU caller small encoding
-+4.7%, large encoding +1.1%; the unchanged BSON script reports small encoding
-−7.6%, large encoding +9.3%, and reply decoding −2.3%. Individual samples and
-medians are all retained, including these negative controls. These controls
-do not call the edited big-endian helpers. They neither demonstrate a further
-LE optimization nor establish general wire/BSON non-regression. The retained
-optimization and non-regression conclusion are scoped to ObjectID callers.
+No regression was measured in either relevant ObjectID caller. The original
+three-pair control samples remain in `results.md`. The reviewer subsequently
+ran five interleaved pairs: `wire_insert` was −0.2% and `encode_small` −6.6%,
+with fully overlapping ranges and about 20–35% run-to-run spread. Neither path
+calls the edited helpers. The reviewer concluded that these differences are
+within noise. These five-pair results are reviewer-provided; their raw samples
+are not part of this checkout. They do not justify further LE changes.
 
 ## Draft issue comment (not posted)
 
@@ -162,18 +187,23 @@ change earned inclusion.
 
 The retained patch specializes complete two-, three-, and four-byte BE reads
 and checked BE writes. Three interleaved local arm64/OpenResty 1.31.8.1 pairs
-improved ObjectID generation from median 1.86125 to 5.29930 M ops/s, with CPU
-cost 536.86 to 188.54 ns/op. All three ObjectID-access pairs also improved
-(CPU median 4816.30 to 4.38 ns/op). The unusually large access gain is specific
+after the final string-input compatibility guard improved ObjectID generation
+from median 2.08785 to 5.26120 M ops/s, with CPU cost 476.43 to 189.55 ns/op.
+All three ObjectID-access pairs also improved (CPU median 4828.53 to 4.33 ns/op).
+The guard preserves numeric coercion and baseline errors for non-string inputs.
+The unusually large access gain is specific
 to this warm runtime/workload; it is not a live-throughput claim. Other helpers
-remain unchanged, with measured deferrals. Some wire/BSON control medians were
-negative, so no broader non-regression claim is made.
+remain unchanged, with measured deferrals. The reviewer measured five
+interleaved control pairs: `wire_insert` −0.2% and `encode_small` −6.6%, with
+fully overlapping ranges and about 20–35% run-to-run spread. Neither path calls
+the changed helpers; these differences are within noise.
 
 The committed `bench/issue98/` report includes raw samples, medians, fresh
 sampling stacks, source/harness provenance and every candidate's disposition.
 Compatibility tests cover bounds, byte order, validation/errors, widths and
 offsets, ObjectID counter wraparound, and exact int64 representations. Lint
-and 171 local checks passed, including BSON corpus and MongoDB 8.0.34 caller
-tests. Full MongoDB 6–9/auth/TLS/replica-set CI and the owner's live CPU-quota
+and 171 requested local checks passed with the final guard, including MongoDB
+8.0.34 caller tests. The BSON corpus passed on the original optimization.
+Full MongoDB 6–9/auth/TLS/replica-set CI and the owner's live CPU-quota
 comparison remain outstanding. No cluster or historical performance data was
 changed.

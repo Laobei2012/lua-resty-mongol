@@ -59,7 +59,8 @@ end
 
 local be_uint_to_num = function ( s , i , j )
 	i , j = i or 1 , j or #s
-	if type ( i ) == "number" and type ( j ) == "number" and i >= 1 and j <= #s then
+	if type ( s ) == "string" and type ( i ) == "number" and type ( j ) == "number"
+	   and i >= 1 and j <= #s then
 		if j - i == 3 then
 			local a , b , c , d = strbyte ( s , i , j )
 			return a * 16777216 + b * 65536 + c * 256 + d

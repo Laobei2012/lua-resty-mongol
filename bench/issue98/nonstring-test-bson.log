@@ -1,0 +1,4 @@
+t/bson.t .. ok
+All tests successful.
+Files=1, Tests=78,  3 wallclock secs ( 0.02 usr  0.00 sys +  0.28 cusr  0.33 csys =  0.63 CPU)
+Result: PASS
