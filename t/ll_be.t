@@ -160,3 +160,31 @@ GET /t
 exact representations ok
 --- no_error_log
 [error]
+
+=== TEST 5: non-string big-endian inputs retain coercion and errors
+--- http_config eval: $::HttpConfig
+--- config
+    location /t {
+        content_by_lua_block {
+            local ll = require "resty.mongol.ll"
+            assert(ll.be_uint_to_num(12345678, 1, 4) == 825373492)
+            for _, case in ipairs({
+                {kind = "nil"},
+                {value = true, kind = "boolean"},
+                {value = 5LL, kind = "cdata"},
+            }) do
+                local ok, err = pcall(ll.be_uint_to_num, case.value, 1, 4)
+                assert(not ok)
+                -- Source paths and line numbers vary across checkouts.
+                assert(err:match(":%d+: (.*)$") ==
+                    "bad argument #1 to 'strbyte' (string expected, got " .. case.kind .. ")")
+            end
+            ngx.say("non-string compatibility ok")
+        }
+    }
+--- request
+GET /t
+--- response_body
+non-string compatibility ok
+--- no_error_log
+[error]
