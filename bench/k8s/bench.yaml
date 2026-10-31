@@ -48,7 +48,7 @@ spec:
           exec sleep infinity
       resources:
         requests:
-          cpu: 1000m
+          cpu: 900m
           memory: 512Mi
         limits:
           cpu: 1000m
@@ -73,7 +73,7 @@ spec:
           exec sleep infinity
       resources:
         requests:
-          cpu: 100m
+          cpu: 200m
           memory: 512Mi
         limits:
           cpu: 300m

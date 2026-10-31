@@ -39,11 +39,11 @@ free to reserve; the bench node has 1110m, covering nginx plus wrk's 1100m.
 | Container | CPU request | CPU limit | Memory request/limit |
 | --- | ---: | ---: | ---: |
 | Mongo | 1000m | 2000m | 4Gi |
-| nginx | 1000m | 1000m | 512Mi |
-| wrk | 100m | 300m | 512Mi |
+| nginx | 900m | 1000m | 512Mi |
+| wrk | 200m | 300m | 512Mi |
 | clone init | 200m | 200m | 128Mi |
 
-Mongo and wrk are Burstable by owner decision; both pods therefore have
+Mongo, nginx and wrk have CPU requests below limits and are Burstable by owner decision; both pods therefore have
 Burstable QoS. Memory, Mongo cache and storage are unchanged. The throughput
 and p99 thresholds (0.90 and 1.20), interleaved runs and three complete `all`
 invocations remain unchanged. BSON timing is described below.
@@ -224,3 +224,13 @@ python3 -m pytest -q bench/t/report_test.py
 bench/t/k8s_runner_test.sh
 resty bench/t/compare_test.lua
 ```
+
+Owner decision (2026-10-30): wrk requests 200m. The bench node has 1110m
+free to reserve, so nginx requests 900m and keeps its 1000m limit; nginx used
+at most 0.67 cores in calibration. The combined request stays 1100m, preserving
+the preflight minimum. Mongo stays at 1000m/2000m and clone at 200m/200m.
+All three runtime containers have requests below limits; clone remains equal.
+Memory is unchanged. The owner removed the minimum nginx CPU usage rule:
+nginx did not saturate in calibration (0.34–0.67 cores), and throttling is the
+check for whether the setup distorts a result. Throughput stopped rising at
+16 connections, so the default is `-t2 -c16`, including warm-up.

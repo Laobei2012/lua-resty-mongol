@@ -103,8 +103,8 @@ handler check; it uses `ctl.sh` to manage nginx and fixtures and expects
 one error from its intentionally empty read collection.
 
 The owner-approved CPU requests/limits (2026-10-30) are Mongo 1000m/2000m,
-nginx 1000m/1000m, wrk 100m/300m and clone init 200m/200m; memory is unchanged.
-Mongo and wrk are Burstable by owner decision. The earlier limits throttled
+nginx 900m/1000m, wrk 200m/300m and clone init 200m/200m; memory is unchanged.
+Mongo, nginx and wrk have CPU requests below limits and are Burstable by owner decision. The earlier limits throttled
 nginx and Mongo while wrk was lightly used. The new requests fit the available
 1100m on the Mongo node and 1110m on the bench node (1100m combined request).
 
@@ -124,3 +124,13 @@ For standalone saved results, use `resty bench/compare.lua --cpu-dir <cpu-dir>
 <old.jsonl> <new.jsonl>`. Without CPU arguments, legacy/local JSONL comparisons
 retain their existing threshold-only behavior. `--single` accepts one measured
 sample per API for calibration; full comparisons still require three.
+
+Owner decision (2026-10-30): wrk requests 200m. The bench node has 1110m
+free to reserve, so nginx requests 900m and keeps its 1000m limit; nginx used
+at most 0.67 cores in calibration. The combined request stays 1100m, preserving
+the preflight minimum. Mongo stays at 1000m/2000m and clone at 200m/200m.
+All three runtime containers have requests below limits; clone remains equal.
+Memory is unchanged. The owner removed the minimum nginx CPU usage rule:
+nginx did not saturate in calibration (0.34–0.67 cores), and throttling is the
+check for whether the setup distorts a result. Throughput stopped rising at
+16 connections, so the default is `-t2 -c16`, including warm-up.

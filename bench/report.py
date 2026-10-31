@@ -72,7 +72,7 @@ BLOBS = dict(
             "d48ad9579fc7fc58ff62cb6d4bde4b0216448d41",
             "bebf6354c6b13e4217048acbc14f3ac0cfd38b49",
             "6a75cd693cb6f83ae88fb3af2510ffa35ab58241",
-            "026139477ce4933c5b2d95df4597e4d669c314c6",
+            "a0b7756a50c85d716f49f455f9ee6188f62cddc6",
             "7c87be1096f958d8f92d8b10a12e578f78e6a6c4",
         ],
     )
@@ -355,7 +355,7 @@ def render(runs: list[dict], output: Path) -> None:
         "",
         (
             "Cluster context, node identities and node types are private. CPU request/limit and memory: "
-            "Mongo 1000m/2000m and 4Gi, nginx 1000m/1000m and 512Mi, wrk 100m/300m and 512Mi, clone 200m/200m and 128Mi. Mongo and wrk are Burstable by owner decision (2026-10-30). "
+            "Mongo 1000m/2000m and 4Gi, nginx 900m/1000m and 512Mi, wrk 200m/300m and 512Mi, clone 200m/200m and 128Mi. Mongo, nginx and wrk have CPU requests below limits and are Burstable; clone has equal requests and limits by owner decision (2026-10-30). "
             "Mongo cache is 1.5GiB; data emptyDir is 10Gi and ephemeral storage limit 12Gi."
         ),
         "",
