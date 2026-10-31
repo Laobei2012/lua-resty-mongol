@@ -92,7 +92,7 @@ printf 'ok - selectable connections/threads and invalid values exit 2\n'
 
 for api in connect_nopool ping; do
   reset_work
-  WRK_THREADS=3 WRK_CONNECTIONS=32 "$BENCH_DIR/load.sh" test "$api" 3
+  WRK_THREADS=3 WRK_CONNECTIONS=32 "$BENCH_DIR/load.sh" test "$api" 3 > "$TEMPORARY/rates"
   if [[ $api == connect_nopool ]]; then
     threads=2
     connections=4
@@ -103,6 +103,10 @@ for api in connect_nopool ping; do
   [[ $(grep -c -- "-t$threads -c$connections --timeout 10s -d10s" "$TEST_CALLS") == 1 ]] || fail "$api warmup load"
   [[ $(grep -c -- "-t$threads -c$connections --timeout 10s -d30s" "$TEST_CALLS") == 3 ]] || fail "$api measured load"
   [[ $(grep -c "\"connections\":${connections}[,}]" "$WORK/results/test.jsonl") == 3 ]] || fail "$api recorded connections"
+  grep -q "$api warm-up rps: 60.000000" "$TEMPORARY/rates" || fail "$api warmup rate"
+  for run in 1 2 3; do
+    grep -q "$api sample $run rps: 60.000000" "$TEMPORARY/rates" || fail "$api sample rate"
+  done
 done
 printf 'ok - connect_nopool fixed load and configured load for other APIs\n'
 

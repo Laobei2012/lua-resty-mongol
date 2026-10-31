@@ -75,6 +75,22 @@ elif [[ " $* " == *'cat /proc/sys/net/ipv4/ip_local_port_range'* ]]; then
     range-unreadable) exit 1 ;;
     *) printf '1024\t65535\n' ;;
   esac
+elif [[ " $* " == *'cat /proc/net/sockstat'* ]]; then
+  [[ " $* " == *'exec bench -c nginx -- cat '* ]]
+  printf '%s\n' "$$" >> "$SAMPLER_CHILDREN"
+  count=$(cat "$TW_COUNT_FILE")
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$TW_COUNT_FILE"
+  if [[ $SCENARIO == sampler-fail && $count -gt 1 ]]; then exit 1; fi
+  if [[ $SCENARIO == sampler-empty ]]; then printf 'TCP: inuse 4 orphan 0\n'; exit 0; fi
+  tw=20
+  if ((count > 1)); then
+    case $SCENARIO in
+      tw-limit) tw=51600 ;;
+      *) tw=51599 ;;
+    esac
+  fi
+  printf 'sockets: used 8\nTCP: inuse 4 orphan 0 tw %s alloc 6 mem 0\nUDP: inuse 2 mem 1\n' "$tw"
 elif [[ " $* " == *' nginx -v '* ]]; then
   printf 'nginx version: openresty/1.31.1.1\n' >&2
 elif [[ " $* " == *'wrk --version'* ]]; then
@@ -95,8 +111,19 @@ elif [[ ${1:-} == -n && ${3:-} == cp ]]; then
 elif [[ " $* " == *' tar -C /work '* ]]; then
   [[ ${SCENARIO:-} != copy-fail ]] || exit 1
   tar -cf - -T /dev/null
-elif [[ ${SCENARIO:-} == load-fail && " $* " == *'/load.sh '* ]]; then
-  exit 1
+elif [[ " $* " == *'/load.sh '* ]]; then
+  [[ ${SCENARIO:-} != load-fail ]] || exit 1
+  case ${SCENARIO:-} in
+    connect-success | tw-limit | sampler-fail)
+      # Keep the mock load alive through periodic sampling, with a bounded wait.
+      for ((attempt = 0; attempt < 1000; attempt++)); do
+        if [[ $(cat "$TW_COUNT_FILE") -ge 3 ]]; then exit 0; fi
+        if [[ $SCENARIO == sampler-fail && $(cat "$TW_COUNT_FILE") -ge 2 ]]; then exit 0; fi
+        /bin/sleep 0.01
+      done
+      exit 1
+      ;;
+  esac
 fi
 MOCK
 cat > "$TEMPORARY/bin/wrk" << 'MOCK'
@@ -124,19 +151,38 @@ if [[ ${SCENARIO:-} == no-gates ]]; then printf 'No API was gated.\n'; exit 1; f
 if [[ ${SCENARIO:-} == threshold && ${2:-} != --trend ]]; then exit 1; fi
 if [[ ${SCENARIO:-} == invalid-compare && ${2:-} != --trend ]]; then exit 2; fi
 MOCK
+cat > "$TEMPORARY/bin/sleep" << 'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ $1 == 5 ]]; then
+  printf '%s\n' "$$" >> "$SAMPLER_CHILDREN"
+  printf 'sampler sleep 5\n' >> "$CALLS"
+  exec /bin/sleep 0.01
+fi
+exec /bin/sleep "$@"
+MOCK
 chmod +x "$TEMPORARY/bin/"*
 export PATH="$TEMPORARY/bin:$PATH"
 export KUBE_CONTEXT=fixture-context MONGO_NODE=mongo-fixture BENCH_NODE=bench-fixture
 export NEW_REF=1111111111111111111111111111111111111111
 export OLD_REF=2222222222222222222222222222222222222222
 export CALLS="$TEMPORARY/calls" SCENARIO=
+export TW_COUNT_FILE="$TEMPORARY/tw-count" SAMPLER_CHILDREN="$TEMPORARY/sampler-children"
 CASES_RUN=0
 run_case() {
   CASES_RUN=$((CASES_RUN + 1))
   SCENARIO=$1
   : > "$CALLS"
+  : > "$SAMPLER_CHILDREN"
+  printf '0\n' > "$TW_COUNT_FILE"
   local expected=$2 rc=0
   "$TEMPORARY/bench/k8s/run-k8s.sh" "${TEST_MODE:-all}" > "$TEMPORARY/output" 2>&1 || rc=$?
+  while IFS= read -r child; do
+    if kill -0 "$child" 2> /dev/null; then
+      printf 'Sampler child %s survived cleanup\n' "$child" >&2
+      exit 1
+    fi
+  done < "$SAMPLER_CHILDREN"
   [[ $rc == "$expected" ]] || {
     printf 'Scenario %s: expected exit %s, got %s\n' "$SCENARIO" "$expected" "$rc" >&2
     cat -- "$TEMPORARY/output"
@@ -296,6 +342,9 @@ export TEST_MODE=connect-check
 run_case connect-success 0
 result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
 [[ $(cat -- "$result_dir/COMPLETE") == connect-check ]]
+grep -q 'TIME_WAIT peak: 51599; limit: 51600' "$TEMPORARY/output"
+[[ $(wc -l < "$result_dir/time-wait.tsv") -ge 3 ]]
+grep -q 'sampler sleep 5' "$CALLS"
 [[ $(awk '{$1=$1; print}' "$result_dir/ip_local_port_range") == '1024 65535' ]]
 grep -q '1024.*65535' "$TEMPORARY/output"
 grep -q 'image: mongo:7.0' "$result_dir/mongo-7.0.yaml"
@@ -306,17 +355,24 @@ grep -q 'MONGOL_LIB=/src/new/lib' "$CALLS"
 if grep -qE 'MONGOL_LIB=/src/old/lib|bson_micro|compare.lua|delete pod mongo' "$CALLS"; then exit 1; fi
 grep -q 'delete namespace mongol-bench' "$CALLS"
 awk '/ cp / {copied=1} /delete namespace/ {if(!copied) exit 1}' "$CALLS"
-for scenario in load-fail copy-fail delete-fail changed; do
+for scenario in tw-limit sampler-fail sampler-empty load-fail copy-fail delete-fail changed; do
   run_case "$scenario" 1
   result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
   [[ ! -e $result_dir/COMPLETE ]]
+  case $scenario in
+    tw-limit)
+      grep -q 'TIME_WAIT peak: 51600; limit: 51600' "$TEMPORARY/output"
+      grep -q 'TIME_WAIT port use reached' "$TEMPORARY/output"
+      ;;
+    sampler-fail | sampler-empty) grep -q 'TIME_WAIT sampling failed' "$TEMPORARY/output" ;;
+  esac
   if [[ $scenario == changed ]]; then
     if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
   else
     grep -q 'delete namespace mongol-bench' "$CALLS"
   fi
 done
-for TEST_MODE in connect-check all; do
+for TEST_MODE in connect-check all ab trend calibrate; do
   for scenario in wrong-range range-unreadable; do
     run_case "$scenario" 1
     result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")

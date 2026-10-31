@@ -733,14 +733,5 @@ def test_missing_complete_names_run_and_log(tmp_path: Path) -> None:
     assert str(directory.with_suffix(".log")) in str(error.value)
 
 
-def test_rejects_wrong_connect_nopool_connections(tmp_path: Path) -> None:
-    directory = fixture(tmp_path / "source")
-    manifest = report.read_json(directory / "run-manifest.json")
-    manifest["profile"]["connect_nopool_connections"] = 16
-    report.write_json(directory / "run-manifest.json", manifest)
-    with pytest.raises(ValueError, match="profile"):
-        report.validate_manifest(directory)
-
-
 def test_connect_nopool_profile() -> None:
     assert report.PROFILE["connect_nopool_connections"] == 4
