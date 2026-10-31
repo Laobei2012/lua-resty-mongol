@@ -80,7 +80,8 @@ local function cpu_validity(row)
             conditions[#conditions + 1] = container .. " counters unavailable"
         elseif container == "nginx" then
             local cores = delta.usage_usec / 1e6 / delta.sample_time_epoch
-            conditions[#conditions + 1] = string.format("nginx usage %.4f cores (requires >= 0.9)%s", cores, cores < 0.9 and " INVALID" or "")
+            conditions[#conditions + 1] = string.format("nginx usage %.4f cores (requires >= 0.9) (%.1f CPU s / %g s)%s",
+                cores, delta.usage_usec / 1e6, delta.sample_time_epoch, cores < 0.9 and " INVALID" or "")
         else
             local fraction = delta.nr_throttled / delta.nr_periods
             conditions[#conditions + 1] = string.format("%s throttled %.3f%% (%d/%d periods; requires < 1%%)%s",

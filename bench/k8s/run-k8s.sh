@@ -221,7 +221,7 @@ main() {
     usage
     exit 2
   fi
-  local mode=$1 command replicate side tag
+  local mode=$1 command replicate side tag namespace_error
   MODE=$mode
   case $mode in ab | trend | all | calibrate) ;; *)
     usage
@@ -243,8 +243,10 @@ main() {
   for command in kubectl envsubst git resty; do
     command -v "$command" > /dev/null || die "$command is required"
   done
-  if kube get namespace "$NAMESPACE" > /dev/null 2>&1; then
+  if namespace_error=$(kube get namespace "$NAMESPACE" 2>&1); then
     die "namespace $NAMESPACE already exists; refusing to reuse or delete it"
+  elif [[ $namespace_error != *'(NotFound)'* ]]; then
+    die "cannot check namespace $NAMESPACE: $namespace_error"
   fi
   # Check both capacity and current reservations before creating any resources.
   check_node_cpu "$MONGO_NODE" 1000 Mongo
