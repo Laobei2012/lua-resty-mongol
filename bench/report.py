@@ -48,6 +48,7 @@ PLACEMENT_KEYS = ("kube_context", "mongo_node", "bench_node")
 PROFILE = {
     "threads": 2,
     "connections": 16,
+    "connect_nopool_connections": 4,
     "timeout_s": 10,
     "warmup_s": 10,
     "sample_s": 30,
@@ -69,10 +70,10 @@ BLOBS = dict(
             "bench/k8s/mongo.yaml",
         ],
         [
-            "d48ad9579fc7fc58ff62cb6d4bde4b0216448d41",
+            "5f8f3530bad14d84530de74cae041a6328cee7fe",
             "bebf6354c6b13e4217048acbc14f3ac0cfd38b49",
             "6a75cd693cb6f83ae88fb3af2510ffa35ab58241",
-            "a0b7756a50c85d716f49f455f9ee6188f62cddc6",
+            "3df10199e3f1c22904e13e3941c42ac7aad91ac7",
             "7c87be1096f958d8f92d8b10a12e578f78e6a6c4",
         ],
     )
@@ -107,8 +108,10 @@ def sha(value: object) -> bool:
 
 
 def validate_manifest(directory: Path) -> tuple[dict, dict]:
+    complete = directory / "COMPLETE"
     require(
-        (directory / "COMPLETE").read_text() == "all\n", "incomplete all invocation"
+        complete.is_file() and complete.read_text() == "all\n",
+        f"incomplete all invocation: {directory}; inspect log: {directory}.log",
     )
     data = read_json(directory / "run-manifest.json")
     placement = data.get("placement")
@@ -365,7 +368,7 @@ def render(runs: list[dict], output: Path) -> None:
         ),
         "",
         (
-            "Two threads, 16 connections, 10s socket timeout, 10s warm-up and 30s samples. "
+            "Two threads, 16 connections (connect_nopool: 4), 10s socket timeout, 10s warm-up and 30s samples. "
             "BSON: at most 1,000 warm-up operations, stopping at 1s (checked every 50 operations); "
             "measure in batches of 100 operations until the first batch ends at or after 2s per case. "
             "Authentication is enabled; a gain on /auth includes the new driver's cached salted password optimization."

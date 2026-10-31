@@ -4,6 +4,10 @@ metadata:
   name: bench
   namespace: mongol-bench
 spec:
+  securityContext:
+    sysctls:
+      - name: net.ipv4.ip_local_port_range
+        value: "1024 65535"
   nodeSelector:
     kubernetes.io/hostname: "${BENCH_NODE}"
   initContainers:

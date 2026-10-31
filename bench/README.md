@@ -19,11 +19,12 @@ MONGOL_LIB=/path/to/new/lib MONGO_HOST=127.0.0.1 \
 With no API arguments, `run.sh` measures all twelve APIs. Each API gets
 fresh fixtures, a ten second warm-up, and three thirty second runs with
 `wrk -t2 -c16 --timeout 10s --latency`. `RUNS` changes the number of measured runs.
-`WRK_THREADS` (default 2) and `WRK_CONNECTIONS` (default 16) apply to both
+Except for `connect_nopool`, `WRK_THREADS` (default 2) and
+`WRK_CONNECTIONS` (default 16) apply to both
 warm-up (`-d10s`) and measurement (`-d30s`). Both must be positive integers,
 and threads must not exceed connections; invalid values exit 2. The Kubernetes
 runner forwards them. Its `calibrate` mode compares 8, 16 and 32 connections
-on Mongo 4.4. The full report profile uses 16 connections.
+on Mongo 4.4. The full report profile uses 16 connections except for `connect_nopool`.
 The ten second request timeout accommodates the constrained CPU profile;
 any timeout still invalidates the run.
 The coordinator checks socket reuse after `find_one`, the Mongo connection
@@ -70,7 +71,17 @@ JSON line. Any other non-2xx response, socket error, empty run or nginx
 error invalidates the load and returns nonzero. A failed API does not
 append partial results; earlier successful APIs may remain in the file,
 so only use result files from passes that exited successfully.
-Each measured JSON line includes its completed `requests` count and an
+`connect_nopool` always uses `-t2 -c4` for warm-up and measurement,
+regardless of the configured thread/connection values. Each request closes a
+socket, holding a local port in TIME_WAIT for about 60 seconds. The observed
+1,395 connections/s would need about 84,000 ports. Four concurrent connections
+aim to reduce pressure; `connect-check` samples actual TIME_WAIT use every 5s
+and fails at a peak of 51,600 ports or on a sampling error. The bench pod also sets
+`net.ipv4.ip_local_port_range` to `1024 65535`; every Kubernetes mode verifies
+and saves the effective range before any load. `connect-check` runs only the new
+driver on Mongo 7.0 with a 10s warm-up and three 30s samples.
+
+Each measured JSON line records the actual `connections` used and includes its completed `requests` count and an
 `interval_requests` count shared by all samples in that API/pass. The latter
 sums the successful preflight request, warm-up requests and all measured requests
 to match the CPU snapshot interval.
@@ -133,4 +144,5 @@ All three runtime containers have requests below limits; clone remains equal.
 Memory is unchanged. The owner removed the minimum nginx CPU usage rule:
 nginx did not saturate in calibration (0.34–0.67 cores), and throttling is the
 check for whether the setup distorts a result. Throughput stopped rising at
-16 connections, so the default is `-t2 -c16`, including warm-up.
+16 connections, so the default is `-t2 -c16`, including warm-up,
+with the `connect_nopool` exception of `-t2 -c4`.
