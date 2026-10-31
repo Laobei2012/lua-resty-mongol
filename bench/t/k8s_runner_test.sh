@@ -171,7 +171,7 @@ expected=$(printf 'MONGOL_LIB=/src/%s/lib\n' old new old new old new new new new
 [[ $(grep -c 'cat /sys/fs/cgroup/cpu.stat' "$CALLS") == 720 ]]
 # Nginx brackets load: last before it, first after it, on every API/pass.
 awk 'BEGIN {split("mongo wrk nginx nginx wrk mongo", expected, " ")}
-  / exec / {for(i=1;i<=NF;i++) if($i == "-c") container=$(i+1)}
+  / exec / {for(i=1;i<=NF;i++) if($i == "-c") {container=$(i+1); break}}
   /cat \/sys\/fs\/cgroup\/cpu.stat/ {
     if(container != expected[samples % 6 + 1]) exit 1
     samples++

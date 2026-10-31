@@ -207,12 +207,13 @@ if old.mongo_version ~= new.mongo_version
 end
 io.write("| API | Old rps | New rps | Rps ratio | Old p99 (ms) | New p99 (ms) | P99 ratio | Result |\n",
     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n")
-local failed = false
+local failed, gated = false, 0
 for _, api in ipairs(names) do
     local a, b = old.apis[api], new.apis[api]
     if (a and a.invalid) or (b and b.invalid) then
         io.write("| ", api, " | n/a | n/a | n/a | n/a | n/a | n/a | invalid |\n")
     elseif a and b then
+        gated = gated + 1
         local rps_ratio, p99_ratio = b.rps / a.rps, b.p99 / a.p99
         local pass = rps_ratio >= MIN_RPS_RATIO and p99_ratio <= MAX_P99_RATIO
         failed = failed or not pass
@@ -226,4 +227,5 @@ for _, api in ipairs(names) do
     end
 end
 write_diagnostics()
-os.exit(failed and 1 or 0)
+if gated == 0 then io.write("\nNo API was gated.\n") end
+os.exit((failed or gated == 0) and 1 or 0)

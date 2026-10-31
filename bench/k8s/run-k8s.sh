@@ -159,7 +159,12 @@ render_mongo() {
 cpu_snapshot() {
   local label=$1 api=$2 phase=$3 target pod container file
   mkdir -p -- "$RESULT_DIR/cpu"
-  for target in bench:nginx bench:wrk mongo:mongo; do
+  local targets=(bench:nginx bench:wrk mongo:mongo)
+  # Nginx brackets load closely: no other container snapshots in its interval.
+  # For 40s of load, ~2s startup/snapshot overhead + <1s timestamp rounding
+  # gives a saturated apparent ceiling above 40/43 = 0.930 cores (> 0.9).
+  if [[ $phase == before ]]; then targets=(mongo:mongo bench:wrk bench:nginx); fi
+  for target in "${targets[@]}"; do
     pod=${target%:*}
     container=${target#*:}
     file=$RESULT_DIR/cpu/$label-$api-$phase-$container.stat
@@ -238,6 +243,9 @@ main() {
   for command in kubectl envsubst git resty; do
     command -v "$command" > /dev/null || die "$command is required"
   done
+  if kube get namespace "$NAMESPACE" > /dev/null 2>&1; then
+    die "namespace $NAMESPACE already exists; refusing to reuse or delete it"
+  fi
   # Check both capacity and current reservations before creating any resources.
   check_node_cpu "$MONGO_NODE" 1000 Mongo
   check_node_cpu "$BENCH_NODE" 1100 bench

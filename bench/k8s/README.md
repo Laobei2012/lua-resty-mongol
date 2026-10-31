@@ -4,6 +4,8 @@ then copy `environment.example` to `environment.local` and fill its values.
 The file is ignored; do not commit cluster details. Push the complete benchmark
 implementation and set NEW_REF to that commit before starting.
 
+Before checking free CPU, the runner refuses an existing `mongol-bench`
+namespace with a message naming it; it never deletes or adopts that namespace.
 Before creating the namespace, the runner checks each selected node's allocatable
 CPU: Mongo needs at least 1000m and the bench pod needs at least 1100m. Missing
 or ambiguous hostname-label matches and missing CPU values fail the check.
@@ -70,9 +72,18 @@ these caps. Every API/pass is invalid if nginx averages below 0.9 cores,
 Mongo is throttled in >=1% of periods, or wrk is throttled in >=1% of periods.
 Missing, reset or unusable counters also invalidate the API. The comparison
 shows `invalid` if any interval for that API is invalid, excluding it from both
-gate passes and gate failures; valid APIs still gate normally. Per-pass tables
+gate passes and gate failures; valid APIs still gate normally. An A/B or
+calibration comparison with zero gated APIs exits 1 and prints "No API was gated";
+bad input still exits 2. Trend comparisons have no gates. Per-pass tables
 name each condition and its values. Trend cells also show `invalid`.
-The interval includes sequential snapshot overhead as well as warm-up: a slow
+Nginx is sampled last before load (Mongo, wrk, nginx) and first after load
+(nginx, wrk, Mongo), excluding the other containers' snapshot calls from its
+interval. Retaining whole-second timestamps and the wall-clock denominator is
+the smaller change: for 40 seconds of saturated load, allowing about 2 seconds
+for nginx snapshot/load startup and less than 1 second of rounding gives an
+apparent ceiling above `40/43 = 0.930` cores, above the unchanged 0.9 threshold.
+This estimate uses the review's call timings; longer delays can still affect it.
+The interval includes nginx's own snapshot overhead as well as warm-up: a slow
 warm-up or idle overhead can lower the average below 0.9 even when nginx is busy
 throughout the measured sample. These are interval checks, not measurement-only
 CPU attribution.
