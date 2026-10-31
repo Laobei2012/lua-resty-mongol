@@ -67,7 +67,10 @@ append partial results; earlier successful APIs may remain in the file,
 so only use result files from passes that exited successfully.
 
 Run the BSON micro benchmark with
-`resty -I /path/to/driver/lib bench/bson_micro.lua`. Each of its four cases
+`resty -I /path/to/driver/lib bench/bson_micro.lua`. It measures small- and
+large-document encode/decode, plus `decode_reply`: a cursor reply with one
+small document in `firstBatch`, an int64 cursor ID, namespace, and `ok`.
+The reply envelope works with both drivers. Each case
 collects garbage, then warms up for at most 1,000 operations, stopping when
 one second has elapsed (checked every 50 operations). Measurement uses batches
 of 100 operations and checks the clock once per batch, stopping after the first

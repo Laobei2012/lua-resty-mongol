@@ -36,6 +36,10 @@ local num_to_le_uint = function ( n , bytes )
 	if n < 0 or n >= 2^(8*bytes) or n ~= floor ( n ) then
 		return nil , "number out of range"
 	end
+	if bytes == 4 then
+		return strchar ( n % 256 , floor ( n / 256 ) % 256 ,
+		                 floor ( n / 65536 ) % 256 , floor ( n / 16777216 ) )
+	end
 	local b = { }
 	for i=1 , bytes do
 		b [ i ] , n = n % 2^8 , floor ( n / 2^8 )
