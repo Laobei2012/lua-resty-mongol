@@ -45,8 +45,8 @@ HTTP_KEYS = [
 CASES = {"encode_small", "decode_small", "encode_large", "decode_large"}
 PLACEMENT_KEYS = ("kube_context", "mongo_node", "bench_node")
 PROFILE = {
-    "threads": 1,
-    "connections": 8,
+    "threads": 2,
+    "connections": 32,
     "timeout_s": 10,
     "warmup_s": 10,
     "sample_s": 30,
@@ -68,11 +68,11 @@ BLOBS = dict(
             "bench/k8s/mongo.yaml",
         ],
         [
-            "57d0d88491f9cf7c085b2dbacf7fe186a2fd6168",
+            "91c56e1999071a5c6d34d968c3292fea7881df47",
             "a350923b805c945ad67b92611882a80270dded61",
             "4695c45fce8bdc164e23837b5a1fefffee46754d",
-            "6b9342ff998a3c05ff1b7b9c9160dcc94c85f48d",
-            "09bcd0e11f49a79609218d1acf2ccea3d6bde80e",
+            "026139477ce4933c5b2d95df4597e4d669c314c6",
+            "7c87be1096f958d8f92d8b10a12e578f78e6a6c4",
         ],
     )
 )
@@ -302,6 +302,9 @@ def validate(directory: Path) -> dict:
 
 def compare(paths: list[Path], *, trend: bool) -> str:
     command = ["resty", str(BENCH / "compare.lua")]
+    cpu_file = paths[0].parent / "cpu.jsonl"
+    if cpu_file.is_file():
+        command += ["--cpu-file", str(cpu_file)]
     result = subprocess.run(
         command + (["--trend"] if trend else []) + [str(path) for path in paths],
         text=True,
@@ -337,12 +340,12 @@ def render(runs: list[dict], output: Path) -> None:
         "",
         (
             "Three complete all invocations; each API uses the median of three measured samples. "
-            "Only Mongo 4.4 A/B gates: rps ratio >= 0.90 and p99 ratio <= 1.20. Trends do not gate."
+            "Only valid Mongo 4.4 A/B APIs gate: rps ratio >= 0.90 and p99 ratio <= 1.20. Invalid APIs count as neither pass nor fail. Trends do not gate."
         ),
         "",
         (
-            "Cluster context, node identities and node types are private. The configured containers use equal requests and limits: "
-            "Mongo 400m/4Gi, nginx 300m/512Mi, wrk 800m/512Mi, clone 200m/128Mi. "
+            "Cluster context, node identities and node types are private. CPU request/limit and memory: "
+            "Mongo 1000m/2000m and 4Gi, nginx 1000m/1000m and 512Mi, wrk 100m/300m and 512Mi, clone 200m/200m and 128Mi. Mongo and wrk are Burstable by owner decision (2026-10-30). "
             "Mongo cache is 1.5GiB; data emptyDir is 10Gi and ephemeral storage limit 12Gi."
         ),
         "",
@@ -352,7 +355,7 @@ def render(runs: list[dict], output: Path) -> None:
         ),
         "",
         (
-            "One thread, eight connections, 10s socket timeout, 10s warm-up and 30s samples. "
+            "Two threads, 32 connections, 10s socket timeout, 10s warm-up and 30s samples. "
             "BSON: at most 1,000 warm-up operations, stopping at 1s (checked every 50 operations); "
             "measure in batches of 100 operations until the first batch ends at or after 2s per case. "
             "Authentication is enabled; a gain on /auth includes the new driver's cached salted password optimization."
@@ -373,7 +376,7 @@ def render(runs: list[dict], output: Path) -> None:
                 "".join(json.dumps(row, sort_keys=True) + "\n" for row in run["cpu"])
             )
             table = compare([target / "old.jsonl", target / "new.jsonl"], trend=False)
-            for line in table.splitlines()[2:]:
+            for line in table.split("\nCPU validity", 1)[0].strip().splitlines()[2:]:
                 cells = [cell.strip() for cell in line.split("|")[1:-1]]
                 outcomes.setdefault(cells[0], []).append(cells[-1])
             lines += [
@@ -503,6 +506,11 @@ def series(directory: Path, *, reuse: list[Path] | None = None) -> None:
         ),
         "required runner environment is missing",
     )
+    require(
+        os.environ.get("WRK_THREADS", "2") == "2"
+        and os.environ.get("WRK_CONNECTIONS", "32") == "32",
+        "series requires the approved two-thread, 32-connection profile",
+    )
     new_sha = git("rev-parse", os.environ["NEW_REF"] + "^{commit}")
     old_sha = git("rev-parse", os.environ.get("OLD_REF", "3eb6349") + "^{commit}")
     source = {path: git("rev-parse", f"{new_sha}:{path}") for path in BLOBS}
@@ -561,6 +569,8 @@ def series(directory: Path, *, reuse: list[Path] | None = None) -> None:
             "NEW_REF": new_sha,
             "OLD_REF": old_sha,
             "RUN_RESULT_DIR": str(result_dir),
+            "WRK_THREADS": "2",
+            "WRK_CONNECTIONS": "32",
         }
         returncode = run_all(result_dir, environment=environment)
         require(returncode in (0, 1), "all runner failed; inspect private series log")

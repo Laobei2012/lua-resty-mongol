@@ -18,7 +18,12 @@ MONGOL_LIB=/path/to/new/lib MONGO_HOST=127.0.0.1 \
 
 With no API arguments, `run.sh` measures all twelve APIs. Each API gets
 fresh fixtures, a ten second warm-up, and three thirty second runs with
-`wrk -t1 -c8 --timeout 10s --latency`. `RUNS` changes the number of measured runs.
+`wrk -t2 -c32 --timeout 10s --latency`. `RUNS` changes the number of measured runs.
+`WRK_THREADS` (default 2) and `WRK_CONNECTIONS` (default 32) apply to both
+warm-up (`-d10s`) and measurement (`-d30s`). Both must be positive integers,
+and threads must not exceed connections; invalid values exit 2. The Kubernetes
+runner forwards them. Its `calibrate` mode compares 8, 16 and 32 connections
+on Mongo 4.4 before the owner chooses the load for a full run.
 The ten second request timeout accommodates the constrained CPU profile;
 any timeout still invalidates the run.
 The coordinator checks socket reuse after `find_one`, the Mongo connection
@@ -89,3 +94,24 @@ unsupported API skips, fixture counts, reuse/connection limits, reseeding
 between APIs, and coordinator cleanup. `bench/smoke.sh` remains the live
 handler check; it uses `ctl.sh` to manage nginx and fixtures and expects
 one error from its intentionally empty read collection.
+
+The owner-approved CPU requests/limits (2026-10-30) are Mongo 1000m/2000m,
+nginx 1000m/1000m, wrk 100m/300m and clone init 200m/200m; memory is unchanged.
+Mongo and wrk are Burstable by owner decision. The earlier limits throttled
+nginx and Mongo while wrk was lightly used. The new requests fit the available
+1100m on the Mongo node and 1110m on the bench node (1100m combined request).
+
+Kubernetes comparisons always check CPU validity per API and pass. Nginx must
+use at least 0.9 cores; Mongo and wrk must each be throttled in less than 1% of
+periods. Missing or unusable counters invalidate the API. An invalid interval
+makes that API `invalid` in the comparison, counting as neither gate pass nor
+gate fail; other APIs still gate at 0.90 rps and 1.20 p99 ratios. Reports include
+conditions and values for every interval. Snapshots cover warm-up, measurement
+and sequential snapshot overhead, so the nginx usage is an interval average;
+a slow warm-up or idle snapshot overhead can pull it below 0.9 even when the
+measured portion saturates nginx.
+
+For standalone saved results, use `resty bench/compare.lua --cpu-dir <cpu-dir>
+<old.jsonl> <new.jsonl>`. Without CPU arguments, legacy/local JSONL comparisons
+retain their existing threshold-only behavior. `--single` accepts one measured
+sample per API for calibration; full comparisons still require three.

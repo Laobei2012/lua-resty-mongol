@@ -105,7 +105,9 @@ export KUBE_CONTEXT=fixture-context MONGO_NODE=mongo-fixture BENCH_NODE=bench-fi
 export NEW_REF=1111111111111111111111111111111111111111
 export OLD_REF=2222222222222222222222222222222222222222
 export CALLS="$TEMPORARY/calls" SCENARIO=
+CASES_RUN=0
 run_case() {
+  CASES_RUN=$((CASES_RUN + 1))
   SCENARIO=$1
   : > "$CALLS"
   local expected=$2 rc=0
@@ -227,4 +229,4 @@ for setting in WRK_CONNECTIONS=0 WRK_THREADS=17 WRK_THREADS=abc; do
   env "$setting" "$TEMPORARY/bench/k8s/run-k8s.sh" ab > "$TEMPORARY/output" 2>&1 || rc=$?
   [[ $rc == 2 && ! -s $CALLS ]]
 done
-printf 'Kubernetes runner mock tests passed\n'
+printf 'Kubernetes runner mock tests passed: %s scenarios plus 4 argument checks\n' "$CASES_RUN"

@@ -151,10 +151,51 @@ local function tests()
     counters("wrk", 10000000, 0, 0)
     code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
     check(code == 0 and output:find("| invalid |", 1, true), "unavailable periods cannot pass")
+    counters("wrk", 10000000, 3, 400)
+    local cpu_old_path = changed(old_path, function(row) row.label = row.label .. "-" .. row.run end)
+    local cpu_new_path = changed(new_path, function(row) row.label = row.label .. "-" .. row.run end)
+    -- Only one pass is bad: do not average it away with valid passes.
+    local old_rows, new_rows = read_rows(cpu_old_path), read_rows(cpu_new_path)
+    local all_cpu = {}
+    for _, path in ipairs({cpu_old_path, cpu_new_path}) do
+        for _, row in ipairs(read_rows(path)) do
+            for _, container in ipairs({"nginx", "mongo", "wrk"}) do
+                all_cpu[#all_cpu + 1] = {label=row.label, api=row.api, container=container,
+                    available=true, sample_time_epoch=40, usage_usec=36000000,
+                    nr_periods=400, nr_throttled=0, throttled_usec=0}
+            end
+        end
+    end
+    code, output = run({"--cpu-file", fixture(all_cpu), cpu_old_path, cpu_new_path})
+    check(code == 0 and output:find("| pass |", 1, true), "public CPU delta format")
+    all_cpu[1].usage_usec = 20000000
+    code, output = run({"--cpu-file", fixture(all_cpu), cpu_old_path, cpu_new_path})
+    check(code == 0 and output:find("| invalid |", 1, true), "one invalid pass invalidates API")
+    for _, rows in ipairs({old_rows, new_rows}) do
+        for _, row in ipairs(rows) do row.api = "find_one" end
+    end
+    for _, rows in ipairs({read_rows(cpu_old_path), read_rows(cpu_new_path)}) do
+        for _, row in ipairs(rows) do
+            for _, container in ipairs({"nginx", "mongo", "wrk"}) do
+                all_cpu[#all_cpu + 1] = {label=row.label, api="find_one", container=container,
+                    available=true, sample_time_epoch=40, usage_usec=36000000,
+                    nr_periods=400, nr_throttled=0, throttled_usec=0}
+            end
+        end
+    end
+    for _, row in ipairs(read_rows(cpu_old_path)) do old_rows[#old_rows+1] = row end
+    for _, row in ipairs(read_rows(cpu_new_path)) do row.rps=85; new_rows[#new_rows+1] = row end
+    code, output = run({"--cpu-file", fixture(all_cpu), fixture(old_rows), fixture(new_rows)})
+    check(code == 0 and output:find("| pass |", 1, true) and output:find("| invalid |", 1, true), "valid API gates independently of invalid API")
+    code, output = run({"--cpu-file", fixture({}), cpu_old_path, cpu_new_path})
+    check(code == 0 and output:find("| invalid |", 1, true), "missing public counters invalidate")
+    check(output:find("counters unavailable", 1, true), "unavailable explanation")
+
     local one_old, one_new = {read_rows(old_path)[1]}, {read_rows(new_path)[1]}
     code, output = run({"--single", fixture(one_old), fixture(one_new)})
     check(code == 0 and output:find("| pass |", 1, true), "calibration single sample")
 
+    rejected({"--single", old_path, new_path}, "--single")
     rejected({}, "usage")
     rejected({ "--trend" }, "usage")
     local absent = os.tmpname()

@@ -198,7 +198,12 @@ def test_allowlist_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         if trend:
             return "| API | 4.4.29 rps |\n| --- | --- |\n| ping | 100 |\n"
         state = "fail" if paths[0].parent.name == "run-2" else "pass"
-        return f"| API | Result |\n| --- | --- |\n| ping | {state} |\n"
+        return (
+            f"| API | Result |\n| --- | --- |\n| ping | {state} |\n"
+            "\nCPU validity per pass/API (warm-up, measurement and snapshot overhead):\n\n"
+            "| Pass | API | Validity | Conditions |\n| --- | --- | --- | --- |\n"
+            "| old-1 | ping | valid | nginx usage 0.95 cores |\n"
+        )
 
     monkeypatch.setattr(report, "compare", compare)
     output = tmp_path / "public"
@@ -622,13 +627,50 @@ def test_launch_cli_prints_pid_and_forwards_reuse(
     assert launch_calls[0]["command"][-2:] == ["--reuse", str(tmp_path / "old")]
 
 
-@pytest.mark.parametrize("path", ["bench/load.sh", "bench/k8s/bench.yaml", "bench/k8s/mongo.yaml"])
+@pytest.mark.parametrize(
+    "path", ["bench/load.sh", "bench/k8s/bench.yaml", "bench/k8s/mongo.yaml"]
+)
 def test_calibrated_source_pins(path: str) -> None:
     content = (report.BENCH.parent / path).read_bytes()
-    assert report.BLOBS[path] == hashlib.sha1(f"blob {len(content)}\0".encode() + content).hexdigest()
+    assert (
+        report.BLOBS[path]
+        == hashlib.sha1(f"blob {len(content)}\0".encode() + content).hexdigest()
+    )
 
 
 def test_calibrated_profile() -> None:
     assert report.PROFILE["threads"] == 2
     assert report.PROFILE["connections"] == 32
     assert report.PROFILE["warmup_s"] == 10
+
+
+@pytest.mark.parametrize("setting", [{"WRK_THREADS": "1"}, {"WRK_CONNECTIONS": "16"}])
+def test_series_rejects_unapproved_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: dict
+) -> None:
+    for key in ("NEW_REF", "KUBE_CONTEXT", "MONGO_NODE", "BENCH_NODE"):
+        monkeypatch.setenv(key, "fixture")
+    for key, value in setting.items():
+        monkeypatch.setenv(key, value)
+    with pytest.raises(ValueError, match="approved two-thread"):
+        report.series(tmp_path / "series")
+
+
+def test_compare_uses_public_cpu_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    (tmp_path / "cpu.jsonl").write_text("")
+    calls = []
+
+    def run(command: list, **kwargs: object) -> object:
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout="table")
+
+    monkeypatch.setattr(report.subprocess, "run", run)
+    assert (
+        report.compare([tmp_path / "old.jsonl", tmp_path / "new.jsonl"], trend=False)
+        == "table"
+    )
+    assert calls[0][2:4] == ["--cpu-file", str(tmp_path / "cpu.jsonl")]

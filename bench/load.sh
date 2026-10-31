@@ -6,6 +6,8 @@ BENCH_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 WORK=${WORK:-$BENCH_DIR}
 URL=${URL:-http://127.0.0.1:8090}
 RUN_BASE=${RUN_BASE:-0}
+WRK_THREADS=${WRK_THREADS-2}
+WRK_CONNECTIONS=${WRK_CONNECTIONS-32}
 
 die() {
   printf 'Error: %s\n' "$*" >&2
@@ -29,6 +31,11 @@ main() {
     usage
     exit 2
   }
+  if [[ ! $WRK_THREADS =~ ^[1-9][0-9]*$ || ! $WRK_CONNECTIONS =~ ^[1-9][0-9]*$ ]] \
+    || ! awk -v threads="$WRK_THREADS" -v connections="$WRK_CONNECTIONS" 'BEGIN {exit !(threads <= connections)}'; then
+    printf 'Error: WRK_THREADS and WRK_CONNECTIONS must be positive integers; threads must not exceed connections\n' >&2
+    exit 2
+  fi
   local label=$1 api=$2 runs=$3
   [[ $label =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || die "invalid label"
   case $api in
@@ -62,14 +69,14 @@ main() {
   trap 'rm -rf -- "${TEMPORARY:?}"' EXIT
   # Warm-up uses the same response/error validation as a measured run.
   export BENCH_RUN=0
-  wrk -t1 -c8 --timeout 10s -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
+  wrk "-t$WRK_THREADS" "-c$WRK_CONNECTIONS" --timeout 10s -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
     "$URL/$api" > "$WORK/logs/$label-$api-warmup.log" 2>&1
   check_log
   local i report
   for ((i = 1; i <= runs; i++)); do
     export BENCH_RUN=$((RUN_BASE + i))
     report=$WORK/logs/$label-$api-$BENCH_RUN.log
-    wrk -t1 -c8 --timeout 10s -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
+    wrk "-t$WRK_THREADS" "-c$WRK_CONNECTIONS" --timeout 10s -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
       "$URL/$api" > "$report" 2>&1
     check_log
     # wrk's human summary shares stdout with done(); only keep its JSON.

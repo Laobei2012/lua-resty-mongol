@@ -5,12 +5,16 @@ The file is ignored; do not commit cluster details. Push the complete benchmark
 implementation and set NEW_REF to that commit before starting.
 
 Before creating the namespace, the runner checks each selected node's allocatable
-CPU: Mongo needs at least 400m and the bench pod needs at least 1100m. Missing
+CPU: Mongo needs at least 1000m and the bench pod needs at least 1100m. Missing
 or ambiguous hostname-label matches and missing CPU values fail the check.
 MONGO_NODE and BENCH_NODE select `kubernetes.io/hostname` labels, which can differ
-from node object names. This checks absolute node capacity; existing
-workload reservations, memory, storage, or placement rules can still prevent
-scheduling after it passes.
+from node object names. The runner also reads current CPU requests from `kubectl describe nodes`'s
+Allocated resources section and subtracts them from allocatable CPU. Before
+namespace creation, free CPU must cover Mongo's 1000m request and the bench
+pod's combined 1100m request. Missing reservations fail preflight; insufficient
+free CPU reports the free/requested values and explains that the pod would stay
+Pending. Memory, storage, placement rules and later reservation changes can
+still prevent scheduling.
 
 ```bash
 source bench/k8s/environment.local
@@ -23,23 +27,55 @@ take tens of minutes per driver. Run `all` three separate times for the first
 report. Each invocation creates a unique local `bench/results/k8s-*` directory.
 `ab` runs old/new alternately three times on Mongo 4.4; `trend` runs three measured
 samples on each of Mongo 6, 7, 8, and 9. Warm-up is always 10 seconds and each
-measured sample is 30 seconds with one wrk thread, eight connections, and a
+measured sample is 30 seconds with two wrk threads, 32 connections, and a
 10-second socket timeout.
 
-Owner decision (2026-10-28): fit the existing node capacity with Mongo at 400m,
-nginx at 300m and wrk at 800m CPU, on a fixed pair of nodes in the same region.
-Requests equal limits for every container, including the 200m clone init
-container, preserving Guaranteed QoS. Memory, Mongo cache and storage are
-unchanged. The throughput and p99 thresholds, interleaved runs, three complete
-`all` invocations remain unchanged. BSON warm-up and measurement timing are
-described below.
+Owner decision (2026-10-30): reduce nginx/Mongo throttling observed in the
+first report while fitting existing CPU reservations. The Mongo node has 1100m
+free to reserve; the bench node has 1110m, covering nginx plus wrk's 1100m.
+
+| Container | CPU request | CPU limit | Memory request/limit |
+| --- | ---: | ---: | ---: |
+| Mongo | 1000m | 2000m | 4Gi |
+| nginx | 1000m | 1000m | 512Mi |
+| wrk | 100m | 300m | 512Mi |
+| clone init | 200m | 200m | 128Mi |
+
+Mongo and wrk are Burstable by owner decision; both pods therefore have
+Burstable QoS. Memory, Mongo cache and storage are unchanged. The throughput
+and p99 thresholds (0.90 and 1.20), interleaved runs and three complete `all`
+invocations remain unchanged. BSON timing is described below.
+
+Run `bench/k8s/run-k8s.sh calibrate` after reviewing and publishing the complete
+implementation. On Mongo 4.4 it runs old then new at 8 connections, old then new
+at 16, then old then new at 32. Each pass runs `ping` and `find_one`, each with
+one 10-second warm-up and one 30-second measured run. It skips trends and BSON,
+collects shared results and CPU snapshots, and deletes only its owned namespace.
+Results include `old-c8.jsonl`/`new-c8.jsonl` (and c16/c32) under `work/results/`,
+plus `calibrate-c8.md`, `calibrate-c16.md` and `calibrate-c32.md` with CPU validity.
+The timed HTTP workload is `3 * 2 * 2 * (10 + 30) = 480s`, or 8 minutes.
+Allow roughly 20 minutes including cloning, package installation, seeding,
+remote snapshot calls, readiness and collection; actual overhead is unmeasured.
+
+`WRK_THREADS` defaults to 2 and `WRK_CONNECTIONS` to 32, for warm-up and
+measurement. Both must be positive integers and threads cannot exceed
+connections (exit 2). Calibration fixes connections to 8/16/32 and requires
+threads <= 8. Full report series require the approved 2/32 profile.
 
 Each API saves before/after cgroup v2 `cpu.stat` for nginx, wrk and Mongo in the
 local result directory's `cpu/` folder, with sample timestamps. The interval
 includes warm-up and measured runs. Compare `usage_usec`, `nr_periods`,
 `nr_throttled`, and `throttled_usec` deltas to assess CPU use and throttling under
-these caps. Missing diagnostics are explicitly marked `unavailable`; a successful
-benchmark without those counters does not establish that CPU was unsaturated.
+these caps. Every API/pass is invalid if nginx averages below 0.9 cores,
+Mongo is throttled in >=1% of periods, or wrk is throttled in >=1% of periods.
+Missing, reset or unusable counters also invalidate the API. The comparison
+shows `invalid` if any interval for that API is invalid, excluding it from both
+gate passes and gate failures; valid APIs still gate normally. Per-pass tables
+name each condition and its values. Trend cells also show `invalid`.
+The interval includes sequential snapshot overhead as well as warm-up: a slow
+warm-up or idle overhead can lower the average below 0.9 even when nginx is busy
+throughout the measured sample. These are interval checks, not measurement-only
+CPU attribution.
 
 The script creates only `mongol-bench` and refuses an existing namespace. Every
 kubectl operation uses KUBE_CONTEXT explicitly. It copies all shared results,
@@ -100,9 +136,10 @@ Detachment does not renew credentials or retry failed work. `series` remains
 available for running the same workflow in the foreground.
 
 By default this runs three fresh complete `all` invocations sequentially. A
-performance gate failure continues the series only when the invocation is complete and
-valid. An invalid comparison, incomplete result set, failed collection or failed
-namespace cleanup stops the series. It never changes the resource profile,
+performance gate failure continues the series when the invocation is complete.
+CPU-invalid APIs remain in the report without counting as gate passes or fails.
+Malformed comparison inputs, incomplete results, failed collection or failed
+namespace cleanup stop the series. It never changes the resource profile,
 durations or thresholds. The runner accepts an optional fresh `RUN_RESULT_DIR`
 and writes `COMPLETE` only after all requested work and successful cleanup;
 `all` is required for reporting. Tool versions are queried from the containers.
