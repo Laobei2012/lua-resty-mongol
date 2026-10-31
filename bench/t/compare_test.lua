@@ -117,6 +117,25 @@ local function tests()
     check(code == 0 and output:find("4.4.29 p99 (ms)", 1, true)
         and output:find("9.0.0 p99 (ms)", 1, true), "five-file trend including 4.4")
 
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 1 and output:find("| invalid |", 1, true), "empty CPU directory cannot pass")
+    check(output:find("No API was gated", 1, true), "zero-gate explanation")
+
+    for _, path in ipairs({old_path, new_path}) do
+        for _, row in ipairs(read_rows(path)) do
+            for _, container in ipairs({"nginx", "wrk", "mongo"}) do
+                for _, phase in ipairs({"before", "after"}) do
+                    local file = assert(io.open(cpu_dir .. "/" .. row.label .. "-" .. row.api .. "-" .. phase .. "-" .. container .. ".stat", "w"))
+                    file:write("unavailable: cgroup v2 cpu.stat is not readable\n")
+                    file:close()
+                end
+            end
+        end
+    end
+    code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
+    check(code == 1 and output:find("No API was gated", 1, true), "cgroup v1 counters cannot pass")
+    check(output:find("counters unavailable", 1, true), "unavailable remains invalid")
+
     -- CPU validity applies to each label/API interval before the median gate.
     local function counters(container, usage, throttled, periods)
         for _, path in ipairs({old_path, new_path}) do
@@ -138,19 +157,19 @@ local function tests()
     check(code == 0 and output:find("| pass |", 1, true), "valid CPU boundaries")
     counters("nginx", 35900000, 0, 400)
     code, output = run({"--cpu-dir", cpu_dir, old_path, slow})
-    check(code == 0 and output:find("| invalid |", 1, true), "invalid is neither gate pass nor fail")
+    check(code == 1 and output:find("| invalid |", 1, true), "invalid is neither gate pass nor fail")
     check(output:find("nginx usage", 1, true) and output:find("0.897", 1, true), "nginx condition and value")
     counters("nginx", 36000000, 0, 400)
     for _, container in ipairs({"mongo", "wrk"}) do
         counters(container, 10000000, 4, 400)
         code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
-        check(code == 0 and output:find("| invalid |", 1, true), container .. " one percent inclusive")
+        check(code == 1 and output:find("| invalid |", 1, true), container .. " one percent inclusive")
         check(output:find(container .. " throttled", 1, true) and output:find("1.000%", 1, true), "throttle condition and value")
         counters(container, 10000000, 3, 400)
     end
     counters("wrk", 10000000, 0, 0)
     code, output = run({"--cpu-dir", cpu_dir, old_path, new_path})
-    check(code == 0 and output:find("| invalid |", 1, true), "unavailable periods cannot pass")
+    check(code == 1 and output:find("| invalid |", 1, true), "unavailable periods cannot pass")
     counters("wrk", 10000000, 3, 400)
     local cpu_old_path = changed(old_path, function(row) row.label = row.label .. "-" .. row.run end)
     local cpu_new_path = changed(new_path, function(row) row.label = row.label .. "-" .. row.run end)
@@ -170,7 +189,7 @@ local function tests()
     check(code == 0 and output:find("| pass |", 1, true), "public CPU delta format")
     all_cpu[1].usage_usec = 20000000
     code, output = run({"--cpu-file", fixture(all_cpu), cpu_old_path, cpu_new_path})
-    check(code == 0 and output:find("| invalid |", 1, true), "one invalid pass invalidates API")
+    check(code == 1 and output:find("| invalid |", 1, true), "one invalid pass invalidates API")
     for _, rows in ipairs({old_rows, new_rows}) do
         for _, row in ipairs(rows) do row.api = "find_one" end
     end
@@ -187,13 +206,17 @@ local function tests()
     for _, row in ipairs(read_rows(cpu_new_path)) do row.rps=85; new_rows[#new_rows+1] = row end
     code, output = run({"--cpu-file", fixture(all_cpu), fixture(old_rows), fixture(new_rows)})
     check(code == 0 and output:find("| pass |", 1, true) and output:find("| invalid |", 1, true), "valid API gates independently of invalid API")
+    check(not output:find("No API was gated", 1, true), "mixed valid/invalid run actually gates APIs")
     code, output = run({"--cpu-file", fixture({}), cpu_old_path, cpu_new_path})
-    check(code == 0 and output:find("| invalid |", 1, true), "missing public counters invalidate")
+    check(code == 1 and output:find("| invalid |", 1, true), "missing public counters invalidate")
     check(output:find("counters unavailable", 1, true), "unavailable explanation")
 
     local one_old, one_new = {read_rows(old_path)[1]}, {read_rows(new_path)[1]}
     code, output = run({"--single", fixture(one_old), fixture(one_new)})
     check(code == 0 and output:find("| pass |", 1, true), "calibration single sample")
+
+    code, output = run({"--cpu-file", fixture({}), "--single", fixture(one_old), fixture(one_new)})
+    check(code == 1 and output:find("No API was gated", 1, true), "calibration with zero gates cannot pass")
 
     rejected({"--single", old_path, new_path}, "--single")
     rejected({}, "usage")

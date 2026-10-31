@@ -50,6 +50,10 @@ elif [[ ${1:-} == create ]]; then
 elif [[ " $* " == *' get service mongo '* ]]; then
   printf '192.0.2.1'
 elif [[ ${1:-} == get && ${2:-} == namespace ]]; then
+  if [[ $# == 3 ]]; then
+    [[ ${SCENARIO:-} == leftover ]]
+    exit
+  fi
   if [[ ${SCENARIO:-} == changed ]]; then printf 'other-uid'; else printf 'owned-uid'; fi
 elif [[ " $* " == *' nginx -v '* ]]; then
   printf 'nginx version: openresty/1.31.1.1\n' >&2
@@ -96,6 +100,7 @@ cat > "$TEMPORARY/bin/resty" << 'MOCK'
 set -Eeuo pipefail
 printf 'resty %s\n' "$*" >> "$CALLS"
 printf 'mock report\n'
+if [[ ${SCENARIO:-} == no-gates ]]; then printf 'No API was gated.\n'; exit 1; fi
 if [[ ${SCENARIO:-} == threshold && ${2:-} != --trend ]]; then exit 1; fi
 if [[ ${SCENARIO:-} == invalid-compare && ${2:-} != --trend ]]; then exit 2; fi
 MOCK
@@ -118,6 +123,9 @@ run_case() {
     exit 1
   }
 }
+run_case leftover 1
+grep -q 'namespace mongol-bench already exists' "$TEMPORARY/output"
+if grep -qE 'get nodes|describe nodes|create namespace|delete namespace' "$CALLS"; then exit 1; fi
 for scenario in bench-low mongo-low integer-low missing-node missing-cpu \
   invalid-cpu no-match multiple-matches multiple-missing-cpu mongo-reserved bench-reserved \
   reservations-unreadable reservations-missing; do
@@ -161,6 +169,14 @@ expected=$(printf 'MONGOL_LIB=/src/%s/lib\n' old new old new old new new new new
 [[ $(grep -c 'RUN_BASE=2 .* /src/new/bench/load.sh\|RUN_BASE=2 /src/new/bench/load.sh' "$CALLS") == 24 ]]
 [[ $(grep -c '/load.sh new-9.0 .* 3$' "$CALLS") == 12 ]]
 [[ $(grep -c 'cat /sys/fs/cgroup/cpu.stat' "$CALLS") == 720 ]]
+# Nginx brackets load: last before it, first after it, on every API/pass.
+awk 'BEGIN {split("mongo wrk nginx nginx wrk mongo", expected, " ")}
+  / exec / {for(i=1;i<=NF;i++) if($i == "-c") container=$(i+1)}
+  /cat \/sys\/fs\/cgroup\/cpu.stat/ {
+    if(container != expected[samples % 6 + 1]) exit 1
+    samples++
+  }
+  END {if(samples != 720) exit 1}' "$CALLS"
 # Each load has three container snapshots before it and three after it.
 awk '/cat \/sys\/fs\/cgroup\/cpu.stat/ {samples++}
   /\/load.sh / {if(samples != 3) exit 1; samples=-3}
@@ -222,11 +238,26 @@ for connections in 8 16 32; do
 done
 if grep -qE 'bson_micro|compare.lua --trend|delete pod mongo' "$CALLS"; then exit 1; fi
 grep -q 'delete namespace mongol-bench' "$CALLS"
+run_case no-gates 1
+grep -q 'No API was gated' "$TEMPORARY/output"
+[[ $(grep -c '/load.sh ' "$CALLS") == 12 ]]
+grep -q ' cp ' "$CALLS"
+grep -q 'delete namespace mongol-bench' "$CALLS"
 unset TEST_MODE
-for setting in WRK_CONNECTIONS=0 WRK_THREADS=17 WRK_THREADS=abc; do
+for setting in WRK_CONNECTIONS=0 WRK_THREADS=abc; do
   : > "$CALLS"
   rc=0
   env "$setting" "$TEMPORARY/bench/k8s/run-k8s.sh" ab > "$TEMPORARY/output" 2>&1 || rc=$?
   [[ $rc == 2 && ! -s $CALLS ]]
 done
-printf 'Kubernetes runner mock tests passed: %s scenarios plus 4 argument checks\n' "$CASES_RUN"
+# Explicit custom bounds; no dependence on the calibration exports above.
+: > "$CALLS"
+rc=0
+env WRK_THREADS=17 WRK_CONNECTIONS=16 "$TEMPORARY/bench/k8s/run-k8s.sh" ab > "$TEMPORARY/output" 2>&1 || rc=$?
+[[ $rc == 2 && ! -s $CALLS ]]
+: > "$CALLS"
+rc=0
+env WRK_THREADS=9 WRK_CONNECTIONS=32 "$TEMPORARY/bench/k8s/run-k8s.sh" calibrate > "$TEMPORARY/output" 2>&1 || rc=$?
+[[ $rc == 2 && ! -s $CALLS ]]
+grep -q 'calibration requires WRK_THREADS <= 8' "$TEMPORARY/output"
+printf 'Kubernetes runner mock tests passed: %s scenarios plus 5 argument checks\n' "$CASES_RUN"
