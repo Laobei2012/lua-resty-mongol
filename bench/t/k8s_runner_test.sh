@@ -68,6 +68,13 @@ elif [[ ${1:-} == get && ${2:-} == namespace ]]; then
     esac
   fi
   if [[ ${SCENARIO:-} == changed ]]; then printf 'other-uid'; else printf 'owned-uid'; fi
+elif [[ " $* " == *'cat /proc/sys/net/ipv4/ip_local_port_range'* ]]; then
+  [[ " $* " == *'exec bench -c nginx -- cat '* ]]
+  case ${SCENARIO:-} in
+    wrong-range) printf '32768\t60999\n' ;;
+    range-unreadable) exit 1 ;;
+    *) printf '1024\t65535\n' ;;
+  esac
 elif [[ " $* " == *' nginx -v '* ]]; then
   printf 'nginx version: openresty/1.31.1.1\n' >&2
 elif [[ " $* " == *'wrk --version'* ]]; then
@@ -285,4 +292,40 @@ rc=0
 env WRK_THREADS=9 WRK_CONNECTIONS=32 "$TEMPORARY/bench/k8s/run-k8s.sh" calibrate > "$TEMPORARY/output" 2>&1 || rc=$?
 [[ $rc == 2 && ! -s $CALLS ]]
 grep -q 'calibration requires WRK_THREADS <= 8' "$TEMPORARY/output"
+export TEST_MODE=connect-check
+run_case connect-success 0
+result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+[[ $(cat -- "$result_dir/COMPLETE") == connect-check ]]
+[[ $(awk '{$1=$1; print}' "$result_dir/ip_local_port_range") == '1024 65535' ]]
+grep -q '1024.*65535' "$TEMPORARY/output"
+grep -q 'image: mongo:7.0' "$result_dir/mongo-7.0.yaml"
+[[ $(grep -c '/load.sh ' "$CALLS") == 1 ]]
+grep -q '/load.sh new-7.0 connect_nopool 3$' "$CALLS"
+[[ $(grep -c '/ctl.sh start' "$CALLS") == 1 ]]
+grep -q 'MONGOL_LIB=/src/new/lib' "$CALLS"
+if grep -qE 'MONGOL_LIB=/src/old/lib|bson_micro|compare.lua|delete pod mongo' "$CALLS"; then exit 1; fi
+grep -q 'delete namespace mongol-bench' "$CALLS"
+awk '/ cp / {copied=1} /delete namespace/ {if(!copied) exit 1}' "$CALLS"
+for scenario in load-fail copy-fail delete-fail changed; do
+  run_case "$scenario" 1
+  result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+  [[ ! -e $result_dir/COMPLETE ]]
+  if [[ $scenario == changed ]]; then
+    if grep -q 'delete namespace' "$CALLS"; then exit 1; fi
+  else
+    grep -q 'delete namespace mongol-bench' "$CALLS"
+  fi
+done
+for TEST_MODE in connect-check all; do
+  for scenario in wrong-range range-unreadable; do
+    run_case "$scenario" 1
+    result_dir=$(awk '/^Results: / {sub(/^Results: /, ""); print}' "$TEMPORARY/output")
+    [[ ! -e $result_dir/COMPLETE ]]
+    if grep -q '/load.sh ' "$CALLS"; then exit 1; fi
+    grep -q 'delete namespace mongol-bench' "$CALLS"
+  done
+done
+unset TEST_MODE
+grep -q 'name: net.ipv4.ip_local_port_range' "$BENCH_DIR/k8s/bench.yaml"
+grep -q 'value: "1024 65535"' "$BENCH_DIR/k8s/bench.yaml"
 printf 'Kubernetes runner mock tests passed: %s scenarios plus 5 argument checks\n' "$CASES_RUN"

@@ -186,7 +186,7 @@ def test_rejects_invalid_invocations(tmp_path: Path, damage: str) -> None:
             manifest["placement"]["kube_context"] = 1
         report.write_json(directory / "run-manifest.json", manifest)
     save(data_path, data)
-    with pytest.raises((ValueError, FileNotFoundError)):
+    with pytest.raises(ValueError):
         report.validate(directory)
 
 
@@ -289,7 +289,7 @@ def test_series_continues_only_complete_gate_failures(
         lambda runs, output: output.mkdir() if len(runs) == 3 else None,
     )
     if failure:
-        with pytest.raises((ValueError, FileNotFoundError)):
+        with pytest.raises(ValueError):
             report.series(tmp_path / "series")
         assert calls == ["run-1"]
         assert not (tmp_path / "series/public").exists()
@@ -422,7 +422,7 @@ def test_series_rejects_reuse_before_runner_calls(
         manifest["placement"][damage] = "another-private-placement"
     report.write_json(directory / "run-manifest.json", manifest)
     before = (directory / "run-manifest.json").read_bytes()
-    with pytest.raises((ValueError, FileNotFoundError)):
+    with pytest.raises(ValueError):
         report.series(tmp_path / "series", reuse=reused)
     assert not series_calls
     assert not (tmp_path / "series").exists()
@@ -722,3 +722,25 @@ def test_approved_cpu_requests_and_limits() -> None:
         "200m",
         "300m",
     ]
+
+
+def test_missing_complete_names_run_and_log(tmp_path: Path) -> None:
+    directory = tmp_path / "run-1"
+    directory.mkdir()
+    with pytest.raises(ValueError, match="incomplete all invocation") as error:
+        report.validate_manifest(directory)
+    assert str(directory) in str(error.value)
+    assert str(directory.with_suffix(".log")) in str(error.value)
+
+
+def test_rejects_wrong_connect_nopool_connections(tmp_path: Path) -> None:
+    directory = fixture(tmp_path / "source")
+    manifest = report.read_json(directory / "run-manifest.json")
+    manifest["profile"]["connect_nopool_connections"] = 16
+    report.write_json(directory / "run-manifest.json", manifest)
+    with pytest.raises(ValueError, match="profile"):
+        report.validate_manifest(directory)
+
+
+def test_connect_nopool_profile() -> None:
+    assert report.PROFILE["connect_nopool_connections"] == 4

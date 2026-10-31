@@ -90,6 +90,22 @@ env WRK_THREADS=7 WRK_CONNECTIONS=6 "$BENCH_DIR/load.sh" test ping 1 > "$TEMPORA
 grep -q '"interval_requests":241' "$WORK/results/test.jsonl" || fail 'warm-up + one measured request count + preflight'
 printf 'ok - selectable connections/threads and invalid values exit 2\n'
 
+for api in connect_nopool ping; do
+  reset_work
+  WRK_THREADS=3 WRK_CONNECTIONS=32 "$BENCH_DIR/load.sh" test "$api" 3
+  if [[ $api == connect_nopool ]]; then
+    threads=2
+    connections=4
+  else
+    threads=3
+    connections=32
+  fi
+  [[ $(grep -c -- "-t$threads -c$connections --timeout 10s -d10s" "$TEST_CALLS") == 1 ]] || fail "$api warmup load"
+  [[ $(grep -c -- "-t$threads -c$connections --timeout 10s -d30s" "$TEST_CALLS") == 3 ]] || fail "$api measured load"
+  [[ $(grep -c "\"connections\":${connections}[,}]" "$WORK/results/test.jsonl") == 3 ]] || fail "$api recorded connections"
+done
+printf 'ok - connect_nopool fixed load and configured load for other APIs\n'
+
 for mode in redirect socket status empty log; do
   reset_work
   expect_failure env TEST_MODE="$mode" "$BENCH_DIR/load.sh" test ping 1
