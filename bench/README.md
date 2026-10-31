@@ -74,10 +74,11 @@ so only use result files from passes that exited successfully.
 `connect_nopool` always uses `-t2 -c4` for warm-up and measurement,
 regardless of the configured thread/connection values. Each request closes a
 socket, holding a local port in TIME_WAIT for about 60 seconds. The observed
-1,395 connections/s would need about 84,000 ports, so four concurrent connections
-reduce the connection rate. The bench pod also sets
-`net.ipv4.ip_local_port_range` to `1024 65535`; `all` and `connect-check` verify
-and save the effective range before any load. `connect-check` runs only the new
+1,395 connections/s would need about 84,000 ports. Four concurrent connections
+aim to reduce pressure; `connect-check` samples actual TIME_WAIT use every 5s
+and fails at a peak of 51,600 ports or on a sampling error. The bench pod also sets
+`net.ipv4.ip_local_port_range` to `1024 65535`; every Kubernetes mode verifies
+and saves the effective range before any load. `connect-check` runs only the new
 driver on Mongo 7.0 with a 10s warm-up and three 30s samples.
 
 Each measured JSON line records the actual `connections` used and includes its completed `requests` count and an

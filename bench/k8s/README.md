@@ -67,11 +67,18 @@ connections (exit 2). Calibration fixes connections to 8/16/32 and requires
 threads <= 8. Full report series require the approved 2/16 profile, with 2/4 for `connect_nopool`.
 
 The bench pod sets the pod-level sysctl `net.ipv4.ip_local_port_range` to
-`1024 65535`, keeping the CPU and memory profile above. `connect_nopool` closes
+`1024 65535`, keeping the CPU and memory profile above. This is a safe sysctl
+only from Kubernetes 1.27; an older cluster rejects the pod. `connect_nopool` closes
 a socket on every request, leaving a local port in TIME_WAIT for about 60s.
-At the observed 1,395 connections/s this would require about 84,000 ports;
-using four connections reduces the rate. The actual connection count is saved
-as `connections` in every measured JSON row.
+The failed `-c16` run reached 1,395–1,514 connections/s in warm-ups but only
+184–546 in measured samples; the cause of the drop is unknown. A wider range
+may raise the rate by reducing port-search cost. The 64,512-port range supports
+about 1,075 connections/s sustained at a 60s TIME_WAIT, but a brief rate above
+that value need not exhaust ports. Four connections aim to reduce pressure;
+TIME_WAIT sampling in `connect-check` validates the available headroom.
+The actual connection count is saved
+as `connections` in every measured JSON row. `connect_nopool` numbers at `-c4`
+cannot be compared with earlier `-c16` or `-c8` data in `docs/perf/`.
 
 For a focused port-exhaustion check after publishing the committed workload:
 
@@ -85,12 +92,23 @@ new driver's `connect_nopool`: one 10s warm-up and three 30s measured samples,
 the same sequence as a trend pass. Timed load is 100 seconds; allow roughly
 5–10 minutes including setup, readiness, seeding, collection and cleanup
 (overhead is unmeasured). It skips A/B, BSON, comparison gates and other trends.
-Both `connect-check` and `all` read `/proc/sys/net/ipv4/ip_local_port_range`
-from the bench `nginx` container, print it and save it as `ip_local_port_range`
+Every mode reads `/proc/sys/net/ipv4/ip_local_port_range`
+from the bench `nginx` container, prints it and saves it as `ip_local_port_range`
 in the local result directory. A range other than `1024 65535` fails before
 any load. Socket errors and non-2xx responses fail the check through the normal
 load validation. Collection precedes deletion of only the owned namespace;
 `COMPLETE` is written only after successful work, collection and cleanup.
+
+During `connect-check`, the runner reads the `tw` field of the `TCP:` line in
+`/proc/net/sockstat` from the bench `nginx` container every 5s. The count is per
+network namespace. Timestamp/count samples are saved in `time-wait.tsv` in the
+local result directory, with sampler diagnostics in `time-wait-sampler.log`.
+The runner prints the observed peak and the 51,600 limit (80% of 64,512 ports).
+A peak at or above that limit, failed sampling, or missing data fails the run
+without `COMPLETE`. Cleanup stops the sampler and its active child immediately
+on success or failure before collecting results and deleting the owned namespace.
+Warm-up and each measured sample also print their rps so the live run shows
+the rate at `-c4`. These rates are informational; no rps guard is applied.
 
 Each API saves before/after cgroup v2 `cpu.stat` for nginx, wrk and Mongo in the
 local result directory's `cpu/` folder, with sample timestamps. The interval

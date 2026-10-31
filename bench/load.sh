@@ -6,7 +6,7 @@ BENCH_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 WORK=${WORK:-$BENCH_DIR}
 URL=${URL:-http://127.0.0.1:8090}
 RUN_BASE=${RUN_BASE:-0}
-# Limit TIME_WAIT port pressure: 1395 connections/s for 60s needs about 84000 ports.
+# Reduce port pressure; connect-check measures TIME_WAIT to validate headroom.
 readonly CONNECT_NOPOOL_CONNECTIONS=4 CONNECT_NOPOOL_THREADS=2
 WRK_THREADS=${WRK_THREADS-2}
 WRK_CONNECTIONS=${WRK_CONNECTIONS-16}
@@ -23,6 +23,12 @@ check_log() {
   else
     [[ $? == 1 ]] || die "cannot read shared error.log"
   fi
+}
+print_rate() {
+  local report=$1 phase=$2
+  awk -F '"rps":' -v api="$BENCH_API" -v phase="$phase" '
+    /^\{/ {split($2, rate, /[,}]/); printf "%s %s rps: %s\n", api, phase, rate[1]}
+  ' "$report"
 }
 main() {
   if [[ ${1:-} == -h || ${1:-} == --help ]]; then
@@ -78,6 +84,7 @@ main() {
   wrk "-t$WRK_THREADS" "-c$WRK_CONNECTIONS" --timeout 10s -d10s --latency -s "$BENCH_DIR/wrk_report.lua" \
     "$URL/$api" > "$WORK/logs/$label-$api-warmup.log" 2>&1
   check_log
+  print_rate "$WORK/logs/$label-$api-warmup.log" warm-up
   local reports=("$WORK/logs/$label-$api-warmup.log")
   local i report
   for ((i = 1; i <= runs; i++)); do
@@ -86,6 +93,7 @@ main() {
     wrk "-t$WRK_THREADS" "-c$WRK_CONNECTIONS" --timeout 10s -d30s --latency -s "$BENCH_DIR/wrk_report.lua" \
       "$URL/$api" > "$report" 2>&1
     check_log
+    print_rate "$report" "sample $BENCH_RUN"
     reports+=("$report")
     # wrk's human summary shares stdout with done(); only keep its JSON.
     [[ $(grep -c '^{' "$report") == 1 ]] || die "missing wrk JSON: $report"

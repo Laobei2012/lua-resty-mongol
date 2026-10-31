@@ -6,6 +6,11 @@ BENCH_DIR=$(cd -- "$(dirname -- "$0")/.." && pwd)
 readonly BENCH_DIR
 readonly REPOSITORY=https://github.com/Laobei2012/lua-resty-mongol
 readonly NAMESPACE=mongol-bench
+# Keep TIME_WAIT below 80% of the 64512-port range, leaving headroom for live sockets.
+readonly TIME_WAIT_LIMIT=51600
+TIME_WAIT_SAMPLER_PID=
+TIME_WAIT_CHILD_PID=
+TIME_WAIT_MONITORING=0
 APIS=(ping find_one find_100 count insert_1 insert_100 update
   delete_insert find_and_modify gridfs_read auth connect_nopool)
 OWNED_UID=
@@ -105,9 +110,83 @@ collect() {
     return 1
   fi
 }
+stop_time_wait_child() {
+  if [[ -n $TIME_WAIT_CHILD_PID ]]; then
+    kill -KILL "$TIME_WAIT_CHILD_PID" 2> /dev/null || true
+    wait "$TIME_WAIT_CHILD_PID" 2> /dev/null || true
+    TIME_WAIT_CHILD_PID=
+  fi
+}
+sample_time_wait() {
+  local count
+  # Track the actual kubectl process so interrupting a sample cannot orphan it.
+  (exec kubectl --context "$KUBE_CONTEXT" -n "$NAMESPACE" exec bench -c nginx -- cat /proc/net/sockstat) \
+    > "$RESULT_DIR/sockstat" 2>> "$RESULT_DIR/time-wait-sampler.log" &
+  TIME_WAIT_CHILD_PID=$!
+  if ! wait "$TIME_WAIT_CHILD_PID"; then
+    TIME_WAIT_CHILD_PID=
+    return 1
+  fi
+  TIME_WAIT_CHILD_PID=
+  count=$(awk '
+    $1 == "TCP:" {
+      for (i=2; i<NF; i++) if ($i == "tw" && $(i+1) ~ /^[0-9]+$/) {
+        print $(i+1); found++
+      }
+    }
+    END {if (found != 1) exit 1}
+  ' "$RESULT_DIR/sockstat") || return 1
+  printf '%s\t%s\n' "$(date +%s)" "$count" >> "$RESULT_DIR/time-wait.tsv"
+}
+start_time_wait_sampler() {
+  TIME_WAIT_MONITORING=1
+  : > "$RESULT_DIR/time-wait.tsv"
+  if ! sample_time_wait; then
+    touch "$RESULT_DIR/time-wait.failed"
+    die "TIME_WAIT sampling failed"
+  fi
+  (
+    trap stop_time_wait_child EXIT
+    trap 'exit 0' INT TERM
+    while true; do
+      sleep 5 &
+      TIME_WAIT_CHILD_PID=$!
+      wait "$TIME_WAIT_CHILD_PID"
+      TIME_WAIT_CHILD_PID=
+      if ! sample_time_wait; then
+        touch "$RESULT_DIR/time-wait.failed"
+        exit 1
+      fi
+    done
+  ) &
+  TIME_WAIT_SAMPLER_PID=$!
+}
+stop_time_wait_sampler() {
+  ((TIME_WAIT_MONITORING == 1)) || return 0
+  TIME_WAIT_MONITORING=0
+  local sampler_rc=0
+  if [[ -n $TIME_WAIT_SAMPLER_PID ]]; then
+    kill -TERM "$TIME_WAIT_SAMPLER_PID" 2> /dev/null || true
+    wait "$TIME_WAIT_SAMPLER_PID" 2> /dev/null || sampler_rc=$?
+    TIME_WAIT_SAMPLER_PID=
+  fi
+  stop_time_wait_child
+  if [[ $sampler_rc != 0 || -e $RESULT_DIR/time-wait.failed || ! -s $RESULT_DIR/time-wait.tsv ]]; then
+    printf 'Error: TIME_WAIT sampling failed; inspect %s/time-wait-sampler.log\n' "$RESULT_DIR" >&2
+    return 1
+  fi
+  local peak
+  peak=$(awk '$2 > peak {peak=$2} END {print peak+0}' "$RESULT_DIR/time-wait.tsv")
+  printf 'TIME_WAIT peak: %s; limit: %s (80%% of 64512 ports)\n' "$peak" "$TIME_WAIT_LIMIT"
+  if ((peak >= TIME_WAIT_LIMIT)); then
+    printf 'Error: TIME_WAIT port use reached the %s limit\n' "$TIME_WAIT_LIMIT" >&2
+    return 1
+  fi
+}
 cleanup() {
   local rc=$? uid cleaned=0
   trap - EXIT INT TERM ERR
+  stop_time_wait_sampler || rc=1
   if [[ -n $OWNED_UID ]]; then
     if ((COLLECTED == 0)); then collect || rc=1; fi
     if ((COLLECTED > 0)); then
@@ -275,14 +354,12 @@ main() {
     > "$RESULT_DIR/bench.yaml"
   kube -n "$NAMESPACE" apply -f "$RESULT_DIR/bench.yaml"
   kube -n "$NAMESPACE" wait --for=condition=Ready pod/bench --timeout=900s
-  if [[ $mode == connect-check || $mode == all ]]; then
-    local port_range
-    port_range=$(kube -n "$NAMESPACE" exec bench -c nginx -- cat /proc/sys/net/ipv4/ip_local_port_range)
-    printf '%s\n' "$port_range" > "$RESULT_DIR/ip_local_port_range"
-    printf 'net.ipv4.ip_local_port_range: %s\n' "$port_range"
-    [[ $(printf '%s\n' "$port_range" | awk '{$1=$1; print}') == '1024 65535' ]] \
-      || die "net.ipv4.ip_local_port_range must be 1024 65535"
-  fi
+  local port_range
+  port_range=$(kube -n "$NAMESPACE" exec bench -c nginx -- cat /proc/sys/net/ipv4/ip_local_port_range)
+  printf '%s\n' "$port_range" > "$RESULT_DIR/ip_local_port_range"
+  printf 'net.ipv4.ip_local_port_range: %s\n' "$port_range"
+  [[ $(printf '%s\n' "$port_range" | awk '{$1=$1; print}') == '1024 65535' ]] \
+    || die "net.ipv4.ip_local_port_range must be 1024 65535"
   wait_mongo
   local openresty_version wrk_version wrk_banner
   openresty_version=$(ctl nginx -v 2>&1 | sed -n 's/.*openresty\/\([0-9.]*\).*/\1/p')
@@ -302,7 +379,9 @@ main() {
     > "$RESULT_DIR/tool-versions.json"
   if [[ $mode == connect-check ]]; then
     APIS=(connect_nopool)
+    start_time_wait_sampler
     pass new new-7.0 3 0
+    stop_time_wait_sampler || die "connect-check TIME_WAIT validation failed"
   fi
   if [[ $mode == calibrate ]]; then
     APIS=(ping find_one)

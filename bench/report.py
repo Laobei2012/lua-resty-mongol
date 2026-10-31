@@ -70,7 +70,7 @@ BLOBS = dict(
             "bench/k8s/mongo.yaml",
         ],
         [
-            "4a6e642ccdd528841b29a6d29b989368f035b13e",
+            "5f8f3530bad14d84530de74cae041a6328cee7fe",
             "bebf6354c6b13e4217048acbc14f3ac0cfd38b49",
             "6a75cd693cb6f83ae88fb3af2510ffa35ab58241",
             "3df10199e3f1c22904e13e3941c42ac7aad91ac7",
