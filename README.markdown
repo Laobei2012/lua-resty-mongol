@@ -612,11 +612,12 @@ describe the packaging fields.
 
 ## Performance
 
-The [first performance report](docs/perf/perf-2026-10-29.md) compares old and
-new drivers on MongoDB 4.4 and records new-driver trends on MongoDB 6–9, BSON
-results and public raw metrics. Four APIs miss the A/B gates consistently and
-`count` is unstable under the measured CPU limits; linked issues track triage.
-See the [harness](bench/README.md) for methodology and reproduction.
+The [latest performance report](docs/perf/perf-2026-10-31.md) compares the old
+and new drivers on MongoDB 4.4, on one shared cluster with fixed CPU limits.
+The new driver meets the rps gate on all comparable APIs. `insert_100` misses
+the p99 gate in two of three runs ([#103](https://github.com/Laobei2012/lua-resty-mongol/issues/103)).
+The results do not predict production throughput. See the
+[harness](bench/README.md) for the method, and [all reports](docs/perf/README.md).
 
 ## Limitations
 
