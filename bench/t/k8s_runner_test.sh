@@ -51,8 +51,21 @@ elif [[ " $* " == *' get service mongo '* ]]; then
   printf '192.0.2.1'
 elif [[ ${1:-} == get && ${2:-} == namespace ]]; then
   if [[ $# == 3 ]]; then
-    [[ ${SCENARIO:-} == leftover ]]
-    exit
+    case ${SCENARIO:-} in
+      leftover) exit 0 ;;
+      namespace-forbidden)
+        printf 'Error from server (Forbidden): fixture namespace access denied\n' >&2
+        exit 1
+        ;;
+      namespace-transport)
+        printf 'Unable to connect to the server: fixture connection refused\n' >&2
+        exit 1
+        ;;
+      *)
+        printf 'Error from server (NotFound): namespaces "mongol-bench" not found\n' >&2
+        exit 1
+        ;;
+    esac
   fi
   if [[ ${SCENARIO:-} == changed ]]; then printf 'other-uid'; else printf 'owned-uid'; fi
 elif [[ " $* " == *' nginx -v '* ]]; then
@@ -123,6 +136,15 @@ run_case() {
     exit 1
   }
 }
+for scenario in namespace-forbidden namespace-transport; do
+  run_case "$scenario" 1
+  case $scenario in
+    namespace-forbidden) grep -q 'fixture namespace access denied' "$TEMPORARY/output" ;;
+    namespace-transport) grep -q 'fixture connection refused' "$TEMPORARY/output" ;;
+    *) exit 1 ;;
+  esac
+  if grep -qE 'get nodes|describe nodes|create namespace|delete namespace' "$CALLS"; then exit 1; fi
+done
 run_case leftover 1
 grep -q 'namespace mongol-bench already exists' "$TEMPORARY/output"
 if grep -qE 'get nodes|describe nodes|create namespace|delete namespace' "$CALLS"; then exit 1; fi
@@ -237,6 +259,9 @@ for connections in 8 16 32; do
   grep -q "compare.lua .*--single.*old-c$connections.jsonl.*new-c$connections.jsonl" "$CALLS"
 done
 if grep -qE 'bson_micro|compare.lua --trend|delete pod mongo' "$CALLS"; then exit 1; fi
+grep -q 'delete namespace mongol-bench' "$CALLS"
+run_case namespace-notfound 0
+grep -q 'create namespace mongol-bench' "$CALLS"
 grep -q 'delete namespace mongol-bench' "$CALLS"
 run_case no-gates 1
 grep -q 'No API was gated' "$TEMPORARY/output"

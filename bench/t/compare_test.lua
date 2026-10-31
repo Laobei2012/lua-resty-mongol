@@ -159,6 +159,7 @@ local function tests()
     code, output = run({"--cpu-dir", cpu_dir, old_path, slow})
     check(code == 1 and output:find("| invalid |", 1, true), "invalid is neither gate pass nor fail")
     check(output:find("nginx usage", 1, true) and output:find("0.897", 1, true), "nginx condition and value")
+    check(output:find("(35.9 CPU s / 40 s)", 1, true), "nginx diagnostic includes CPU seconds and interval")
     counters("nginx", 36000000, 0, 400)
     for _, container in ipairs({"mongo", "wrk"}) do
         counters(container, 10000000, 4, 400)
