@@ -41,3 +41,22 @@ for _, fixture in ipairs({{ "small", small }, { "large", large }}) do
     measure("encode_" .. name, bson.to_bson, value)
     measure("decode_" .. name, decode, encoded)
 end
+
+-- Build the envelope directly so the old driver needs neither int64
+-- wrappers nor its different array-encoding convention.
+local uint32 = require("resty.mongol.ll").num_to_le_uint
+local function document(elements)
+    return uint32(#elements + 5) .. elements .. "\0"
+end
+local batch = document("\3" .. "0\0" .. assert(bson.to_bson(small)))
+local ns = "bench.read"
+local cursor = document("\4firstBatch\0" .. batch
+    .. "\18id\0" .. string.rep("\0", 8)
+    .. "\2ns\0" .. uint32(#ns + 1) .. ns .. "\0")
+local reply = document("\3cursor\0" .. cursor .. "\16ok\0\1\0\0\0")
+local decoded = decode(reply)
+assert(decoded.ok == 1 and decoded.cursor.id == 0
+    and decoded.cursor.ns == ns
+    and decoded.cursor.firstBatch[bson.decode and 1 or 0].name == small.name,
+    "BSON reply decode failed")
+measure("decode_reply", decode, reply)
