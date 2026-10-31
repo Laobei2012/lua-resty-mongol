@@ -708,3 +708,17 @@ def test_rejects_inconsistent_interval_request_count(tmp_path: Path) -> None:
     save(path, data)
     with pytest.raises(ValueError, match="inconsistent interval request counts"):
         report.validate(directory)
+
+
+def test_approved_cpu_requests_and_limits() -> None:
+    import re
+
+    content = (report.BENCH / "k8s/bench.yaml").read_text()
+    assert re.findall(r"cpu: (\d+m)", content) == [
+        "200m",
+        "200m",
+        "900m",
+        "1000m",
+        "200m",
+        "300m",
+    ]
