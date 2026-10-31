@@ -92,6 +92,7 @@ def samples(*, label: str, side: str, version: str, runs: list, manifest: dict) 
             "p99_ms": 3,
             "non2xx": 0,
             "socket_errors": 0,
+            "interval_requests": 1001 + 3000 * len(runs),
             "private": CANARY,
         }
         for api in report.APIS
@@ -628,7 +629,13 @@ def test_launch_cli_prints_pid_and_forwards_reuse(
 
 
 @pytest.mark.parametrize(
-    "path", ["bench/load.sh", "bench/k8s/bench.yaml", "bench/k8s/mongo.yaml"]
+    "path",
+    [
+        "bench/load.sh",
+        "bench/wrk_report.lua",
+        "bench/k8s/bench.yaml",
+        "bench/k8s/mongo.yaml",
+    ],
 )
 def test_calibrated_source_pins(path: str) -> None:
     content = (report.BENCH.parent / path).read_bytes()
@@ -640,11 +647,11 @@ def test_calibrated_source_pins(path: str) -> None:
 
 def test_calibrated_profile() -> None:
     assert report.PROFILE["threads"] == 2
-    assert report.PROFILE["connections"] == 32
+    assert report.PROFILE["connections"] == 16
     assert report.PROFILE["warmup_s"] == 10
 
 
-@pytest.mark.parametrize("setting", [{"WRK_THREADS": "1"}, {"WRK_CONNECTIONS": "16"}])
+@pytest.mark.parametrize("setting", [{"WRK_THREADS": "1"}, {"WRK_CONNECTIONS": "32"}])
 def test_series_rejects_unapproved_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setting: dict
 ) -> None:
@@ -674,3 +681,30 @@ def test_compare_uses_public_cpu_file(
         == "table"
     )
     assert calls[0][2:4] == ["--cpu-file", str(tmp_path / "cpu.jsonl")]
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, None, True, "400"])
+def test_rejects_invalid_interval_request_count(tmp_path: Path, value: object) -> None:
+    directory = fixture(tmp_path / "source")
+    path = directory / "work/results/new-9.0.jsonl"
+    data = report.rows(path)
+    data[0]["interval_requests"] = value
+    save(path, data)
+    with pytest.raises(ValueError):
+        report.validate(directory)
+
+
+def test_exports_request_count_and_upstream_bson_case(tmp_path: Path) -> None:
+    data = report.validate(fixture(tmp_path / "source"))
+    assert data["files"]["new"][0]["interval_requests"] == 4001
+    assert "decode_reply" in report.CASES
+
+
+def test_rejects_inconsistent_interval_request_count(tmp_path: Path) -> None:
+    directory = fixture(tmp_path / "source")
+    path = directory / "work/results/new-9.0.jsonl"
+    data = report.rows(path)
+    data[0]["interval_requests"] += 1
+    save(path, data)
+    with pytest.raises(ValueError, match="inconsistent interval request counts"):
+        report.validate(directory)

@@ -161,8 +161,6 @@ cpu_snapshot() {
   mkdir -p -- "$RESULT_DIR/cpu"
   local targets=(bench:nginx bench:wrk mongo:mongo)
   # Nginx brackets load closely: no other container snapshots in its interval.
-  # For 40s of load, ~2s startup/snapshot overhead + <1s timestamp rounding
-  # gives a saturated apparent ceiling above 40/43 = 0.930 cores (> 0.9).
   if [[ $phase == before ]]; then targets=(mongo:mongo bench:wrk bench:nginx); fi
   for target in "${targets[@]}"; do
     pod=${target%:*}
@@ -229,7 +227,7 @@ main() {
     ;;
   esac
   WRK_THREADS=${WRK_THREADS-2}
-  WRK_CONNECTIONS=${WRK_CONNECTIONS-32}
+  WRK_CONNECTIONS=${WRK_CONNECTIONS-16}
   if [[ ! $WRK_THREADS =~ ^[1-9][0-9]*$ || ! $WRK_CONNECTIONS =~ ^[1-9][0-9]*$ ]] \
     || ! awk -v threads="$WRK_THREADS" -v connections="$WRK_CONNECTIONS" 'BEGIN {exit !(threads <= connections)}'; then
     printf 'Error: WRK_THREADS and WRK_CONNECTIONS must be positive integers; threads must not exceed connections\n' >&2

@@ -67,8 +67,11 @@ local function cpu_delta(row, container)
     return delta
 end
 local function cpu_validity(row)
+    row.cpu_usage = nil
     if not cpu_dir and not cpu_file then return false end
     local conditions = {}
+    local key = row.label .. ":" .. row.api
+    local cpu_per_request
     for _, container in ipairs({"nginx", "mongo", "wrk"}) do
         local delta = cpu_delta(row, container)
         local available = delta and delta.available == true
@@ -76,13 +79,13 @@ local function cpu_validity(row)
             if not delta or not finite(delta[key]) or delta[key] < 0 then available = false end
         end
         if not available or delta.sample_time_epoch <= 0 or delta.nr_throttled > delta.nr_periods
-            or (container ~= "nginx" and delta.nr_periods == 0) then
+            or delta.nr_periods == 0 then
             conditions[#conditions + 1] = container .. " counters unavailable"
-        elseif container == "nginx" then
-            local cores = delta.usage_usec / 1e6 / delta.sample_time_epoch
-            conditions[#conditions + 1] = string.format("nginx usage %.4f cores (requires >= 0.9) (%.1f CPU s / %g s)%s",
-                cores, delta.usage_usec / 1e6, delta.sample_time_epoch, cores < 0.9 and " INVALID" or "")
         else
+            if container == "nginx" and row.interval_requests then
+                cpu_per_request = delta.usage_usec / row.interval_requests
+                row.cpu_usage = delta.usage_usec
+            end
             local fraction = delta.nr_throttled / delta.nr_periods
             conditions[#conditions + 1] = string.format("%s throttled %.3f%% (%d/%d periods; requires < 1%%)%s",
                 container, fraction * 100, delta.nr_throttled, delta.nr_periods, fraction >= 0.01 and " INVALID" or "")
@@ -90,17 +93,17 @@ local function cpu_validity(row)
     end
     local detail = table.concat(conditions, "; ")
     local invalid = detail:find("INVALID", 1, true) or detail:find("unavailable", 1, true)
-    local key = row.label .. ":" .. row.api
     if not diagnosed[key] then
         diagnosed[key] = true
-        diagnostics[#diagnostics + 1] = "| " .. row.label .. " | " .. row.api .. " | " .. (invalid and "invalid" or "valid") .. " | " .. detail .. " |\n"
+        diagnostics[#diagnostics + 1] = "| " .. row.label .. " | " .. row.api .. " | " .. (invalid and "invalid" or "valid") .. " | "
+            .. (cpu_per_request and string.format("%.3f", cpu_per_request) or "unavailable") .. " | " .. detail .. " |\n"
     end
     return not not invalid
 end
 local function write_diagnostics()
     if #diagnostics == 0 then return end
     io.write("\nCPU validity per pass/API (warm-up, measurement and snapshot overhead):\n\n",
-        "| Pass | API | Validity | Conditions |\n| --- | --- | --- | --- |\n", table.concat(diagnostics))
+        "| Pass | API | Validity | nginx CPU/request (us) | Conditions |\n| --- | --- | --- | ---: | --- |\n", table.concat(diagnostics))
 end
 
 local function read_results(path)
@@ -133,6 +136,10 @@ local function read_results(path)
         if row.non2xx ~= 0 or row.socket_errors ~= 0 then
             die(where .. ": run contains HTTP or socket errors")
         end
+        if row.interval_requests ~= nil and (not finite(row.interval_requests)
+            or row.interval_requests <= 0 or row.interval_requests % 1 ~= 0) then
+            die(where .. ": invalid interval_requests")
+        end
         if single and row.run ~= 1 then die(where .. ": --single requires exactly run 1") end
         if row.run % 1 ~= 0 or row.run < 1 or row.run > 3 then
             die(where .. ": expected run 1, 2 or 3")
@@ -154,13 +161,26 @@ local function read_results(path)
             die(path .. ": " .. api .. ": expected three complete runs")
         end
         local rps, p99, invalid = {}, {}, false
+        local intervals, usage, requests, complete = {}, 0, 0, true
         for i = 1, single and 1 or 3 do
             invalid = invalid or runs[i].invalid
             rps[i], p99[i] = runs[i].rps, runs[i].p99_ms
+            local key = runs[i].label .. ":" .. api
+            if intervals[key] then
+                if intervals[key].interval_requests ~= runs[i].interval_requests then
+                    die(path .. ": " .. api .. ": inconsistent interval_requests")
+                end
+            else
+                intervals[key] = runs[i]
+                if runs[i].cpu_usage and runs[i].interval_requests then
+                    usage, requests = usage + runs[i].cpu_usage, requests + runs[i].interval_requests
+                else complete = false end
+            end
         end
         table.sort(rps)
         table.sort(p99)
-        data.apis[api] = { rps = rps[single and 1 or 2], p99 = p99[single and 1 or 2], invalid = invalid }
+        data.apis[api] = { rps = rps[single and 1 or 2], p99 = p99[single and 1 or 2], invalid = invalid,
+            cpu_per_request = complete and requests > 0 and usage / requests or nil }
     end
     return data
 end
@@ -228,5 +248,14 @@ for _, api in ipairs(names) do
     end
 end
 write_diagnostics()
+if cpu_dir or cpu_file then
+    io.write("\nnginx CPU per request (informational; does not gate):\n\n",
+        "| API | Old CPU/request (us) | New CPU/request (us) |\n| --- | ---: | ---: |\n")
+    for _, api in ipairs(names) do
+        local a, b = old.apis[api], new.apis[api]
+        io.write("| ", api, " | ", a and a.cpu_per_request and string.format("%.3f", a.cpu_per_request) or "unavailable",
+            " | ", b and b.cpu_per_request and string.format("%.3f", b.cpu_per_request) or "unavailable", " |\n")
+    end
+end
 if gated == 0 then io.write("\nNo API was gated.\n") end
 os.exit((failed or gated == 0) and 1 or 0)

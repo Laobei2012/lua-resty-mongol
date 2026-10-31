@@ -43,10 +43,10 @@ function done(summary, latency, requests)
     print(string.format(
         '{"label":%s,"driver_sha":%s,"mongo_version":%s,"api":%s,' ..
         '"run":%d,"rps":%.6f,"p50_ms":%.6f,"p90_ms":%.6f,' ..
-        '"p99_ms":%.6f,"non2xx":%d,"socket_errors":%d}',
+        '"p99_ms":%.6f,"non2xx":%d,"socket_errors":%d,"requests":%d}',
         quote(env("LABEL")), quote(env("DRIVER_SHA")),
         quote(env("MONGO_VERSION")), quote(env("API")),
         assert(tonumber(env("RUN"))), rps,
         latency:percentile(50) / 1000, latency:percentile(90) / 1000,
-        latency:percentile(99) / 1000, bad, sockets))
+        latency:percentile(99) / 1000, bad, sockets, summary.requests))
 end

@@ -29,7 +29,7 @@ take tens of minutes per driver. Run `all` three separate times for the first
 report. Each invocation creates a unique local `bench/results/k8s-*` directory.
 `ab` runs old/new alternately three times on Mongo 4.4; `trend` runs three measured
 samples on each of Mongo 6, 7, 8, and 9. Warm-up is always 10 seconds and each
-measured sample is 30 seconds with two wrk threads, 32 connections, and a
+measured sample is 30 seconds with two wrk threads, 16 connections, and a
 10-second socket timeout.
 
 Owner decision (2026-10-30): reduce nginx/Mongo throttling observed in the
@@ -59,17 +59,17 @@ The timed HTTP workload is `3 * 2 * 2 * (10 + 30) = 480s`, or 8 minutes.
 Allow roughly 20 minutes including cloning, package installation, seeding,
 remote snapshot calls, readiness and collection; actual overhead is unmeasured.
 
-`WRK_THREADS` defaults to 2 and `WRK_CONNECTIONS` to 32, for warm-up and
+`WRK_THREADS` defaults to 2 and `WRK_CONNECTIONS` to 16, for warm-up and
 measurement. Both must be positive integers and threads cannot exceed
 connections (exit 2). Calibration fixes connections to 8/16/32 and requires
-threads <= 8. Full report series require the approved 2/32 profile.
+threads <= 8. Full report series require the approved 2/16 profile.
 
 Each API saves before/after cgroup v2 `cpu.stat` for nginx, wrk and Mongo in the
 local result directory's `cpu/` folder, with sample timestamps. The interval
 includes warm-up and measured runs. Compare `usage_usec`, `nr_periods`,
 `nr_throttled`, and `throttled_usec` deltas to assess CPU use and throttling under
-these caps. Every API/pass is invalid if nginx averages below 0.9 cores,
-Mongo is throttled in >=1% of periods, or wrk is throttled in >=1% of periods.
+these caps. Every API/pass is invalid if nginx, Mongo or wrk is throttled in
+>=1% of periods. There is no minimum nginx core usage requirement.
 Missing, reset or unusable counters also invalidate the API. The comparison
 shows `invalid` if any interval for that API is invalid, excluding it from both
 gate passes and gate failures; valid APIs still gate normally. An A/B or
@@ -78,15 +78,15 @@ bad input still exits 2. Trend comparisons have no gates. Per-pass tables
 name each condition and its values. Trend cells also show `invalid`.
 Nginx is sampled last before load (Mongo, wrk, nginx) and first after load
 (nginx, wrk, Mongo), excluding the other containers' snapshot calls from its
-interval. Retaining whole-second timestamps and the wall-clock denominator is
-the smaller change: for 40 seconds of saturated load, allowing about 2 seconds
-for nginx snapshot/load startup and less than 1 second of rounding gives an
-apparent ceiling above `40/43 = 0.930` cores, above the unchanged 0.9 threshold.
-This estimate uses the review's call timings; longer delays can still affect it.
-The interval includes nginx's own snapshot overhead as well as warm-up: a slow
-warm-up or idle overhead can lower the average below 0.9 even when nginx is busy
-throughout the measured sample. These are interval checks, not measurement-only
-CPU attribution.
+interval. The interval includes the successful preflight, warm-up, measured
+requests and nginx's own snapshot overhead. Each measured JSON line records
+its completed `requests` and the shared API/pass `interval_requests` total.
+Nginx CPU/request (microseconds) is `usage_usec / interval_requests`, shown per
+pass and side by side for old/new. The A/B value pools usage and request counts
+across distinct passes, without counting a shared interval once per sample.
+This metric is informational and never gates; missing counts or unusable nginx
+counters yield `unavailable`. CPU attribution includes background work and
+snapshot overhead, rather than measuring isolated handler CPU time.
 
 The script creates only `mongol-bench` and refuses an existing namespace. Every
 kubectl operation uses KUBE_CONTEXT explicitly. It copies all shared results,
@@ -101,7 +101,7 @@ The Mongo and bench pods need separate nodes, outbound GitHub/Ubuntu access, and
 the resource capacity specified in the manifests. No custom image is needed.
 
 `bson_micro.lua` also runs directly with
-`resty -I /path/to/driver/lib bench/bson_micro.lua`. Its four cases each warm up
+`resty -I /path/to/driver/lib bench/bson_micro.lua`. Its five cases each warm up
 for at most 1,000 operations, stopping when one second has elapsed (checked every
 50 operations). Measurement runs in batches of 100 operations, checking the
 clock once per batch and stopping after the first batch that ends at or after
@@ -185,7 +185,7 @@ Regenerate into a fresh output directory from the same three valid directories:
 Reports reject missing or duplicate samples, errors, wrong labels/SHAs/server
 versions, incomplete BSON cases, altered joined A/B files and profiles. Each
 invocation requires 33 old samples, 36 new samples and 144 trend samples (213
-total), six correctly numbered interleaved A/B pass files and eight BSON cases.
+total), six correctly numbered interleaved A/B pass files and ten BSON cases.
 Result manifests attest a run produced by this controller; they do not prove
 authenticity of manually fabricated inputs. Do not hand-edit completion or
 provenance files to import older runs. If credentials expire after one or two
@@ -208,7 +208,7 @@ distinct complete invocations. Reused provenance and COMPLETE files are never
 rewritten; their paths stay private. Incomplete runs and their diagnostics remain
 in the original directory and cannot be reused. There are no automatic retries
 or namespace adoption. Three complete invocations, all 213 HTTP samples and
-eight BSON cases per invocation, the full warm-ups, durations, resources and
+ten BSON cases per invocation, the full warm-ups, durations, resources and
 thresholds remain required.
 
 For later reports, review only the generated `public/` files for a `docs/perf/`

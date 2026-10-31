@@ -69,14 +69,16 @@ grep -q '"driver_sha":"0000000000000000000000000000000000000001"' \
   "$WORK/results/test.jsonl" || fail 'driver identity'
 grep -q '"mongo_version":"4.4.29"' \
   "$WORK/results/test.jsonl" || fail 'server identity'
-[[ $(grep -c -- '-t2 -c32 --timeout 10s -d30s --latency' "$TEST_CALLS") == 3 ]] \
+[[ $(grep -c -- '-t2 -c16 --timeout 10s -d30s --latency' "$TEST_CALLS") == 3 ]] \
   || fail 'measured defaults'
-[[ $(grep -c -- '-t2 -c32 --timeout 10s -d10s --latency' "$TEST_CALLS") == 1 ]] \
+[[ $(grep -c -- '-t2 -c16 --timeout 10s -d10s --latency' "$TEST_CALLS") == 1 ]] \
   || fail 'warmup defaults'
-printf 'ok - report, run numbering, metadata and load defaults\n'
+grep -q '"requests":120' "$WORK/results/test.jsonl" || fail 'exact measured request count'
+[[ $(grep -c '"interval_requests":481' "$WORK/results/test.jsonl") == 3 ]] || fail 'warm-up + three measured request counts + preflight'
+printf 'ok - report, run numbering, metadata, request counts and load defaults\n'
 reset_work
-WRK_THREADS=1 WRK_CONNECTIONS=16 "$BENCH_DIR/load.sh" test ping 1
-[[ $(grep -c -- '-t1 -c16 --timeout 10s' "$TEST_CALLS") == 2 ]] || fail 'selected load'
+WRK_THREADS=1 WRK_CONNECTIONS=8 "$BENCH_DIR/load.sh" test ping 1
+[[ $(grep -c -- '-t1 -c8 --timeout 10s' "$TEST_CALLS") == 2 ]] || fail 'selected load'
 for setting in WRK_CONNECTIONS=0 WRK_CONNECTIONS=-1 WRK_CONNECTIONS=abc WRK_THREADS=0 WRK_THREADS=33 WRK_THREADS=1.5 WRK_CONNECTIONS= WRK_THREADS= WRK_CONNECTIONS=08 WRK_THREADS=08; do
   rc=0
   env "$setting" "$BENCH_DIR/load.sh" test ping 1 > "$TEMPORARY/output" 2>&1 || rc=$?
@@ -85,6 +87,7 @@ done
 rc=0
 env WRK_THREADS=7 WRK_CONNECTIONS=6 "$BENCH_DIR/load.sh" test ping 1 > "$TEMPORARY/output" 2>&1 || rc=$?
 [[ $rc == 2 ]] || fail 'threads above custom connections'
+grep -q '"interval_requests":241' "$WORK/results/test.jsonl" || fail 'warm-up + one measured request count + preflight'
 printf 'ok - selectable connections/threads and invalid values exit 2\n'
 
 for mode in redirect socket status empty log; do
