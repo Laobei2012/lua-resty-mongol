@@ -6,6 +6,8 @@ BENCH_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 WORK=${WORK:-$BENCH_DIR}
 URL=${URL:-http://127.0.0.1:8090}
 RUN_BASE=${RUN_BASE:-0}
+# Limit TIME_WAIT port pressure: 1395 connections/s for 60s needs about 84000 ports.
+readonly CONNECT_NOPOOL_CONNECTIONS=4 CONNECT_NOPOOL_THREADS=2
 WRK_THREADS=${WRK_THREADS-2}
 WRK_CONNECTIONS=${WRK_CONNECTIONS-16}
 
@@ -31,12 +33,16 @@ main() {
     usage
     exit 2
   }
+  local label=$1 api=$2 runs=$3
+  if [[ $api == connect_nopool ]]; then
+    WRK_CONNECTIONS=$CONNECT_NOPOOL_CONNECTIONS
+    WRK_THREADS=$CONNECT_NOPOOL_THREADS
+  fi
   if [[ ! $WRK_THREADS =~ ^[1-9][0-9]*$ || ! $WRK_CONNECTIONS =~ ^[1-9][0-9]*$ ]] \
     || ! awk -v threads="$WRK_THREADS" -v connections="$WRK_CONNECTIONS" 'BEGIN {exit !(threads <= connections)}'; then
     printf 'Error: WRK_THREADS and WRK_CONNECTIONS must be positive integers; threads must not exceed connections\n' >&2
     exit 2
   fi
-  local label=$1 api=$2 runs=$3
   [[ $label =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || die "invalid label"
   case $api in
     ping | find_one | find_100 | count | insert_1 | insert_100 | update | delete_insert | find_and_modify | gridfs_read | auth | connect_nopool) ;;
@@ -98,7 +104,7 @@ main() {
     }
     END { if (rows != ARGC - 1) exit 1; printf "%.0f\n", total }
   ' "${reports[@]}") || die "missing or invalid wrk request counts"
-  awk -v count="$interval_requests" '{sub(/}$/, ",\"interval_requests\":" count "}"); print}' \
+  awk -v count="$interval_requests" -v connections="$WRK_CONNECTIONS" '{sub(/}$/, ",\"interval_requests\":" count ",\"connections\":" connections "}"); print}' \
     "$TEMPORARY/results.jsonl" >> "$WORK/results/$label.jsonl"
 }
 main "$@"

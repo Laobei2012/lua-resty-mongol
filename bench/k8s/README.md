@@ -29,7 +29,8 @@ take tens of minutes per driver. Run `all` three separate times for the first
 report. Each invocation creates a unique local `bench/results/k8s-*` directory.
 `ab` runs old/new alternately three times on Mongo 4.4; `trend` runs three measured
 samples on each of Mongo 6, 7, 8, and 9. Warm-up is always 10 seconds and each
-measured sample is 30 seconds with two wrk threads, 16 connections, and a
+measured sample is 30 seconds with two wrk threads, 16 connections
+(4 for `connect_nopool`), and a
 10-second socket timeout.
 
 Owner decision (2026-10-30): reduce nginx/Mongo throttling observed in the
@@ -60,9 +61,36 @@ Allow roughly 20 minutes including cloning, package installation, seeding,
 remote snapshot calls, readiness and collection; actual overhead is unmeasured.
 
 `WRK_THREADS` defaults to 2 and `WRK_CONNECTIONS` to 16, for warm-up and
-measurement. Both must be positive integers and threads cannot exceed
+measurement, except `connect_nopool`, which always uses two threads and four
+connections regardless of these settings. Both must be positive integers and threads cannot exceed
 connections (exit 2). Calibration fixes connections to 8/16/32 and requires
-threads <= 8. Full report series require the approved 2/16 profile.
+threads <= 8. Full report series require the approved 2/16 profile, with 2/4 for `connect_nopool`.
+
+The bench pod sets the pod-level sysctl `net.ipv4.ip_local_port_range` to
+`1024 65535`, keeping the CPU and memory profile above. `connect_nopool` closes
+a socket on every request, leaving a local port in TIME_WAIT for about 60s.
+At the observed 1,395 connections/s this would require about 84,000 ports;
+using four connections reduces the rate. The actual connection count is saved
+as `connections` in every measured JSON row.
+
+For a focused port-exhaustion check after publishing the committed workload:
+
+```bash
+source bench/k8s/environment.local
+bench/k8s/run-k8s.sh connect-check
+```
+
+`connect-check` creates its owned namespace, starts Mongo 7.0 and runs only the
+new driver's `connect_nopool`: one 10s warm-up and three 30s measured samples,
+the same sequence as a trend pass. Timed load is 100 seconds; allow roughly
+5–10 minutes including setup, readiness, seeding, collection and cleanup
+(overhead is unmeasured). It skips A/B, BSON, comparison gates and other trends.
+Both `connect-check` and `all` read `/proc/sys/net/ipv4/ip_local_port_range`
+from the bench `nginx` container, print it and save it as `ip_local_port_range`
+in the local result directory. A range other than `1024 65535` fails before
+any load. Socket errors and non-2xx responses fail the check through the normal
+load validation. Collection precedes deletion of only the owned namespace;
+`COMPLETE` is written only after successful work, collection and cleanup.
 
 Each API saves before/after cgroup v2 `cpu.stat` for nginx, wrk and Mongo in the
 local result directory's `cpu/` folder, with sample timestamps. The interval
@@ -233,4 +261,5 @@ All three runtime containers have requests below limits; clone remains equal.
 Memory is unchanged. The owner removed the minimum nginx CPU usage rule:
 nginx did not saturate in calibration (0.34–0.67 cores), and throttling is the
 check for whether the setup distorts a result. Throughput stopped rising at
-16 connections, so the default is `-t2 -c16`, including warm-up.
+16 connections, so the default is `-t2 -c16`, including warm-up,
+with the `connect_nopool` exception of `-t2 -c4`.

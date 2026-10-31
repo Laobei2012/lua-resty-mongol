@@ -19,7 +19,7 @@ die() {
   exit 1
 }
 usage() {
-  printf 'Usage: KUBE_CONTEXT=... MONGO_NODE=... BENCH_NODE=... NEW_REF=... %s <ab|trend|all|calibrate>\n' "$0" >&2
+  printf 'Usage: KUBE_CONTEXT=... MONGO_NODE=... BENCH_NODE=... NEW_REF=... %s <ab|trend|all|calibrate|connect-check>\n' "$0" >&2
 }
 kube() { kubectl --context "$KUBE_CONTEXT" "$@"; }
 check_node_cpu() {
@@ -221,7 +221,7 @@ main() {
   fi
   local mode=$1 command replicate side tag namespace_error
   MODE=$mode
-  case $mode in ab | trend | all | calibrate) ;; *)
+  case $mode in ab | trend | all | calibrate | connect-check) ;; *)
     usage
     exit 2
     ;;
@@ -250,6 +250,7 @@ main() {
   check_node_cpu "$MONGO_NODE" 1000 Mongo
   check_node_cpu "$BENCH_NODE" 1100 bench
   export OLD_SHA NEW_SHA MONGO_NODE BENCH_NODE MONGO_TAG=4.4
+  if [[ $mode == connect-check ]]; then MONGO_TAG=7.0; fi
   OLD_SHA=$(resolve_ref "${OLD_REF:-3eb6349db4d30b11aab271fb14a82b8504f6aa8e}")
   NEW_SHA=$(resolve_ref "$NEW_REF")
   mkdir -p -- "$BENCH_DIR/results"
@@ -274,6 +275,14 @@ main() {
     > "$RESULT_DIR/bench.yaml"
   kube -n "$NAMESPACE" apply -f "$RESULT_DIR/bench.yaml"
   kube -n "$NAMESPACE" wait --for=condition=Ready pod/bench --timeout=900s
+  if [[ $mode == connect-check || $mode == all ]]; then
+    local port_range
+    port_range=$(kube -n "$NAMESPACE" exec bench -c nginx -- cat /proc/sys/net/ipv4/ip_local_port_range)
+    printf '%s\n' "$port_range" > "$RESULT_DIR/ip_local_port_range"
+    printf 'net.ipv4.ip_local_port_range: %s\n' "$port_range"
+    [[ $(printf '%s\n' "$port_range" | awk '{$1=$1; print}') == '1024 65535' ]] \
+      || die "net.ipv4.ip_local_port_range must be 1024 65535"
+  fi
   wait_mongo
   local openresty_version wrk_version wrk_banner
   openresty_version=$(ctl nginx -v 2>&1 | sed -n 's/.*openresty\/\([0-9.]*\).*/\1/p')
@@ -291,6 +300,10 @@ main() {
   [[ $openresty_version =~ ^[0-9]+(\.[0-9]+){3}$ ]] || die "cannot identify benchmark tools"
   printf '{"openresty":"%s","wrk":"%s"}\n' "$openresty_version" "$wrk_version" \
     > "$RESULT_DIR/tool-versions.json"
+  if [[ $mode == connect-check ]]; then
+    APIS=(connect_nopool)
+    pass new new-7.0 3 0
+  fi
   if [[ $mode == calibrate ]]; then
     APIS=(ping find_one)
     for WRK_CONNECTIONS in 8 16 32; do
