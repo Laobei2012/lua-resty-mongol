@@ -1,0 +1,92 @@
+{
+  "containers": {
+    "bench": {
+      "cpu_max": "max 100000",
+      "memory_bytes": 536870912
+    },
+    "mongo": {
+      "cpu_max": "max 100000",
+      "memory_bytes": 4294967296,
+      "wired_tiger_cache_gib": 1.5
+    },
+    "raw_client": {
+      "cpu_max": "max 100000",
+      "memory_bytes": 536870912
+    }
+  },
+  "controller_base": "f7d8583b0ebc873690275484668947b4cfb1dc8a",
+  "driver_new": "6cf0584ffe3e16008b73d695107e5430820f3159",
+  "driver_old": "3eb6349db4d30b11aab271fb14a82b8504f6aa8e",
+  "histogram_bin_ms": 0.01,
+  "images": {
+    "bench": "sha256:3602d845bda87010398bda10d12328eb91c169e55bfff73aef957580d48e237d",
+    "mongo": "sha256:92b9fc17da1b28044672708bca03e23948e0965110cdad3aefbe46ab506d03e9",
+    "raw_client": "sha256:f6b8091a90beba7c4b44d7427f1b38e30b8b81379fcd4ea70127aec1369ec5e8"
+  },
+  "limitations": [
+    "Local mechanism probes, not the approved Kubernetes profile",
+    "Socket elapsed time includes coroutine resumption delay",
+    "CPU pressure/scheduling traces unavailable",
+    "Original cluster raw latency histograms unavailable"
+  ],
+  "load": {
+    "connections": 16,
+    "documents_per_request": 100,
+    "measurement_s": 30,
+    "reseed": "before every driver pass",
+    "threads": 2,
+    "timeout_s": 10,
+    "warmup_s": 10
+  },
+  "platform": {
+    "architecture": "aarch64",
+    "cpu_pressure_available": false,
+    "docker_vm_cpus": 10,
+    "docker_vm_memory_bytes": 8392671232
+  },
+  "raw_wrk": {
+    "dependencies": "OpenResty image LuaJIT and OpenSSL3; differs from the distro-packaged wrk",
+    "patch": "wrk-raw-p99.patch",
+    "upstream_commit": "7594a95186ebdfa7cb35477a8a811f84e2a31b62"
+  },
+  "slow_insert_threshold_ms": 20,
+  "source_blobs": {
+    "bench/handlers.lua": "2e21dae3e29eb61a1d9ede411e873381464e2cce",
+    "bench/issue103/profile.conf.in": "a930b9ee0c6d6a5fd9d36dc6ffed577e0bb5e796",
+    "bench/issue103/profile_handler.lua": "371bd78e9ed2addfd070f6fec5302a59c625bc7f",
+    "bench/issue103/profile_wrk.lua": "dfca3c502b852765395ab1fc9ba512df2e13836b",
+    "bench/issue103/wrk-raw-p99.patch": "b39a90e334f805281e9e1cb0d20bb6e739a08142",
+    "bench/load.sh": "5f8f3530bad14d84530de74cae041a6328cee7fe",
+    "bench/wrk_report.lua": "6a75cd693cb6f83ae88fb3af2510ffa35ab58241"
+  },
+  "tools": {
+    "mongo": "4.4.30",
+    "openresty": "1.31.1.1",
+    "wrk": "4.1.0"
+  },
+  "variants": {
+    "profile": {
+      "client": "distro wrk; same container as nginx",
+      "handler": "profile_handler.lua",
+      "modes": [
+        "unpaced",
+        "paced"
+      ],
+      "paced_rate_per_thread": 500,
+      "pairs_per_mode": 1,
+      "snapshot_includes_warmup": false
+    },
+    "raw": {
+      "client": "diagnostic wrk in separate container sharing bench network namespace",
+      "handler": "standard",
+      "pairs": 3,
+      "snapshot_includes_warmup": false
+    },
+    "uncapped": {
+      "client": "distro wrk; same container as nginx",
+      "handler": "standard",
+      "pairs": 3,
+      "snapshot_includes_warmup": true
+    }
+  }
+}

@@ -1,0 +1,19 @@
+worker_processes 1;
+error_log logs/error.log warn;
+pid logs/nginx.pid;
+env MONGO_HOST;
+events { worker_connections 1024; }
+http {
+    access_log off;
+    lua_code_cache on;
+    lua_package_path "${MONGOL_LIB}/?.lua;${MONGOL_LIB}/?/init.lua;${BENCH_DIR}/?.lua;;";
+    server {
+        listen 8090;
+        location = /insert_100 {
+            content_by_lua_block { require("issue103.profile_handler").run() }
+        }
+        location = /profile_stats {
+            content_by_lua_block { require("issue103.profile_handler").summary() }
+        }
+    }
+}

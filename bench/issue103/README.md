@@ -4,7 +4,11 @@ Issue: <https://github.com/Laobei2012/lua-resty-mongol/issues/103>
 
 The published p99 failures reproduce. The available cluster measurements
 do not establish a driver regression or identify the source of the delay.
-No driver change is justified by those measurements alone.
+Further local probes reproduce the higher new-driver HTTP p99 without CPU
+quotas, but put most slow-insert time inside cosocket calls. The new
+driver's measured local execution is faster. A paced comparison at about
+1,000 requests/s favors the new driver. These findings narrow the next
+cluster experiment; they do not establish the original cluster's cause.
 
 ## Replay of the original results
 
@@ -106,7 +110,199 @@ Image identities:
 - Mongo: `sha256:92b9fc17da1b28044672708bca03e23948e0965110cdad3aefbe46ab506d03e9`.
 - Local bench image: `sha256:3602d845bda87010398bda10d12328eb91c169e55bfff73aef957580d48e237d`.
 
-## Experiments needed to identify the cause
+## Continued investigation: no CPU quotas
+
+The continued probes use the same ARM64 Docker VM, MongoDB 4.4.30 and
+driver commits, with no CPU quotas on either container (`cpu.max` is
+`max 100000`). Mongo keeps its 4Gi memory limit and 1.5GiB WiredTiger cache.
+Nginx and wrk share a 512Mi container. CPU pressure counters are unavailable
+in this VM, so zero quota throttling does not exclude scheduling delays.
+
+Three old/new pairs use the original handler and wrk reporter, a new seed
+before each pass, a 10s warm-up and one 30s sample at `-t2 -c16`. All six
+intervals have zero throttled periods and zero HTTP/socket errors.
+
+| Pair | Old requests/s | New requests/s | Old p99, ms | New p99, ms |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 5259.15 | 8051.45 | 12.991 | 27.912 |
+| 2 | 5201.53 | 7827.58 | 16.424 | 14.456 |
+| 3 | 5269.56 | 8057.21 | 14.229 | 25.938 |
+
+The median p99 ratio is 1.823, while the throughput ratio is 1.531.
+The tail is still unstable without quotas. This is a mechanism probe,
+not a run of the approved Kubernetes resource profile or its validity gate.
+The workload reaches substantially higher rates than in the issue.
+
+Mongo `opLatencies.writes` mean latency over these API intervals is
+524.5 / 747.1 microseconds (old/new) in pair 1, 539.6 / 776.9 in pair 2,
+and 543.3 / 794.8 in pair 3. These intervals include warm-up as well as
+measurement. They cannot correlate an individual HTTP outlier with a
+server operation. The histogram counters are captured using
+[`serverStatus` with `opLatencies.histograms`](https://www.mongodb.com/docs/manual/reference/command/serverstatus/#oplatencies).
+
+## Timing the driver and socket calls
+
+`profile_handler.lua` is a separate diagnostic endpoint. It uses the same
+100-document fixture and acknowledged insert, wraps the connection's
+socket for that insert, then restores it before returning to the pool.
+It never changes a driver module or the standard handler.
+
+It measures elapsed time using Linux `CLOCK_MONOTONIC`:
+
+- `total_ms`: the collection insert, excluding connection/authentication,
+  document construction, keepalive and HTTP processing.
+- `socket_ms`: elapsed time inside socket `send` and `receive` calls.
+- `local_ms`: insert time minus socket time.
+- `encode_ms`: insert entry to first socket send; this includes collection
+  setup and encoding, rather than timing BSON alone.
+- `build_ms`: construction of the 100 document tables.
+
+The worker stores counters in 10-microsecond histogram bins. The reported
+p99 values below are upper bounds for the selected bins, with up to
+0.01ms rounding. Percentiles cannot be subtracted or added to assign time
+to a particular request. The slow-request sums below *do* use the same
+requests on both sides of the sum.
+
+The load client uses the original reporter, with optional pacing through
+[wrk's `delay()` hook](https://github.com/wg/wrk/blob/4.1.0/SCRIPTING).
+Timing collection stays in nginx. Each driver is freshly seeded for each
+mode; there is a 10s warm-up followed by one 30s measurement. Server timing
+counters reset after warm-up. A few in-flight requests that complete after
+wrk exits can appear in server counters but not wrk's completed count.
+
+| Mode | Driver | Requests/s | HTTP p99, ms | Insert p99 upper, ms | Socket p99 upper, ms | Local p99 upper, ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Unpaced | Old | 4919.18 | 14.674 | 9.81 | 9.61 | 0.44 |
+| Unpaced | New | 7430.61 | 18.696 | 9.55 | 9.44 | 0.30 |
+| Paced | Old | 995.44 | 9.153 | 8.07 | 7.74 | 0.94 |
+| Paced | New | 997.02 | 7.668 | 6.58 | 6.47 | 0.63 |
+
+For unpaced inserts lasting at least 20ms, socket calls account for 99.33%
+of summed insert time in the old driver (172 requests), and 99.66% in the
+new driver (383 requests). The new driver's maximum measured local insert
+time is below 1.52ms; its maximum insert time is below 72.45ms. The observed
+tail is not explained by a long synchronous encoding interval in that run.
+
+**Limits:** Socket time includes Mongo/network waits and the time until a
+Lua coroutine resumes. It cannot distinguish those from event-loop or OS
+scheduling delays, including delays caused by other requests. The profiler
+allocates wrappers and samples clocks, so it is not identical to the standard
+benchmark. The paced comparison is one pair and changes both offered load
+and collection growth: it ends with about four million documents per side,
+versus roughly 20/30 million unpaced. It supports a load/state-sensitive
+explanation but cannot distinguish queueing from cache/storage behavior.
+All four instrumented intervals have zero quota throttling and HTTP/socket
+errors. No production driver optimization follows from these probes.
+
+## Raw versus adjusted HTTP p99 on the same requests
+
+The standard reporter calls `latency:percentile(99)` in wrk's `done()`
+callback. In [wrk 4.1.0](https://github.com/wg/wrk/blob/4.1.0/src/wrk.c),
+`stats_correct()` runs **before** that callback. It adds synthetic histogram
+observations to compensate for coordinated omission. Its expected interval
+is derived from total elapsed time, completed requests and connection count.
+Consequently, the published HTTP p99 is not the unadjusted percentile of
+completed requests, and the adjustment can differ between drivers with
+different achieved rates.
+
+`wrk-raw-p99.patch` adds two diagnostic prints to upstream wrk 4.1.0,
+commit `7594a95186ebdfa7cb35477a8a811f84e2a31b62`: one before correction
+and one after. It changes neither the request path nor `stats_correct()`.
+Both prints happen after measurement has ended, and the ordinary Lua
+reporter still receives the adjusted histogram. The diagnostic client was
+built in a separate Docker image using the existing image's OpenResty LuaJIT
+and OpenSSL libraries, rather than overwriting a running container's binary.
+It therefore differs from the distro-packaged wrk in the earlier probes;
+the raw/adjusted numbers within each sample use exactly the same requests.
+
+The original, uninstrumented handler is used. The separate client container
+shares the bench network namespace and has no CPU quota. The old/new sequence
+repeats three times, reseeding before each pass, with a 10s warm-up and a
+30s measurement at `-t2 -c16`. Mongo snapshots cover the measurement and
+in-flight completion, excluding the warm-up in this probe.
+
+| Pair | Old raw p99, ms | New raw p99, ms | Raw ratio | Old adjusted p99, ms | New adjusted p99, ms | Adjusted ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 10.371 | 10.326 | 0.996 | 19.772 | 3024.578 | 152.973 |
+| 2 | 9.459 | 9.755 | 1.031 | 14.253 | 18.958 | 1.330 |
+| 3 | 11.656 | 9.491 | 0.814 | 25.284 | 12.844 | 0.508 |
+
+All raw ratios are below 1.20. Two individual adjusted ratios exceed 1.20.
+These are per-sample illustrations, **not** formal gate verdicts. The
+median-of-three comparison in this probe passes for both raw p99
+(10.371 / 9.755 ms old/new) and adjusted p99 (19.772 / 18.958 ms).
+
+In new sample 1, wrk reports a real 4.14s maximum. Raw p99 is 10.326ms over
+204,625 observations; correction raises p99 to 3,024.578ms over 258,384
+observations. The additional 53,759 observations are synthetic. This
+demonstrates amplification of a rare stall; it does not make the real stall
+harmless or establish whether Mongo, the network, nginx, the client or VM
+scheduling caused it. The original cluster's missing raw distributions
+cannot be reconstructed from its three saved percentile values.
+
+All six intervals have zero quota throttling and zero HTTP/socket errors.
+The raw histogram count equals completed requests in each sample, and the
+post-correction percentile exactly matches the standard reporter. Keep the
+approved gates unchanged. For the next cluster reproduction, capture both
+histograms and server/socket timings before assigning a driver cause.
+
+## Data and checks
+
+- `uncapped.jsonl`: six standard-handler observations, including before/after
+  Mongo status and container CPU counters. These intervals include warm-up.
+- `profile.jsonl`: four timing observations with the same diagnostics;
+  measurement snapshots exclude warm-up.
+- `raw.jsonl`: six same-request raw/adjusted comparisons and diagnostics.
+- `raw-wrk.log`: the diagnostic client's measured output, with trailing spaces removed.
+- `continued-manifest.json`: driver, image and probe identities.
+
+Extended-JSON integers from the Mongo shell are converted to JSON integers
+without changing their values. Each Mongo write-count delta was checked
+against collection growth: 100 new documents per write operation. All 16
+new observations have zero HTTP/socket errors and zero changes in the
+recorded throttled-period counters. Both Lua probe files compile with the
+image's LuaJIT; both drivers successfully ran the endpoint, and the reset
+endpoint excluded the warm-up from the timing histograms.
+
+## Running the timing endpoint
+
+Use a dedicated authenticated MongoDB 4.4.30 fixture instance, OpenResty,
+wrk 4.1.0 and `envsubst` on Linux. Run from this repository root. Use the
+new driver for seeding, even when `MONGOL_LIB` selects the old driver.
+
+```sh
+export MONGO_HOST='<numeric-fixture-IP>'
+export MONGOL_LIB='/path/to/selected-driver/lib'
+export BENCH_DIR="$PWD/bench"
+export WORK="$(mktemp -d)"
+mkdir -p "$WORK/conf" "$WORK/logs"
+SEED_LIB="$PWD/lib" bench/ctl.sh seed
+envsubst '$MONGOL_LIB $BENCH_DIR' < bench/issue103/profile.conf.in \
+  > "$WORK/conf/nginx.conf"
+nginx -p "$WORK/" -c conf/nginx.conf
+export ISSUE103_BASE_REPORT="$PWD/bench/wrk_report.lua"
+export BENCH_LABEL=probe BENCH_API=insert_100 BENCH_RUN=1
+export BENCH_DRIVER_SHA="$(git -C "$MONGOL_LIB" rev-parse HEAD)"
+export BENCH_MONGO_VERSION=4.4.30
+# For the paced variant, export ISSUE103_RATE_PER_THREAD=500 before warm-up.
+wrk -t2 -c16 -d10s --timeout 10s -s bench/issue103/profile_wrk.lua \
+  http://127.0.0.1:8090/insert_100
+curl -fsS 'http://127.0.0.1:8090/profile_stats?reset=1'
+wrk -t2 -c16 -d30s --timeout 10s --latency \
+  -s bench/issue103/profile_wrk.lua http://127.0.0.1:8090/insert_100
+curl -fsS http://127.0.0.1:8090/profile_stats
+nginx -p "$WORK/" -c conf/nginx.conf -s quit
+```
+
+Stop nginx, select the other driver, reseed and start a fresh worker before
+the next pass. This is a diagnostic workload, not the published full-report
+profile. To repeat the raw/adjusted check, apply `wrk-raw-p99.patch` to the
+pinned upstream wrk source using `git apply --unidiff-zero`, rebuild it,
+and run it with the standard
+`bench/wrk_report.lua` and standard bench server. Retain both prefixed
+diagnostic lines and the ordinary JSON reporter line.
+
+## Experiments needed to identify the original cluster cause
 
 These remain hypotheses, not findings about the original cluster:
 
