@@ -282,6 +282,27 @@ whether such pauses occurred. Standard wrk exposes `latency.max` to the
 `done()` callback, and the correction does not change it. For the next
 cluster run, record `latency.max` and the raw p99 with each sample.
 
+`max_wrk.lua` loads the standard reporter and adds `max_ms` to its JSON
+line. It does not change `bench/wrk_report.lua`, which `bench/report.py`
+pins as part of the approved full-run profile. Thus `max_wrk.lua` is
+for diagnostic runs only. Use it in place of `profile_wrk.lua` in the
+timing endpoint procedure below, or with the standard bench server:
+
+```sh
+export ISSUE103_BASE_REPORT="$PWD/bench/wrk_report.lua"
+wrk -t2 -c16 -d30s --timeout 10s --latency \
+  -s bench/issue103/max_wrk.lua http://127.0.0.1:8090/insert_100
+```
+
+Set the same `BENCH_*` variables as the standard reporter needs. To test
+the wrapper without wrk, run this from the repository root:
+
+```sh
+ISSUE103_BASE_REPORT=bench/wrk_report.lua BENCH_LABEL=t \
+  BENCH_DRIVER_SHA=s BENCH_MONGO_VERSION=4.4.30 BENCH_API=insert_100 \
+  BENCH_RUN=1 lua bench/issue103/max_wrk_test.lua bench/issue103/max_wrk.lua
+```
+
 ## Data and checks
 
 - `uncapped.jsonl`: six standard-handler observations, including before/after
@@ -292,6 +313,8 @@ cluster run, record `latency.max` and the raw p99 with each sample.
 - `raw-wrk.log`: the diagnostic client's measured output, with trailing spaces removed.
 - `continued-manifest.json`: driver, image and probe identities.
 - `co_model.lua`: the arithmetic model of the wrk correction for one pause.
+- `max_wrk.lua` and `max_wrk_test.lua`: the diagnostic reporter that adds
+  `max_ms`, and its test.
 
 Extended-JSON integers from the Mongo shell are converted to JSON integers
 without changing their values. Each Mongo write-count delta was checked
