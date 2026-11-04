@@ -10,6 +10,14 @@ driver's measured local execution is faster. A paced comparison at about
 1,000 requests/s favors the new driver. These findings narrow the next
 cluster experiment; they do not establish the original cluster's cause.
 
+A cluster run on 2026-11-04 found the source of the tail. It is in
+MongoDB, not in the driver code. About every 6 to 30 seconds, all 16
+in-flight inserts stop together for 100 to 270 ms. In these stalls, the
+writer threads wait for a WiredTiger page that eviction holds locked.
+The new/old p99 difference is not significant (p = 0.35 unpaced and 0.75
+at an equal rate). The new driver has a lower p50 and a higher throughput.
+See [Cluster run: source of the stalls](#cluster-run-source-of-the-stalls).
+
 ## Replay of the original results
 
 Run from the repository root, replacing `run-1` with `run-2` and `run-3`:
@@ -303,6 +311,122 @@ ISSUE103_BASE_REPORT=bench/wrk_report.lua BENCH_LABEL=t \
   BENCH_RUN=1 lua bench/issue103/max_wrk_test.lua bench/issue103/max_wrk.lua
 ```
 
+## Cluster run: source of the stalls
+
+On 2026-11-04, `k8s/storage-ab.sh` ran `insert_100` on the same OCI
+cluster as the original report. Mongo ran on one 2-CPU arm64 node and the
+bench pod on another. The CPU and memory limits match the approved
+profile. The CPU requests were lower (Mongo 600m, nginx 300m, wrk 100m),
+because no node had the approved requests free. Each sample has a fresh
+seed, a 10 s warm-up and a 30 s measurement at `-t2 -c16`. All 30 samples
+have zero HTTP and socket errors and zero throttled CPU periods.
+
+The run has three parts:
+
+1. Unpaced, with the Mongo data directory on the node disk (5 pairs).
+2. Unpaced, with the data directory in memory (5 pairs).
+3. Paced to 500 requests/s per wrk thread, on disk (5 pairs).
+
+The disk pairs ran before and after the memory pairs. A change in node
+load over time therefore cannot appear as a storage effect.
+
+| Part | Old req/s | New req/s | Old p99, ms | New p99, ms | Old max, ms | New max, ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Disk, unpaced | 1052 | 1161 | 68.9 | 76.0 | 172 | 218 |
+| Memory, unpaced | 1040 | 1139 | 72.7 | 82.7 | 180 | 196 |
+| Disk, paced | 891 | 894 | 58.2 | 63.2 | 148 | 162 |
+
+Each value is a median over five samples. The unpaced rates and p99 values
+match the original report (about 1,050 requests/s and 71 to 108 ms).
+
+A paired sign-flip test compares the new/old ratio of each pair:
+
+| Samples | Metric | Geometric mean ratio | p | New higher |
+| --- | --- | ---: | ---: | ---: |
+| Unpaced (10 pairs) | p50 | 0.910 | 0.002 | 0/10 |
+| Unpaced (10 pairs) | p99 | 1.083 | 0.347 | 8/10 |
+| Unpaced (10 pairs) | max | 1.152 | 0.043 | 7/10 |
+| Paced (5 pairs) | p50 | 0.730 | 0.060 | 0/5 |
+| Paced (5 pairs) | p99 | 1.051 | 0.750 | 3/5 |
+
+Single pairs range from 0.62 to 1.67 unpaced and from 0.68 to 1.44
+paced. Three of 15 pairs exceed the 1.20 gate, but the drivers do not
+differ significantly at p99. Thus three samples per side cannot decide
+the gate for this API.
+
+### Where the time goes
+
+Mongo logs every insert slower than 100 ms. These slow inserts arrive in
+groups of 16 that start within 50 ms of each other. So all 16 connections
+stall at the same moment. The slow-log entries show no lock wait, no
+flow-control wait and no storage read wait.
+
+Four results exclude the first suspects:
+
+- Storage: with the data directory in memory, the stalls stay. On disk,
+  only 4 of 40 stall seconds have a disk write burst. In the other
+  seconds, disk writes wait about 1 to 2 ms each.
+- Checkpoints: no checkpoint ran during any measured sample.
+- Memory reclaim: the Mongo cgroup uses 1.9 of 4 GiB, with zero reclaim
+  scans and zero limit events.
+- CPU starvation: in 100 ms windows, Mongo uses 1.17 to 1.26 CPUs during
+  stalls and 0.99 to 1.20 CPUs at other times. Hypervisor steal is not
+  higher during stalls (about 6%, against 8 to 10%).
+
+`k8s/wt_sampler.js` reads WiredTiger counters about every 200 ms.
+`k8s/stall_wt.py` ranks each counter by the share of its increase that
+falls in windows with a stall. In the paced part, 14 stalls cover 0.5% of
+the windows, and the stall windows hold these shares:
+
+| WiredTiger counter | Share in stall windows |
+| --- | ---: |
+| `thread-yield: page acquire locked blocked` | 8.4% |
+| `thread-yield: page acquire time sleeping (usecs)` | 8.1% |
+| `cache: leaf pages split during eviction` | 4.6% |
+
+The unpaced disk samples give the same order, with 9.4% for the first
+counter at a 0.9% time share. During a stall, the writer threads sleep
+while they wait for a page that another thread locked for eviction. In
+the same windows, `forced eviction - pages selected unable to be evicted`
+counts 10,791 of 11,287 forced evictions. Mongo keeps using CPU during
+the stall, so the time goes to eviction work, not to waiting for a CPU.
+
+### What this means for issue 103
+
+The tail comes from MongoDB 4.4 WiredTiger eviction stalls on this
+2-CPU node. The wrk correction then enlarges each stall, as the model in
+[Sensitivity of the cluster p99 to one pause](#sensitivity-of-the-cluster-p99-to-one-pause)
+shows. The driver code does not add delay. The new driver is faster at p50
+in every pair.
+
+One difference stays open. In 15 samples, the new driver had 33 of these
+16-wide stalls and the old driver had 19. Per sample, that is 3 against
+1.5 unpaced and 2 against 1 paced. This difference is at the edge of
+significance (two-sided p of about 0.05). It persists at an equal request
+rate. The drivers send the same documents without `_id`, so a possible
+cause is the server path: an `insert` command in OP_MSG against OP_INSERT
+followed by `getLastError`. This run cannot separate the two paths.
+
+For the gate, compare more pairs per API on a node with free CPU. Also
+compare the raw p99 and `max_ms` next to the adjusted p99. Do not change
+the driver insert path on the basis of this data.
+
+The runner, samplers and analysis scripts are in `k8s/`:
+
+```sh
+KUBE_CONTEXT='<context>' MONGO_NODE='<node>' BENCH_NODE='<node>' \
+  bench/issue103/k8s/storage-ab.sh
+PLAN=disk:5 RATE_PER_THREAD=500 KUBE_CONTEXT='<context>' \
+  MONGO_NODE='<node>' BENCH_NODE='<node>' bench/issue103/k8s/storage-ab.sh
+python3 -I bench/issue103/k8s/analyze.py <result-dir>
+python3 -I bench/issue103/k8s/stall_cpu.py <mongo-log> <hostcpu-file> <result-dir>
+python3 -I bench/issue103/k8s/stall_wt.py <mongo-log> <wt-file>
+```
+
+The runner refuses an existing `mongol-bench-103` namespace and deletes
+only the namespace that it created. It writes the raw results to the
+ignored `bench/results/` directory, because they name the cluster nodes.
+
 ## Data and checks
 
 - `uncapped.jsonl`: six standard-handler observations, including before/after
@@ -315,6 +439,11 @@ ISSUE103_BASE_REPORT=bench/wrk_report.lua BENCH_LABEL=t \
 - `co_model.lua`: the arithmetic model of the wrk correction for one pause.
 - `max_wrk.lua` and `max_wrk_test.lua`: the diagnostic reporter that adds
   `max_ms`, and its test.
+- `cluster-unpaced.jsonl`: the 20 unpaced cluster samples of 2026-11-04.
+  Labels name the block, medium, pair and driver.
+- `cluster-paced.jsonl`: the 10 paced cluster samples of 2026-11-04.
+- `k8s/`: the cluster runner, its manifests, the samplers and the
+  analysis scripts.
 
 Extended-JSON integers from the Mongo shell are converted to JSON integers
 without changing their values. Each Mongo write-count delta was checked
