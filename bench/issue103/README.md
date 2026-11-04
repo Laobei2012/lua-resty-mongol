@@ -246,6 +246,42 @@ post-correction percentile exactly matches the standard reporter. Keep the
 approved gates unchanged. For the next cluster reproduction, capture both
 histograms and server/socket timings before assigning a driver cause.
 
+## Sensitivity of the cluster p99 to one pause
+
+In a closed loop, wrk's expected interval is the mean latency.
+The original cluster samples ran at about 1,050 requests/s with 16
+connections, so the interval is 14.1 to 15.9 ms. Each real request that
+takes at least twice that interval adds synthetic observations.
+
+`co_model.lua` applies the wrk 4.1.0 correction loop to a model sample.
+The sample has 31,500 requests at 13 ms, except one pause that holds all
+16 connections. Run it from the repository root:
+
+```sh
+resty bench/issue103/co_model.lua
+```
+
+| Pause, ms | Corrected p99, ms | Synthetic observations |
+| ---: | ---: | ---: |
+| 300 | 13.000 | 288 |
+| 350 | 60.383 | 336 |
+| 400 | 110.383 | 400 |
+| 500 | 210.383 | 496 |
+
+The pause adds 16 real requests, about 0.05% of the sample. It cannot
+move the raw p99. But one pause of about 0.4 s in 30 s moves the
+corrected p99 from 13 ms to above 100 ms. Above that point, the corrected
+p99 rises by about 1 ms for each 1 ms of pause length. The difference
+between 71.204 and 108.312 ms in run 1 is a 37 ms difference in pause
+length under this model.
+
+This is a model, not a measurement of the cluster. The real samples also
+have a slow tail, which lowers the pause length that is necessary. The
+cluster data does not record the maximum latency, so it cannot show
+whether such pauses occurred. Standard wrk exposes `latency.max` to the
+`done()` callback, and the correction does not change it. For the next
+cluster run, record `latency.max` and the raw p99 with each sample.
+
 ## Data and checks
 
 - `uncapped.jsonl`: six standard-handler observations, including before/after
@@ -255,6 +291,7 @@ histograms and server/socket timings before assigning a driver cause.
 - `raw.jsonl`: six same-request raw/adjusted comparisons and diagnostics.
 - `raw-wrk.log`: the diagnostic client's measured output, with trailing spaces removed.
 - `continued-manifest.json`: driver, image and probe identities.
+- `co_model.lua`: the arithmetic model of the wrk correction for one pause.
 
 Extended-JSON integers from the Mongo shell are converted to JSON integers
 without changing their values. Each Mongo write-count delta was checked
