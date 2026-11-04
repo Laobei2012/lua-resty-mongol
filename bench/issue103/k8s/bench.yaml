@@ -12,7 +12,7 @@ spec:
     kubernetes.io/hostname: "${BENCH_NODE}"
   initContainers:
     - name: clone
-      image: alpine/git:2.47.2
+      image: docker.io/alpine/git:2.47.2
       command: ["/bin/sh", "-ec"]
       args:
         - |
@@ -42,7 +42,7 @@ spec:
           mountPath: /src
   containers:
     - name: nginx
-      image: openresty/openresty:1.31.1.1-jammy
+      image: docker.io/openresty/openresty:1.31.1.1-jammy
       command: ["/bin/bash", "-ec"]
       args:
         - |
@@ -67,7 +67,7 @@ spec:
         - name: work
           mountPath: /work
     - name: wrk
-      image: ubuntu:22.04
+      image: docker.io/library/ubuntu:22.04
       command: ["/bin/bash", "-ec"]
       args:
         - |

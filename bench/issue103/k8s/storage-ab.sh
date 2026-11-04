@@ -8,6 +8,8 @@ set -Eeuo pipefail
 : "${BENCH_NODE:?set BENCH_NODE}"
 # Blocks of "medium:pairs". Each block restarts Mongo on that volume medium.
 PLAN=${PLAN:-disk:3 memory:5 disk:2}
+# Optional pacing per wrk thread (requests/s), through profile_wrk.lua.
+RATE_PER_THREAD=${RATE_PER_THREAD:-}
 export MONGO_CPU_REQUEST=${MONGO_CPU_REQUEST:-600m}
 export NGINX_CPU_REQUEST=${NGINX_CPU_REQUEST:-300m}
 export WRK_CPU_REQUEST=${WRK_CPU_REQUEST:-100m}
@@ -19,6 +21,8 @@ HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 OUT=${OUT:-$HERE/../../results/issue103-storage-$(date -u +%Y%m%dT%H%M%SZ)}
 OWNED_UID=
 MONGO_HOST=
+HOSTCPU_PID=
+WT_PID=
 
 die() {
   printf 'Error: %s\n' "$*" >&2
@@ -44,9 +48,32 @@ cpu_stat() {
     k exec "$pod" -c "$container" -- cat /sys/fs/cgroup/cpu.stat
   done
 }
+# Host /proc/stat and Mongo cgroup CPU every 100 ms, for stall matching.
+start_hostcpu() {
+  # shellcheck disable=SC2016 # expands inside the Mongo container
+  k exec mongo -c mongo -- sh -c 'while :; do
+    printf "%s " "$(date +%s%N)"; head -1 /proc/stat
+    head -1 /sys/fs/cgroup/cpu.stat | sed "s/^/mongo /"; sleep 0.1; done' \
+    > "$OUT/hostcpu-block$1.txt" 2>&1 &
+  HOSTCPU_PID=$!
+  k exec -i mongo -c mongo -- sh -c 'cat > /tools/wt_sampler.js' < "$HERE/wt_sampler.js"
+  k exec mongo -c mongo -- mongo --quiet -u admin -p admin \
+    --authenticationDatabase admin --eval 'var SAMPLES=100000' /tools/wt_sampler.js \
+    > "$OUT/wt-block$1.jsonl" 2>&1 &
+  WT_PID=$!
+}
+stop_hostcpu() {
+  if [[ -n $HOSTCPU_PID ]]; then
+    kill "$HOSTCPU_PID" "$WT_PID" 2> /dev/null || true
+    wait "$HOSTCPU_PID" "$WT_PID" 2> /dev/null || true
+    HOSTCPU_PID=
+    WT_PID=
+  fi
+}
 cleanup() {
   local rc=$? uid
   trap - EXIT INT TERM
+  stop_hostcpu
   if [[ -n $OWNED_UID ]]; then
     k logs mongo > "$OUT/mongo-final.log" 2>&1 || true
     uid=$(kube get namespace "$NS" -o jsonpath='{.metadata.uid}') || uid=
@@ -63,6 +90,7 @@ cleanup() {
 start_mongo() {
   local medium=$1 block=$2 attempt
   if k get pod mongo > /dev/null 2>&1; then
+    stop_hostcpu
     k logs mongo > "$OUT/mongo-block$((block - 1)).log" 2>&1 || true
     ctl /src/new/bench/ctl.sh stop
     k delete pod mongo --wait=true --timeout=300s
@@ -77,6 +105,7 @@ start_mongo() {
   for ((attempt = 1; attempt <= 120; attempt++)); do
     if mongo_js 0 > /dev/null 2>&1; then
       k exec mongo -c mongo -- df -h /data/db > "$OUT/mongo-block$block-df.txt"
+      start_hostcpu "$block"
       return
     fi
     sleep 2
@@ -84,12 +113,19 @@ start_mongo() {
   die "Mongo did not accept authenticated connections"
 }
 wrk_run() {
-  local seconds=$1 label=$2
-  k exec bench -c wrk -- env ISSUE103_BASE_REPORT=/src/new/bench/wrk_report.lua \
+  local seconds=$1 label=$2 script=/work/max_wrk.lua
+  local pacing=(ISSUE103_BASE_REPORT=/src/new/bench/wrk_report.lua)
+  if [[ -n $RATE_PER_THREAD ]]; then
+    script=/work/profile_wrk.lua
+    pacing=(ISSUE103_BASE_REPORT=/work/max_wrk.lua
+      ISSUE103_MAX_BASE_REPORT=/src/new/bench/wrk_report.lua
+      ISSUE103_RATE_PER_THREAD="$RATE_PER_THREAD")
+  fi
+  k exec bench -c wrk -- env "${pacing[@]}" \
     BENCH_LABEL="$label" BENCH_API=insert_100 BENCH_RUN=1 \
     BENCH_MONGO_VERSION="$(ctl cat /work/mongo_version)" \
     BENCH_DRIVER_SHA="$(ctl cat /work/driver_sha)" \
-    wrk -t2 -c16 "-d${seconds}s" --timeout 10s --latency -s /work/max_wrk.lua \
+    wrk -t2 -c16 "-d${seconds}s" --timeout 10s --latency -s "$script" \
     http://127.0.0.1:8090/insert_100
 }
 sample() {
@@ -118,9 +154,9 @@ main() {
     die "namespace $NS already exists; refusing to reuse it"
   fi
   mkdir -p -- "$OUT"
-  printf 'plan=%s mongo_node=%s bench_node=%s requests=%s/%s/%s\n' "$PLAN" \
-    "$MONGO_NODE" "$BENCH_NODE" "$MONGO_CPU_REQUEST" "$NGINX_CPU_REQUEST" \
-    "$WRK_CPU_REQUEST" > "$OUT/run.txt"
+  printf 'plan=%s rate_per_thread=%s mongo_node=%s bench_node=%s requests=%s/%s/%s\n' \
+    "$PLAN" "${RATE_PER_THREAD:-none}" "$MONGO_NODE" "$BENCH_NODE" \
+    "$MONGO_CPU_REQUEST" "$NGINX_CPU_REQUEST" "$WRK_CPU_REQUEST" > "$OUT/run.txt"
   trap cleanup EXIT INT TERM
   kube create namespace "$NS"
   OWNED_UID=$(kube get namespace "$NS" -o jsonpath='{.metadata.uid}')
@@ -130,6 +166,7 @@ main() {
   k apply -f "$OUT/bench.yaml"
   k wait --for=condition=Ready pod/bench --timeout=900s
   k exec -i bench -c nginx -- sh -c 'cat > /work/max_wrk.lua' < "$HERE/../max_wrk.lua"
+  k exec -i bench -c nginx -- sh -c 'cat > /work/profile_wrk.lua' < "$HERE/../profile_wrk.lua"
   MONGO_HOST=
   for entry in $PLAN; do
     block=$((block + 1))
@@ -144,6 +181,7 @@ main() {
       done
     done
   done
+  stop_hostcpu
   k logs mongo > "$OUT/mongo-block$block.log" 2>&1 || true
 }
 main "$@"

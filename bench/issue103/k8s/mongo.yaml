@@ -10,7 +10,7 @@ spec:
     kubernetes.io/hostname: "${MONGO_NODE}"
   containers:
     - name: mongo
-      image: mongo:4.4
+      image: docker.io/library/mongo:4.4
       args: ["--wiredTigerCacheSizeGB", "1.5"]
       env:
         - name: MONGO_INITDB_ROOT_USERNAME

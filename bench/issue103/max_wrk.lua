@@ -1,7 +1,9 @@
 -- Use the standard reporter and add the maximum latency as max_ms.
 -- wrk's latency correction adds only values below the maximum, so this
 -- value is the slowest real request. The approved reporter is unchanged.
-dofile(assert(os.getenv("ISSUE103_BASE_REPORT")))
+-- ISSUE103_MAX_BASE_REPORT lets profile_wrk.lua load this file as its base.
+dofile(assert(os.getenv("ISSUE103_MAX_BASE_REPORT")
+    or os.getenv("ISSUE103_BASE_REPORT")))
 local base_done = done
 function done(summary, latency, requests)
     local base_print = print
