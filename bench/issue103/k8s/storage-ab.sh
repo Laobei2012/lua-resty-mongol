@@ -10,6 +10,11 @@ set -Eeuo pipefail
 PLAN=${PLAN:-disk:3 memory:5 disk:2}
 # Optional pacing per wrk thread (requests/s), through profile_wrk.lua.
 RATE_PER_THREAD=${RATE_PER_THREAD:-}
+# WRITE_PATHS=1 compares the new driver's OP_MSG insert ("msg") with
+# OP_INSERT plus getlasterror ("legacy"), through write_path.lua.
+WRITE_PATHS=${WRITE_PATHS:-}
+SIDES=(old new)
+if [[ -n $WRITE_PATHS ]]; then SIDES=(msg legacy); fi
 export MONGO_CPU_REQUEST=${MONGO_CPU_REQUEST:-600m}
 export NGINX_CPU_REQUEST=${NGINX_CPU_REQUEST:-300m}
 export WRK_CPU_REQUEST=${WRK_CPU_REQUEST:-100m}
@@ -21,6 +26,7 @@ HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 OUT=${OUT:-$HERE/../../results/issue103-storage-$(date -u +%Y%m%dT%H%M%SZ)}
 OWNED_UID=
 MONGO_HOST=
+URL_PATH=insert_100
 HOSTCPU_PID=
 WT_PID=
 
@@ -126,13 +132,38 @@ wrk_run() {
     BENCH_MONGO_VERSION="$(ctl cat /work/mongo_version)" \
     BENCH_DRIVER_SHA="$(ctl cat /work/driver_sha)" \
     wrk -t2 -c16 "-d${seconds}s" --timeout 10s --latency -s "$script" \
-    http://127.0.0.1:8090/insert_100
+    "http://127.0.0.1:8090/$URL_PATH"
+}
+# Starts nginx with write_path.conf.in, as ctl.sh start does with the
+# standard configuration. Readiness polling only begins after this.
+start_write_path() {
+  # shellcheck disable=SC2016 # expands inside the nginx container
+  ctl env MONGOL_LIB=/src/new/lib BENCH_DIR=/src/new/bench bash -ec '
+    mkdir -p /work/conf /work/logs
+    rm -f /work/driver_sha /work/mongo_version
+    : > /work/logs/error.log
+    envsubst "\$MONGOL_LIB \$BENCH_DIR" < /work/write_path.conf.in > /work/conf/nginx.conf
+    nginx -p /work/ -c conf/nginx.conf -t
+    nginx -p /work/ -c conf/nginx.conf
+    git -C "$MONGOL_LIB" rev-parse HEAD > /work/driver_sha
+    resty -I "$MONGOL_LIB" "$BENCH_DIR/server_status.lua" --version > /work/mongo_version
+    for i in $(seq 1 50); do
+      curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:8090/issue103_ready && exit 0
+      sleep 0.1
+    done
+    exit 1'
 }
 sample() {
   local label=$1 side=$2 series_pid
   log "sample $label"
   ctl /src/new/bench/ctl.sh seed
-  ctl env MONGOL_LIB="/src/$side/lib" /src/new/bench/ctl.sh start
+  if [[ -n $WRITE_PATHS ]]; then
+    URL_PATH=insert_100_$side
+    start_write_path
+  else
+    URL_PATH=insert_100
+    ctl env MONGOL_LIB="/src/$side/lib" /src/new/bench/ctl.sh start
+  fi
   wrk_run 10 "$label" > "$OUT/$label-warmup.log"
   mongo_js 0 > "$OUT/$label-before.json"
   cpu_stat > "$OUT/$label-cpu-before.txt"
@@ -154,8 +185,8 @@ main() {
     die "namespace $NS already exists; refusing to reuse it"
   fi
   mkdir -p -- "$OUT"
-  printf 'plan=%s rate_per_thread=%s mongo_node=%s bench_node=%s requests=%s/%s/%s\n' \
-    "$PLAN" "${RATE_PER_THREAD:-none}" "$MONGO_NODE" "$BENCH_NODE" \
+  printf 'plan=%s write_paths=%s rate_per_thread=%s mongo_node=%s bench_node=%s requests=%s/%s/%s\n' \
+    "$PLAN" "${WRITE_PATHS:-no}" "${RATE_PER_THREAD:-none}" "$MONGO_NODE" "$BENCH_NODE" \
     "$MONGO_CPU_REQUEST" "$NGINX_CPU_REQUEST" "$WRK_CPU_REQUEST" > "$OUT/run.txt"
   trap cleanup EXIT INT TERM
   kube create namespace "$NS"
@@ -167,6 +198,12 @@ main() {
   k wait --for=condition=Ready pod/bench --timeout=900s
   k exec -i bench -c nginx -- sh -c 'cat > /work/max_wrk.lua' < "$HERE/../max_wrk.lua"
   k exec -i bench -c nginx -- sh -c 'cat > /work/profile_wrk.lua' < "$HERE/../profile_wrk.lua"
+  if [[ -n $WRITE_PATHS ]]; then
+    k exec -i bench -c nginx -- sh -c 'cat > /work/write_path.conf.in' < "$HERE/../write_path.conf.in"
+    k exec -i bench -c nginx -- sh -c \
+      'mkdir -p /src/new/bench/issue103 && cat > /src/new/bench/issue103/write_path.lua' \
+      < "$HERE/../write_path.lua"
+  fi
   MONGO_HOST=
   for entry in $PLAN; do
     block=$((block + 1))
@@ -176,7 +213,7 @@ main() {
     start_mongo "$medium" "$block"
     MONGO_HOST=$(k get service mongo -o jsonpath='{.spec.clusterIP}')
     for ((pair = 1; pair <= pairs; pair++)); do
-      for side in old new; do
+      for side in "${SIDES[@]}"; do
         sample "b$block-$medium-p$pair-$side" "$side" | tee -a "$OUT/results.jsonl"
       done
     done

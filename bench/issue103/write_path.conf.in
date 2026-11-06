@@ -1,0 +1,28 @@
+# Issue 103 write-path server. Render it like bench/nginx.conf.in, with
+# envsubst '$MONGOL_LIB $BENCH_DIR', after ctl.sh start, then reload nginx.
+# /connect_nopool stays so that ctl.sh can use this server too.
+worker_processes 1;
+error_log logs/error.log warn;
+pid logs/nginx.pid;
+
+env MONGO_HOST;
+env MONGO_PORT;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    access_log off;
+    lua_code_cache on;
+    lua_package_path "${MONGOL_LIB}/?.lua;${MONGOL_LIB}/?/init.lua;${BENCH_DIR}/?.lua;;";
+
+    server {
+        listen 8090;
+
+        location = /issue103_ready { return 204; }
+        location = /insert_100_msg { content_by_lua_block { require("issue103.write_path").msg() } }
+        location = /insert_100_legacy { content_by_lua_block { require("issue103.write_path").legacy() } }
+        location = /connect_nopool { content_by_lua_block { require("handlers").connect_nopool() } }
+    }
+}
