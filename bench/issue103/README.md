@@ -16,6 +16,8 @@ in-flight inserts stop together for 100 to 270 ms. In these stalls, the
 writer threads wait for a WiredTiger page that eviction holds locked.
 The new/old p99 difference is not significant (p = 0.35 unpaced and 0.75
 at an equal rate). The new driver has a lower p50 and a higher throughput.
+A write-path test on 2026-11-05 shows that the OP_MSG insert path does
+not cause more stalls than OP_INSERT with `getlasterror`.
 See [Cluster run: source of the stalls](#cluster-run-source-of-the-stalls).
 
 ## Replay of the original results
@@ -399,17 +401,64 @@ The tail comes from MongoDB 4.4 WiredTiger eviction stalls on this
 shows. The driver code does not add delay. The new driver is faster at p50
 in every pair.
 
-One difference stays open. In 15 samples, the new driver had 33 of these
-16-wide stalls and the old driver had 19. Per sample, that is 3 against
-1.5 unpaced and 2 against 1 paced. This difference is at the edge of
-significance (two-sided p of about 0.05). It persists at an equal request
-rate. The drivers send the same documents without `_id`, so a possible
-cause is the server path: an `insert` command in OP_MSG against OP_INSERT
-followed by `getLastError`. This run cannot separate the two paths.
+In 15 samples, the new driver had 33 of these 16-wide stalls and the old
+driver had 19. Per sample, that is 3 against 1.5 unpaced and 2 against 1
+paced. This difference is at the edge of significance (two-sided p of
+about 0.05). The next test shows that the write path does not cause it.
 
-For the gate, compare more pairs per API on a node with free CPU. Also
-compare the raw p99 and `max_ms` next to the adjusted p99. Do not change
-the driver insert path on the basis of this data.
+### Write path test
+
+On 2026-11-05, one driver build (`6cf0584`) sent the same insert through
+two server write paths. `write_path.lua` provides both endpoints. Both use
+the new driver's connection, login and BSON encoder:
+
+- msg: the driver's OP_MSG `insert` command, as in the new driver.
+- legacy: OP_INSERT followed by `getlasterror` over OP_QUERY on
+  `bench.$cmd`. These are the same messages that the old driver sends.
+
+Mongo's log confirms the two paths. The legacy inserts arrive with type
+`insert` and no protocol field, and each `getlasterror` arrives over
+`op_query`. The run used 10 pairs, paced to 500 requests/s per wrk
+thread, with msg first in each pair. The Mongo CPU request was 400m,
+because the node had less free CPU than on 2026-11-04. All 20 samples
+have zero HTTP and socket errors.
+
+| legacy/msg | Geometric mean ratio | p | Legacy higher |
+| --- | ---: | ---: | ---: |
+| p50 | 1.140 | 0.005 | 9/10 |
+| p99 | 1.111 | 0.167 | 8/10 |
+| max | 0.914 | 0.406 | 6/10 |
+| Requests/s | 0.982 | 0.007 | 2/10 |
+
+| Path | Samples | Stalls | Median per sample | Mean stall, ms |
+| --- | ---: | ---: | ---: | ---: |
+| legacy | 10 | 22 | 2.5 | 140 |
+| msg | 10 | 18 | 1.0 | 144 |
+
+The OP_MSG path does not cause more stalls, and its p99 is not higher.
+Its p50 is lower, because the legacy path needs a second round trip for
+`getlasterror`. `k8s/stall_count.py` gives these stall counts, and it
+gives the earlier counts again from the same rules.
+
+All three cluster runs ran the same side first in every pair. The side
+that ran second had more stalls each time: 25 against 15, 8 against 4
+and 22 against 18, or 55 against 37 in total (two-sided p of about
+0.06). In the first two runs, the second side was the new driver. So
+the order can explain the earlier gap, and the counts also vary widely
+between samples (0 to 6). The approved A/B runner also runs the old
+driver first in every pair.
+
+### Conclusions for the gate
+
+Issue 103 does not show a driver regression. The p99 failures come from
+WiredTiger eviction stalls that the wrk correction enlarges, and from
+too few samples. To make the gate reliable for this API:
+
+1. Compare more pairs per API, on a node with free CPU.
+2. Change the order of old and new between pairs, for example ABBA.
+3. Report the raw p99 and `max_ms` next to the adjusted p99.
+
+Do not change the driver insert path on the basis of this data.
 
 The runner, samplers and analysis scripts are in `k8s/`:
 
@@ -442,6 +491,8 @@ ignored `bench/results/` directory, because they name the cluster nodes.
 - `cluster-unpaced.jsonl`: the 20 unpaced cluster samples of 2026-11-04.
   Labels name the block, medium, pair and driver.
 - `cluster-paced.jsonl`: the 10 paced cluster samples of 2026-11-04.
+- `cluster-writepath.jsonl`: the 20 write-path samples of 2026-11-05.
+- `write_path.lua` and `write_path.conf.in`: the msg and legacy endpoints.
 - `k8s/`: the cluster runner, its manifests, the samplers and the
   analysis scripts.
 
