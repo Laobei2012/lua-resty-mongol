@@ -1,0 +1,101 @@
+Running 30s test @ http://127.0.0.1:8090/insert_100
+  2 threads and 16 connections
+RAW_LATENCY {"p99_ms":10.371000,"count":152151}
+CORRECTED_LATENCY {"p99_ms":19.772000,"count":161266}
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     3.58ms    3.32ms  62.12ms   94.96%
+    Req/Sec     2.55k   392.92     2.90k    84.17%
+  Latency Distribution
+     50%    2.87ms
+     75%    3.05ms
+     90%    4.08ms
+     99%   19.77ms
+  152151 requests in 30.02s, 24.23MB read
+Requests/sec:   5067.77
+Transfer/sec:    826.46KB
+{"label":"old-1","driver_sha":"3eb6349db4d30b11aab271fb14a82b8504f6aa8e","mongo_version":"4.4.30","api":"insert_100","run":1,"rps":5067.766400,"p50_ms":2.869000,"p90_ms":4.083000,"p99_ms":19.772000,"non2xx":0,"socket_errors":0,"requests":152151}
+
+Running 30s test @ http://127.0.0.1:8090/insert_100
+  2 threads and 16 connections
+RAW_LATENCY {"p99_ms":10.326000,"count":204625}
+CORRECTED_LATENCY {"p99_ms":3024.578000,"count":258384}
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   118.62ms  492.64ms   4.14s    95.01%
+    Req/Sec     3.70k     1.50k    5.92k    71.66%
+  Latency Distribution
+     50%    1.77ms
+     75%    3.23ms
+     90%   93.55ms
+     99%    3.02s
+  204625 requests in 30.09s, 32.59MB read
+Requests/sec:   6800.25
+Transfer/sec:      1.08MB
+{"label":"new-1","driver_sha":"6cf0584ffe3e16008b73d695107e5430820f3159","mongo_version":"4.4.30","api":"insert_100","run":1,"rps":6800.252822,"p50_ms":1.766000,"p90_ms":93.549000,"p99_ms":3024.578000,"non2xx":0,"socket_errors":0,"requests":204625}
+
+Running 30s test @ http://127.0.0.1:8090/insert_100
+  2 threads and 16 connections
+RAW_LATENCY {"p99_ms":9.459000,"count":158472}
+CORRECTED_LATENCY {"p99_ms":14.253000,"count":167150}
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     3.30ms    2.52ms  55.02ms   94.32%
+    Req/Sec     2.65k   368.51     3.23k    83.17%
+  Latency Distribution
+     50%    2.75ms
+     75%    2.97ms
+     90%    3.99ms
+     99%   14.25ms
+  158472 requests in 30.02s, 25.24MB read
+Requests/sec:   5278.45
+Transfer/sec:    860.82KB
+{"label":"old-2","driver_sha":"3eb6349db4d30b11aab271fb14a82b8504f6aa8e","mongo_version":"4.4.30","api":"insert_100","run":2,"rps":5278.452949,"p50_ms":2.750000,"p90_ms":3.991000,"p99_ms":14.253000,"non2xx":0,"socket_errors":0,"requests":158472}
+
+Running 30s test @ http://127.0.0.1:8090/insert_100
+  2 threads and 16 connections
+RAW_LATENCY {"p99_ms":9.755000,"count":231125}
+CORRECTED_LATENCY {"p99_ms":18.958000,"count":259079}
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     2.71ms    3.69ms  65.79ms   93.59%
+    Req/Sec     3.87k     0.87k    5.14k    63.83%
+  Latency Distribution
+     50%    1.76ms
+     75%    2.33ms
+     90%    4.45ms
+     99%   18.96ms
+  231125 requests in 30.05s, 36.81MB read
+Requests/sec:   7691.42
+Transfer/sec:      1.22MB
+{"label":"new-2","driver_sha":"6cf0584ffe3e16008b73d695107e5430820f3159","mongo_version":"4.4.30","api":"insert_100","run":2,"rps":7691.423260,"p50_ms":1.758000,"p90_ms":4.451000,"p99_ms":18.958000,"non2xx":0,"socket_errors":0,"requests":231125}
+
+Running 30s test @ http://127.0.0.1:8090/insert_100
+  2 threads and 16 connections
+RAW_LATENCY {"p99_ms":11.656000,"count":150628}
+CORRECTED_LATENCY {"p99_ms":25.284000,"count":161657}
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     3.85ms    4.64ms  94.76ms   95.00%
+    Req/Sec     2.52k   448.60     2.95k    84.67%
+  Latency Distribution
+     50%    2.84ms
+     75%    3.07ms
+     90%    4.42ms
+     99%   25.28ms
+  150628 requests in 30.02s, 23.99MB read
+Requests/sec:   5017.30
+Transfer/sec:    818.23KB
+{"label":"old-3","driver_sha":"3eb6349db4d30b11aab271fb14a82b8504f6aa8e","mongo_version":"4.4.30","api":"insert_100","run":3,"rps":5017.295125,"p50_ms":2.842000,"p90_ms":4.423000,"p99_ms":25.284000,"non2xx":0,"socket_errors":0,"requests":150628}
+
+Running 30s test @ http://127.0.0.1:8090/insert_100
+  2 threads and 16 connections
+RAW_LATENCY {"p99_ms":9.491000,"count":208694}
+CORRECTED_LATENCY {"p99_ms":12.844000,"count":228353}
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency     2.64ms    2.47ms  67.55ms   92.56%
+    Req/Sec     3.49k   660.96     4.48k    69.83%
+  Latency Distribution
+     50%    1.98ms
+     75%    2.51ms
+     90%    4.12ms
+     99%   12.84ms
+  208694 requests in 30.03s, 33.24MB read
+Requests/sec:   6948.54
+Transfer/sec:      1.11MB
+{"label":"new-3","driver_sha":"6cf0584ffe3e16008b73d695107e5430820f3159","mongo_version":"4.4.30","api":"insert_100","run":3,"rps":6948.540698,"p50_ms":1.984000,"p90_ms":4.125000,"p99_ms":12.844000,"non2xx":0,"socket_errors":0,"requests":208694}

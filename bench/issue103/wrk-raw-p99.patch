@@ -1,0 +1,12 @@
+diff --git a/src/wrk.c b/src/wrk.c
+index 51f46f7..fb76e9e 100644
+--- a/src/wrk.c
++++ b/src/wrk.c
+@@ -167,0 +168,3 @@ int main(int argc, char **argv) {
++    printf("RAW_LATENCY {\"p99_ms\":%.6f,\"count\":%"PRIu64"}\n",
++           stats_percentile(statistics.latency, 99.0) / 1000.0,
++           statistics.latency->count);
+@@ -172,0 +176,3 @@ int main(int argc, char **argv) {
++    printf("CORRECTED_LATENCY {\"p99_ms\":%.6f,\"count\":%"PRIu64"}\n",
++           stats_percentile(statistics.latency, 99.0) / 1000.0,
++           statistics.latency->count);
